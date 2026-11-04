@@ -6,12 +6,14 @@
  *
  *   slatBar(st, scale, target)   a slat bar (config clusterStyles.* / hudStyles.bar) at size `scale`:
  *                                { rect, bar, polys: [{ i, pts }], hull, local: { cx, yb }, dims, style, fits }
- *   bracket(hud, style)          the HUD tach bracket for a HUD style: path, arc length, offsets, gear box, rect
+ *   bracket(hud, T, k)           the HUD tach bracket: path, arc length, offsets, gear, gear box, rect (T: hudLayout's place)
+ *   hudLayout(cfg, hudSel, warn) the HUD style's bar and bracket, centred on cfg.hud.centerX, sized and moved
  *   layersFor(cfg, display, sel, warn)   the layers a display mode and the two style selections want
  */
 const TARGETS = { panel: [1920, 720], map: [1088, 480], hud: [800, 480] };   // idrive-apps PROTOCOL.md, iDrive 7
 const ARC_PTS = 6;          // points inside the bracket's rounded knee (the path has 10 points: FS_BRACKET's u_path)
 const PAD = 6;              // px round the bracket's art in its layer rect
+const HUD_CX = 400;         // config hudStyles are drawn centred on this x (the scene's centre)
 
 const inside = (r, t) => !!TARGETS[t] && r.x >= 0 && r.y >= 0 && r.x + r.w <= TARGETS[t][0] && r.y + r.h <= TARGETS[t][1];
 
@@ -77,13 +79,14 @@ function pathU(B) {
 }
 
 /**
- * The HUD tach bracket (scene px) for a HUD style: the large style moves it down to clear the bar
- * (bar bottom + below), the others keep the mockup's origin. Never scaled by the size setting.
+ * The HUD tach bracket (scene px), the same place for every HUD style: the path centred on x 400, its top at
+ * B.top, then through T (hudLayout's centre, size and move; none: as designed) with lengths x k.
  */
-function bracket(hud, style) {
-    const B = hud.bracket, S = B.scale, bar = hud.bar;
-    const ox = B.origin[0], oy = style === 'large' ? Math.max(B.origin[1], bar.cy + bar.h / 2 + B.below) : B.origin[1];
-    const pts = pathU(B).map((p) => [ox + p[0] * S, oy + p[1] * S]);
+function bracket(hud, T, k) {
+    const B = hud.bracket, k1 = k || 1, place = T || ((p) => p), S = B.scale * k1;
+    const px = B.path.map((p) => p[0]), x0 = Math.min.apply(null, px), w = (Math.max.apply(null, px) - x0) * B.scale;
+    const ox = HUD_CX - w / 2 - x0 * B.scale, oy = B.top;
+    const pts = pathU(B).map((p) => place([ox + p[0] * B.scale, oy + p[1] * B.scale]));
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
     const L = cum[cum.length - 1];
@@ -104,11 +107,11 @@ function bracket(hud, style) {
         const p = at(sOf(k * 1000)), off = (B.numOff + (k === 0 ? 4 : 0)) * S;
         nums.push({ k, x: p.x + p.nx * off + (k === 0 ? 6 : 4) * S, y: p.y + p.ny * off });
     }
-    const G = B.gear, gu = G.h / 1.6, gwd = gu * 1.3, gsw = G.h * 0.23;
+    const gc = place([B.gear.x, B.gear.y]), G = { x: gc[0], y: gc[1], h: B.gear.h * k1 }, gu = G.h / 1.6, gwd = gu * 1.3, gsw = G.h * 0.23;
     const gearBox = { x: Math.floor(G.x - gwd / 2 - gsw - 2), y: Math.floor(G.y - G.h / 2 - gsw - 2) };
     gearBox.w = Math.ceil(G.x + gwd / 2 + gsw + 2) - gearBox.x;
     gearBox.h = Math.ceil(G.y + G.h / 2 + gsw + 2) - gearBox.y;
-    // bounds of everything drawn: rail to the cells' outer edge, tick ends, numerals, gear, line, unit label
+    // bounds of everything drawn: rail to the cells' outer edge, tick ends, numerals, gear
     const xs = [], ys = [];
     const add = (x, y) => { xs.push(x); ys.push(y); };
     pts.forEach((p, i) => {
@@ -118,27 +121,48 @@ function bracket(hud, style) {
     });
     nums.forEach((m) => { add(m.x - numWd / 2 - numSw, m.y - numH / 2 - numSw); add(m.x + numWd / 2 + numSw, m.y + numH / 2 + numSw); });
     add(gearBox.x, gearBox.y); add(gearBox.x + gearBox.w, gearBox.y + gearBox.h);
-    add(B.line.x0, B.line.y - 1); add(B.line.x1, B.line.y + 1);
-    add(B.unitAt[0], B.unitAt[1] - 8 * S); add(B.unitAt[0] + 4.2 * S * B.unit.length, B.unitAt[1] + 4 * S);
     const rect = rectOf(Math.min.apply(null, xs), Math.min.apply(null, ys), Math.max.apply(null, xs), Math.max.apply(null, ys), PAD, 'hud');
     return {
-        style, B, S, origin: [ox, oy], pts, cum, L, sOf, at, rail, o0, o1, cells: [o0 - pad, o1 + pad], nums,
-        numH, numWd, numSw, gearBox, rect,
+        B, S, origin: place([ox, oy]), pts, cum, L, sOf, at, rail, o0, o1, cells: [o0 - pad, o1 + pad], nums,
+        numH, numWd, numSw, gear: G, gearBox, rect,
         fits: xs.every((x) => x >= 0 && x <= TARGETS.hud[0]) && ys.every((y) => y >= 0 && y <= TARGETS.hud[1]),
     };
 }
 
 /**
- * The layer specs for a display mode and the two style selections (logic.readStyle results):
+ * The HUD style's art (hudSel = logic.readStyle(..., 'hud')): { k, size, x, y, bar, bracket, fits }. Every point
+ * of the design goes through T(x, y) = [C + (x - 400) k, A + y' + (y - A) k], C = hud.centerX + the move
+ * x, A = hud.anchorY, y' = the move y, k = size / 100: centred on the stock speed, the bottom fixed while the size
+ * grows upward. bar: the slat bar (large, bar), bracket: the tach bracket and gear (large, classic, bracket).
+ * Art off the scene falls back to size 100, then to no move, each with one warn(text).
+ */
+function hudLayout(cfg, hudSel, warn) {
+    const say = typeof warn === 'function' ? warn : () => {}, hs = hudSel.style, st = cfg.hudStyles.bar;
+    const at = (size, x, y) => {
+        const k = size / 100, C = cfg.hud.centerX + x, A = cfg.hud.anchorY;
+        const T = (p) => [C + (p[0] - HUD_CX) * k, A + y + (p[1] - A) * k];
+        const c = T([st.cx, st.cy]);
+        const bar = hs === 'large' || hs === 'bar' ? slatBar(Object.assign({}, st, { cx: c[0], cy: c[1] }), k, 'hud') : null;
+        const br = hs === 'large' || hs === 'classic' || hs === 'bracket' ? bracket(cfg.hudStyles, T, k) : null;
+        return { k, size, x, y, bar, bracket: br, fits: (!bar || bar.fits) && (!br || br.fits) };
+    };
+    const x = hudSel.x || 0, y = hudSel.y || 0;
+    let l = at(hudSel.size || 100, x, y);
+    if (!l.fits && l.size !== 100) { say('hud size ' + l.size + ' % does not fit the hud: using 100 %'); l = at(100, x, y); }
+    if (!l.fits && (x || y)) { say('hud move ' + x + ', ' + y + ' px does not fit the hud: using the centre'); l = at(100, 0, 0); }
+    return l;
+}
+
+/**
+ * The layer specs for a display mode ('off' | 'cluster' | 'hud' | 'both', logic.readDisplays) and the two
+ * style selections (logic.readStyle results):
  * [{ key, which, role: 'slats' | 'bracketImg' | 'bracketFill', target, rect, z, geom, style, cells, flash }].
- * Shown on a display: "Show on" includes it and its style is not 'off'. With both shown the cluster goes on
- * the map target (panel and hud share one scene), on the panel when the HUD style is 'off'. A size whose bar
- * does not fit its target falls back to 100 % and calls warn(text).
+ * 'both' puts the cluster on the map target (panel and hud share one scene: never up at once). A cluster size
+ * whose bar does not fit its target falls back to 100 % and calls warn(text); the HUD: hudLayout.
  */
 function layersFor(cfg, display, sel, warn) {
     const out = [], say = typeof warn === 'function' ? warn : () => {};
     const showCl = display === 'cluster' || display === 'both', showHud = display === 'hud' || display === 'both';
-    const hudOn = showHud && sel.hud.style !== 'off';
     const sized = (which, st, size, target, map) => {
         const fit = (g) => g.fits && (!map || inside(toMap(g.rect, map), 'map'));
         let g = slatBar(st, size / 100, target);
@@ -146,19 +170,16 @@ function layersFor(cfg, display, sel, warn) {
         if (map) g.rect = toMap(g.rect, map);
         return g;
     };
-    if (showCl && sel.cluster.style !== 'off' && cfg.clusterStyles[sel.cluster.style]) {
-        const map = display === 'both' && hudOn ? cfg.mapOffset : null;
+    if (showCl && cfg.clusterStyles[sel.cluster.style]) {
+        const map = display === 'both' ? cfg.mapOffset : null;
         const g = sized('cluster', cfg.clusterStyles[sel.cluster.style], sel.cluster.size, 'panel', map);
         out.push({ key: 'cluster:slats', which: 'cluster', role: 'slats', target: g.rect.target, rect: g.rect, z: 0, geom: g, style: sel.cluster.style });
     }
-    if (hudOn) {
-        const hs = sel.hud.style;
-        if (hs === 'large' || hs === 'bar') {
-            const g = sized('hud', cfg.hudStyles.bar, sel.hud.size, 'hud', null);
-            out.push({ key: 'hud:slats', which: 'hud', role: 'slats', target: 'hud', rect: g.rect, z: 2, geom: g, style: hs });
-        }
-        if (hs === 'large' || hs === 'classic' || hs === 'bracket') {
-            const b = bracket(cfg.hudStyles, hs);
+    if (showHud) {
+        const hs = sel.hud.style, hl = hudLayout(cfg, sel.hud, say);
+        if (hl.bar) out.push({ key: 'hud:slats', which: 'hud', role: 'slats', target: 'hud', rect: hl.bar.rect, z: 2, geom: hl.bar, style: hs });
+        if (hl.bracket) {
+            const b = hl.bracket;
             out.push({ key: 'hud:bracketImg', which: 'hud', role: 'bracketImg', target: 'hud', rect: b.rect, z: 0, geom: b, style: hs });
             out.push({ key: 'hud:bracketFill', which: 'hud', role: 'bracketFill', target: 'hud', rect: b.rect, z: 1, geom: b, style: hs,
                 cells: hs === 'classic', flash: hs !== 'bracket' });
@@ -167,4 +188,4 @@ function layersFor(cfg, display, sel, warn) {
     return out;
 }
 
-module.exports = { TARGETS, slatBar, toMap, bracket, layersFor, inside };
+module.exports = { TARGETS, HUD_CX, slatBar, toMap, bracket, hudLayout, layersFor, inside };

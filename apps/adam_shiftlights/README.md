@@ -34,40 +34,65 @@ Updates follow the `main` branch.
 
 | Setting | Values | Default |
 |---|---|---|
-| Shift lights on | on / off | on |
-| Show on | Off, Cluster, HUD, Cluster + HUD | Off |
-| Cluster: style | M slats large, M slats classic, Row v3, Stock blocks, Off | M slats large |
-| HUD: style | Bar + bracket large, Bar + bracket classic, Bar only, Bracket + gear only, Off | Bar + bracket large |
-| Cluster: size / HUD: size | 70 to 120 % | 100 % |
-| Cluster: brightness / HUD: brightness | 20 to 100 % | 100 % |
-| Cluster: night dim / HUD: night dim | on / off | off |
-| Drive mode | Comfort, Sport, Sport+ | Sport |
+| HUD | on / off | off |
+| Instrument cluster | on / off | off |
+| Which display when both are on | HUD, Instrument cluster, Experimental: HUD + cluster centre area | HUD |
+| Only in Sport+ | on / off | off |
+| Start with the car | on / off | on |
+| HUD: style | Shift bar + rev bracket, large; Shift bar + rev bracket, small; Shift bar only; Rev bracket + gear only | large |
+| HUD: size | 70 to 120 % | 100 % |
+| HUD: move left / right | 100 px left to 100 px right, steps of 10 | Centre |
+| HUD: move up / down | 60 px up to 60 px down, steps of 10 | Centre |
+| HUD: brightness, Cluster: brightness | 20 to 100 % | 100 % |
+| HUD: night dim, Cluster: night dim | on / off | off |
+| Cluster: style | M slats, large; M slats, small; Centre row (12 segments); Stock look (one block per dial) | M slats, large |
+| Cluster: size | 70 to 120 % | 100 % |
+| Drive mode if the car does not send it | Comfort, Sport, Sport+ | Sport |
 | Comfort / Sport / Sport+: first light | Default, 2000 to 6500 rpm | Default |
 | Comfort / Sport / Sport+: shift (red) | Default, 2500 to 6900 rpm | Default |
 | Screen layout | Full screen, Standard | Full screen |
 | Renderer | GPU 60 fps, Software | GPU 60 fps |
 | Demo data | Auto, Always, Never | Auto |
 
-"Default" uses the built-in thresholds for that mode. Output starts with **Show on = Off**, so nothing is
-drawn on the cluster or the HUD until you pick a display.
+"HUD" and "Instrument cluster" each turn one display on or off, and the app screen has a button for each.
+A new install starts with both off. Settings saved by 0.2.x move over on the first start: a display that was
+showing stays on.
 
-## Variants
+"Default" uses the built-in thresholds for that mode.
 
-The cluster and the HUD each pick their own style, switched live:
+### HUD and cluster together
 
-- Cluster: M slats large, M slats classic, Row v3, Stock blocks, Off.
-- HUD: Bar + bracket large, Bar + bracket classic, Bar only, Bracket + gear only, Off.
+The car shows the cluster panel and the HUD from one scene, so only one of them at a time. With both on,
+"Which display when both are on" picks the one you get: the HUD (default) or the instrument cluster. The app
+screen says which one is showing and that the other is on but not showing. The third choice, HUD plus the
+lights in the cluster's centre area, is experimental: on a G01 in the M layout that area showed nothing.
+
+### Drive mode and Only in Sport+
+
+The app reads the car's drive mode (Driving Experience Control). The per-mode thresholds follow it, and "Only
+in Sport+" shows the lights only while the car is in Sport+. When the car sends no drive mode, the setting
+"Drive mode if the car does not send it" is used, and the app screen says "(SETTING, NO SIGNAL)".
+
+### Start with the car
+
+The app starts with the car (it is installed as an autostart app). With this setting off, it still starts,
+but sends nothing to the cluster or the HUD until you open its screen once.
+
+### HUD position
+
+The HUD art is centred on the stock speed. "HUD: move" shifts it if it sits off centre on your car; a bigger
+size grows upward, away from the speed. The app draws no speed or unit: the stock HUD shows those.
 
 ## Safety
 
-- Kill switches, fastest first: **Show on = Off** (or a display's style set to Off), "Shift lights on" off,
-  a file named `DISABLE` in the app's data folder (its path is in the log line `kill switch file:`), or
-  Remove in the Store.
+- Kill switches, fastest first: turn **HUD** and **Instrument cluster** off (or the app screen's buttons), a
+  file named `DISABLE` in the app's data folder (its path is in the log line `kill switch file:`), or Remove
+  in the Store.
 - Never kill the app or MainApp by hand. The car counts a hand kill as a crash. Restart it only from the
   Store, and at most once.
 - Never reinstall an app that crashed. Remove it with the Store.
-- The app stops all cluster and HUD output after 5 errors in 10 seconds. Demo data never reaches the
-  cluster or the HUD.
+- The app stops all cluster and HUD output after 5 errors in 10 seconds. Turn a display off and on to reset
+  that. Demo data never reaches the cluster or the HUD.
 
 ## For developers
 
@@ -86,8 +111,9 @@ The cluster and the HUD each pick their own style, switched live:
 
 ## Licences
 
-The app's own code is MIT (`LICENSE`). `kit/` is an unmodified part of
-[idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps), MIT (`kit/LICENSE`, `kit/NOTICE`).
+The app's own code is MIT (`LICENSE`). `kit/` is part of
+[idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps), MIT (`kit/LICENSE`, `kit/NOTICE`), unmodified
+but for one line in `kit/tools/build.py` that copies app.json's `"mguAppStartType"` into `package.json`.
 `apps/adam_shiftlights/cluster_render_client.js` is from
 [idrive-apps](https://github.com/robertnisipeanu/idrive-apps), MPL-2.0 (`apps/adam_shiftlights/NOTICE`).
 No BMW code or SDK is in this repo.

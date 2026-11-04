@@ -62,26 +62,72 @@ module.exports = [
         await until(() => r.out.status().layers['panel slats'] === 'shown', 3000, 'layer shown');
         await r.done();
     }],
-    ['every style makes its own layer set: cluster 1 each; HUD large 3, classic 2, bar 1, bracket 2, off 0', async () => {
+    ['every style makes its own layer set: cluster 1 each; HUD large 3, classic 2, bar 1, bracket 2; both off closes', async () => {
         const r = rig();
         for (const c of L.CLUSTER_STYLES) {
             const n0 = r.msgs.length;
-            r.out.apply(A('cluster', c, 'off'));
-            const specs = G.layersFor(cfg, 'cluster', SEL(c, 'off'));
-            assert.strictEqual(specs.length, c === 'off' ? 0 : 1);
-            if (c === 'off') { await until(() => r.msgs.slice(n0).some((m) => m.ev === 'close'), 3000, 'closed'); continue; }
+            r.out.apply(A('cluster', c, 'large'));
+            const specs = G.layersFor(cfg, 'cluster', SEL(c, 'large'));
+            assert.strictEqual(specs.length, 1);
             await until(() => r.ops('layer', n0).length === 1, 3000, c);
             assert.deepStrictEqual(r.ops('layer', n0).map(rectOf), specs.map(want), c);
         }
         for (const h of L.HUD_STYLES) {
-            const n0 = r.msgs.length, specs = G.layersFor(cfg, 'hud', SEL('off', h));
-            r.out.apply(A('hud', 'off', h));
-            assert.strictEqual(specs.length, { large: 3, classic: 2, bar: 1, bracket: 2, off: 0 }[h]);
-            if (h === 'off') { await until(() => r.msgs.slice(n0).some((m) => m.ev === 'close'), 3000, 'closed'); continue; }
+            const n0 = r.msgs.length, specs = G.layersFor(cfg, 'hud', SEL('large', h));
+            r.out.apply(A('hud', 'large', h));
+            assert.strictEqual(specs.length, { large: 3, classic: 2, bar: 1, bracket: 2 }[h]);
             await until(() => r.ops('layer', n0).length === specs.length, 3000, h);
             assert.deepStrictEqual(r.ops('layer', n0).map(rectOf).sort(), specs.map(want).sort(), h);
             if (h !== 'bar') await until(() => r.ops('frame', n0).length === 1, 3000, h + ' image');
         }
+        const n1 = r.msgs.length;
+        r.out.apply(A('off', 'large', 'large'));
+        await until(() => r.msgs.slice(n1).some((m) => m.ev === 'close'), 3000, 'closed');
+        await r.done();
+    }],
+    ['the two on/off settings: HUD alone, cluster alone, both x "When both are on", both off', async () => {
+        const r = rig();
+        const cases = [
+            [{ hudOn: true }, ['hud slats', 'hud bracketImg', 'hud bracketFill']],
+            [{ clusterOn: true }, ['panel slats']],
+            [{ hudOn: true, clusterOn: true }, ['hud slats', 'hud bracketImg', 'hud bracketFill']],       // the default: the HUD wins
+            [{ hudOn: true, clusterOn: true, bothMode: 'map' }, ['map slats', 'hud slats', 'hud bracketImg', 'hud bracketFill']],
+            [{ hudOn: true, clusterOn: true, bothMode: 'hud' }, ['hud slats', 'hud bracketImg', 'hud bracketFill']],
+            [{ hudOn: true, clusterOn: true, bothMode: 'cluster' }, ['panel slats']],
+        ];
+        for (const c of cases) {
+            const n0 = r.msgs.length, display = L.readDisplays((k) => c[0][k]).display;
+            r.out.apply(A(display, 'large', 'large'));
+            await until(() => r.ops('layer', n0).length === c[1].length, 3000, JSON.stringify(c[0]));
+            assert.deepStrictEqual(Object.keys(r.out.status().layers).sort(), c[1].slice().sort(), JSON.stringify(c[0]));
+        }
+        await until(() => r.out.status().targets.panel === 'shown', 3000, 'target state from the service');
+        // both on, switching the winner: the old target's layers are dropped and the new made in the same tick, on
+        // the same connection (no reconnect, no moment with both scenes)
+        for (const [from, to, want] of [['hud', 'cluster', ['panel']], ['cluster', 'hud', ['hud', 'hud', 'hud']]]) {
+            r.out.apply(A(from, 'large', 'large'));
+            await wait(150);
+            const n0 = r.msgs.length;
+            r.out.apply(A(to, 'large', 'large'));
+            await until(() => r.ops('layer', n0).length === want.length, 3000, from + ' -> ' + to);
+            const ops = r.msgs.slice(n0).filter((m) => m.op === 'drop' || m.op === 'layer');
+            const firstLayer = ops.findIndex((m) => m.op === 'layer');
+            assert.ok(firstLayer > 0 && ops.slice(0, firstLayer).every((m) => m.op === 'drop') && ops.slice(firstLayer).every((m) => m.op === 'layer'), from + ' -> ' + to + ': drops then layers');
+            assert.ok(r.ops('layer', n0)[0].t - ops[firstLayer - 1].t < 50, 'made within 50 ms of the drop');
+            assert.ok(r.msgs.slice(n0).every((m) => m.op !== 'hello' && m.ev !== 'close'), 'same connection');
+            assert.deepStrictEqual(r.ops('layer', n0).map((m) => m.target), want);
+        }
+        r.out.apply(A(L.readDisplays(() => false).display, 'large', 'large'));
+        assert.deepStrictEqual([r.out.status().layers, r.out.status().targets, r.out.status().link], [{}, {}, 'none']);
+        await r.done();
+    }],
+    ['the HUD bar shows its unlit slats at idle (u_st.w < 0); the cluster bars only once lit (w > 0)', async () => {
+        const r = rig();
+        r.out.apply(A('both', 'large', 'bar', S(0), { rpm: 800 }));
+        await until(() => r.ops('layer').length === 2 && r.ops('uniform').filter((m) => m.name === 'u_st').length === 2, 3000, 'layers');
+        const st = {};
+        r.ops('uniform').filter((m) => m.name === 'u_st').forEach((m) => { st[r.ops('layer').filter((l) => l.ref === m.ref)[0].target] = m.v; });
+        assert.deepStrictEqual(st, { map: '0 0 1 0.2', hud: '0 0 1 -0.16' });
         await r.done();
     }],
     ['a live style change drops the old layers and makes the new ones on the same connection', async () => {
@@ -97,7 +143,7 @@ module.exports = [
         assert.deepStrictEqual(r.ops('layer', n0).map(rectOf), G.layersFor(cfg, 'both', SEL('classic', 'bar')).map(want));
         // HUD off: the cluster goes back to the panel
         const n1 = r.msgs.length;
-        r.out.apply(A('both', 'classic', 'off'));
+        r.out.apply(A('cluster', 'classic', 'bar'));
         await until(() => r.ops('layer', n1).length === 1, 3000, 'panel layer');
         assert.deepStrictEqual(r.ops('layer', n1).map(rectOf), ['panel 753 127 414 46 effect']);
         await r.done();
@@ -216,7 +262,7 @@ module.exports = [
     ['a handler that throws inside cr.on is caught by the guard', async () => {
         const errors = [];
         const r = rig({ info: (m) => { if (/connected/.test(m)) throw new Error('log broke'); }, warn: () => {}, error: (m) => errors.push(m) });
-        r.out.apply(A('cluster', 'large', 'off'));
+        r.out.apply(A('cluster', 'large', 'large'));
         await until(() => r.ops('layer').length === 1 && r.lines.some((l) => /error in cr ready/.test(l)), 3000, 'guarded throw');
         assert.strictEqual(r.safety.tripped(), false);
         await r.done();

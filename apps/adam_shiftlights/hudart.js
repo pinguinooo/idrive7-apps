@@ -4,7 +4,8 @@
  * Canvas's quad, line, fillRect and text only (the GPU Recorder has the same), so the same code draws the static image layer sent to the
  * HUD (output.js) and the centre screen's preview (view.js). Node 8.
  *
- * b = geom.bracket(...) (scene px). Every function maps a scene point (x, y) to (dx + x * k, dy + y * k).
+ * b = geom.bracket(...) (scene px, already placed and sized). Every function maps a scene point (x, y) to
+ * (dx + x * k, dy + y * k). No speed, unit or line: the stock HUD shows the speed under our art.
  */
 const GLYPHS = {
     0: '0 0,1 0,1 1.6,0 1.6,z', 1: '.05 .34,.5 0,.5 1.6', 2: '0 0,1 0,1 .8,0 .8,0 1.6,1 1.6', 3: '0 0,1 0,1 1.6,0 1.6|.3 .8,1 .8',
@@ -49,7 +50,7 @@ function band(cv, b, s0, s1, o0, o1, color, dx, dy, k) {
     }
 }
 
-/** Rail, ticks, numerals 0 to scaleMax, red-zone marks, the gear line and the unit label. */
+/** Rail, ticks, numerals 0 to scaleMax and the red-zone marks. */
 function drawBracketStatic(cv, b, colors, dx, dy, k) {
     const B = b.B, S = b.S, mid = (b.o0 + b.o1) / 2, kEnd = B.scaleMax / 1000;
     // the rail, one quad per path segment, each reaching half a px past its ends (no seams at the knee)
@@ -69,15 +70,12 @@ function drawBracketStatic(cv, b, colors, dx, dy, k) {
     const z = B.redzone, h = 1.6 * S;
     band(cv, b, b.sOf(z.yellow + 30), b.sOf(z.red - 30), mid - h, mid + h, colors.zy, dx, dy, k);
     band(cv, b, b.sOf(z.red + 30), b.sOf(B.scaleMax - 40), mid - h, mid + h, colors.zr, dx, dy, k);
-    cv.fillRect(dx + B.line.x0 * k, dy + (B.line.y - 0.8) * k, (B.line.x1 - B.line.x0) * k, 1.6 * k, colors.rail);
-    const size = 7.5 * S * k;
-    cv.text(B.unit, dx + B.unitAt[0] * k, dy + B.unitAt[1] * k + size * 0.35, size, colors.rail, { literal: true, font: 'bold' });
 }
 
-/** The gear digit (1 to 9; anything else draws nothing). */
+/** The gear digit (1 to 9; anything else draws nothing), at the bracket's placed gear (b.gear). */
 function drawGear(cv, b, gear, color, dx, dy, k) {
     if (!(typeof gear === 'number' && Math.floor(gear) === gear && gear >= 1 && gear <= 9)) return;
-    const G = b.B.gear;
+    const G = b.gear;
     digits(cv, String(gear), G.x, G.y, G.h, color, 1.3, G.h * 0.23, dx, dy, k);
 }
 

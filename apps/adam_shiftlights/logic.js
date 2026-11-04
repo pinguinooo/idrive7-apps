@@ -2,7 +2,8 @@
 /**
  * logic.js - the shift lights' pure maths: no I/O, no kit, Node 8 syntax.
  * Ported from docs/mockups/shiftlights.html (thresholds, lights, litOf, fieldColor), plus config checking,
- * per-mode settings, hysteresis and the per-display style settings (readStyle). Geometry: geom.js.
+ * per-mode settings, hysteresis, the per-display style settings (readStyle), the HUD / cluster on-off settings
+ * (readDisplays, migrateSettings) and the car's drive mode (driveModeOf, effectiveMode). Geometry: geom.js.
  *
  * Counts: n = the style's palette length (fields a side, plus a centre slat). lit = how many are on, in
  * lighting order (the outer end first when the fill is inward); the last `reds` light at the shift point.
@@ -14,7 +15,6 @@ const G = require('./geom');
 const DEFAULTS = {
     engine: { idle: 750, limitWarm: 7000, limitCold: 4500, oilCold: 30, oilWarm: 80, shiftBelowLimit: 150, limiterBand: 100, hysteresisRpm: 50 },
     modes: { comfort: { start: 4000, shift: 5000 }, sport: { start: 6000, shift: 6800 }, sportplus: { start: 6000, shift: 6800 } },
-    display: 'off',
     driveMode: 'sport',
     styles: { cluster: 'large', hud: 'large' },
     sizeSteps: [70, 80, 90, 100, 110, 120],
@@ -22,6 +22,8 @@ const DEFAULTS = {
     nightDim: 0.35,
     flashHz: 4,
     brightness: 1,
+    hud: { centerX: 400, anchorY: 260 },
+    nudge: { x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60] },
     colors: {
         y: '#ffc20e', o: '#ff7a00', r: '#ff2b1f', w: '#f2f5f8', a: '#ffa800', c: '#ff1a22', A: '#f3ab10', C: '#ee1c25',
         Y: '#ffd000', O: '#ff7000', R: '#ff1a14', cream: '#ebecc8', rail: '#fbfbe8', zy: '#eef0a8', zr: '#ee6a64',
@@ -34,22 +36,26 @@ const DEFAULTS = {
         stock: { palette: 'yoC', reds: 1, fill: 'inward', lean: 'mirror', stage: true, perSide: 1, slat: 40, pitch: 40, inner: 205.3, centre: 0, h: 92, shear: 50.6, cx: 960, cy: 185, glow: 14, dim: 0 },
     },
     hudStyles: {
-        bar: { palette: 'YYYYYOOR', reds: 1, fill: 'inward', lean: 'same', perSide: 7, slat: 30, pitch: 36, inner: 33.6, centre: 30.6, h: 52, shear: 18.72, cx: 390.64, cy: 118, glow: 13, dim: 0.16 },
+        bar: { palette: 'YYYYYOOR', reds: 1, fill: 'inward', lean: 'same', perSide: 7, slat: 30, pitch: 36, inner: 33.6, centre: 30.6, h: 52, shear: 18.72, cx: 390.64, cy: 118, glow: 13, dim: 0.16, idle: true },
         cells: { palette: 'yyyyyoor', reds: 1, gap: 0.14, pad: 1.8 },
         bracket: {
             path: [[0, 52], [73, 0], [331, 0]], round: 14, rail: 3.6, gapRail: 0.8, bar: 9, numH: 11, numOff: 24,
-            tickMajor: 6, cellGap: 1.5, scale: 1.2, origin: [300, 131], below: 8, scaleMax: 7000,
+            tickMajor: 6, cellGap: 1.5, scale: 1.2, top: 152, scaleMax: 7000,
             redzone: { yellow: 6000, red: 6500 },
-            gear: { x: 401, y: 237, h: 27.6 }, line: { x0: 340, x1: 431, y: 261 }, unitAt: [434, 264], unit: 'mph',
+            gear: { x: 400, y: 237, h: 27.6 },
         },
     },
     safety: { errorLimit: 5, errorWindowMs: 10000, killFile: 'DISABLE', killPollMs: 1000 },
 };
 const TARGETS = G.TARGETS;
-const DISPLAYS = ['off', 'cluster', 'hud', 'both'];
+const DISPLAYS = ['off', 'cluster', 'hud', 'both'];   // what geom.layersFor shows (from the two on/off settings)
+// "Which display when both are on": the car shows the HUD or the cluster panel, one at a time (one scene). 'map' (HUD
+// plus the cluster's centre map area) is experimental: on Adam's G01 M layout the map area showed nothing (2026-11-04)
+const BOTH_MODES = ['hud', 'cluster', 'map'];
 const MODES = ['comfort', 'sport', 'sportplus'];
-const CLUSTER_STYLES = ['large', 'classic', 'row', 'stock', 'off'];
-const HUD_STYLES = ['large', 'classic', 'bar', 'bracket', 'off'];
+const CLUSTER_STYLES = ['large', 'classic', 'row', 'stock'];
+const HUD_STYLES = ['large', 'classic', 'bar', 'bracket'];
+const SETTINGS_V = 3;   // settings.json shape: 3 = hudOn / clusterOn (0.3.0); before: enabled + display
 const MIN_SPAN = 200;   // a mode's shift sits at least this far over its start (rpm)
 const MAX_PALETTE = 10; // FS_SLATS' u_colors[10]
 
@@ -79,6 +85,7 @@ function barProblem(st, colors, target, map) {
     if (![st.slat, st.pitch, st.h].every((v) => num(v) && v > 0)) return 'slat, pitch, h must be numbers > 0';
     if (![st.inner, st.centre, st.shear, st.glow].every((v) => num(v) && v >= 0)) return 'inner, centre, shear, glow must be numbers >= 0';
     if (!(num(st.dim) && st.dim >= 0 && st.dim <= 1)) return 'dim must be 0 to 1';
+    if (st.idle !== undefined && typeof st.idle !== 'boolean') return 'idle must be true or false';
     if (!num(st.cx) || !num(st.cy)) return 'cx, cy must be numbers';
     const want = st.stage ? 1 : st.centre > 0 ? n - 1 : n;
     if (st.perSide !== want) return 'perSide must be ' + want + (st.stage ? ' (stage)' : st.centre > 0 ? ' (the palette less the centre slat)' : ' (the palette length)');
@@ -93,15 +100,13 @@ function barProblem(st, colors, target, map) {
 
 function bracketProblem(B) {
     if (!isObj(B)) return 'missing';
-    const nums = ['round', 'rail', 'gapRail', 'bar', 'numH', 'numOff', 'tickMajor', 'cellGap', 'scale', 'below', 'scaleMax'];
+    const nums = ['round', 'rail', 'gapRail', 'bar', 'numH', 'numOff', 'tickMajor', 'cellGap', 'scale', 'top', 'scaleMax'];
     if (!nums.every((k) => num(B[k]) && B[k] > 0)) return nums.join(', ') + ' must be numbers > 0';
     if (B.scaleMax % 1000 || B.scaleMax > 12000) return 'scaleMax must be whole thousands up to 12000';
     const pair = (p) => Array.isArray(p) && p.length === 2 && p.every(num);
     if (!(Array.isArray(B.path) && B.path.length === 3 && B.path.every(pair))) return 'path must be 3 [x, y] points';
-    if (!pair(B.origin) || !pair(B.unitAt)) return 'origin and unitAt must be [x, y]';
     if (!isObj(B.redzone) || !num(B.redzone.yellow) || !num(B.redzone.red)) return 'redzone needs yellow and red';
-    if (!isObj(B.gear) || ![B.gear.x, B.gear.y, B.gear.h].every(num) || !isObj(B.line) || ![B.line.x0, B.line.x1, B.line.y].every(num)) return 'gear and line need numbers';
-    if (typeof B.unit !== 'string' || !/^[\x20-\x7e]{0,8}$/.test(B.unit)) return 'unit must be up to 8 ASCII characters';
+    if (!isObj(B.gear) || ![B.gear.x, B.gear.y, B.gear.h].every(num)) return 'gear needs x, y, h numbers';
     return null;
 }
 
@@ -131,7 +136,6 @@ function validateConfig(input) {
         const p = !isObj(v) ? 'missing' : modePairProblem(v.start, v.shift, E);
         if (p) { errors.push('modes.' + m + ': ' + p + ' (using the default)'); out.modes[m] = copy(DEFAULTS.modes[m]); } else out.modes[m] = { start: v.start, shift: v.shift };
     });
-    take('display', (v) => (DISPLAYS.indexOf(v) < 0 ? 'must be one of ' + DISPLAYS.join(', ') : null));
     take('driveMode', (v) => (MODES.indexOf(v) < 0 ? 'must be one of ' + MODES.join(', ') : null));
     take('styles', (v) => (!isObj(v) || CLUSTER_STYLES.indexOf(v.cluster) < 0 || HUD_STYLES.indexOf(v.hud) < 0
         ? 'cluster must be one of ' + CLUSTER_STYLES.join(', ') + ' and hud one of ' + HUD_STYLES.join(', ') : null));
@@ -142,6 +146,7 @@ function validateConfig(input) {
     take('nightDim', (v) => (!(num(v) && v > 0 && v <= 1) ? 'must be > 0 and <= 1' : null));
     take('flashHz', (v) => (!(num(v) && v >= 4 && v <= 20) ? 'must be 4 to 20 (the limiter flash at least 4 Hz)' : null));
     take('brightness', (v) => (!(num(v) && v >= 0 && v <= 1) ? 'must be 0 to 1' : null));
+    take('nudge', (v) => (!isObj(v) || steps(-400, 400, 0)(v.x) || steps(-400, 400, 0)(v.y) ? 'x and y must be whole numbers -400 to 400 including 0' : null));
     out.colors = {};
     Object.keys(DEFAULTS.colors).concat(Object.keys(isObj(src.colors) ? src.colors : {})).forEach((k) => {
         if (out.colors[k]) return;
@@ -173,9 +178,14 @@ function validateConfig(input) {
     out.hudStyles.bracket = check('hudStyles.bracket', hs.bracket, (B) => {
         const p = bracketProblem(B);
         if (p) return p;
-        const bad = ['large', 'classic'].filter((st) => !G.bracket({ bracket: B, bar: out.hudStyles.bar, cells: out.hudStyles.cells }, st).fits);
-        return bad.length ? 'does not fit the hud (' + bad.join(', ') + ')' : null;
+        return G.bracket({ bracket: B, bar: out.hudStyles.bar, cells: out.hudStyles.cells }).fits ? null : 'does not fit the hud';
     }, DEFAULTS.hudStyles.bracket);
+    // the HUD art at size 100 with no nudge must fit the scene in every style
+    take('hud', (v) => {
+        if (!isObj(v) || !num(v.centerX) || !num(v.anchorY)) return 'centerX and anchorY must be numbers';
+        const bad = HUD_STYLES.filter((st) => !G.hudLayout(Object.assign({}, out, { hud: v }), { style: st, size: 100, x: 0, y: 0 }).fits);
+        return bad.length ? 'the HUD art does not fit the hud there (' + bad.join(', ') + ')' : null;
+    });
     take('safety', (s) => {
         if (!isObj(s) || ![s.errorLimit, s.errorWindowMs, s.killPollMs].every((v) => num(v) && v > 0)) return 'errorLimit, errorWindowMs, killPollMs must be numbers > 0';
         if (typeof s.killFile !== 'string' || !/^[A-Za-z0-9._-]+$/.test(s.killFile)) return 'killFile must be a plain file name';
@@ -262,7 +272,8 @@ function fieldColor(state, palette, i, colors, on) {
 
 const KEYS = { cluster: 'cluster', hud: 'hud' };
 /**
- * One display's persisted settings, checked: { style, size, bright, night, warnings }. get(key) reads a
+ * One display's persisted settings, checked: { style, size, bright, night, warnings, x, y } (x, y: the HUD's
+ * "move" settings in scene px, 0 for the cluster). get(key) reads a
  * setting (kit Settings.get, which never validates settings.json). A value outside its list (missing, null,
  * a typo, a wrong type) gives config's default and a warning naming the key. Never throws.
  */
@@ -280,13 +291,15 @@ function readStyle(cfg, get, which) {
     const bright = pick(w + 'Bright', cfg.brightSteps, 100);
     const nv = read(w + 'Night');
     if (nv !== true && nv !== false) warnings.push(w + 'Night: ' + (nv === undefined ? 'missing' : JSON.stringify(nv)) + ' is not true or false (using false)');
-    return { style, size, bright, night: nv === true, warnings };
+    const out = { style, size, bright, night: nv === true, warnings, x: 0, y: 0 };
+    if (w === 'hud') { out.x = pick('hudX', cfg.nudge.x, 0); out.y = pick('hudY', cfg.nudge.y, 0); }
+    return out;
 }
 
-/** The lights a display's style shows: { palette, count, reds }, or null (bracket, off: no shift lights). */
+/** The lights a display's style shows: { palette, count, reds }, or null (the bracket style: no shift lights). */
 function lightsOf(cfg, which, style) {
     let s = null;
-    if (which === 'cluster') s = style !== 'off' ? cfg.clusterStyles[style] : null;
+    if (which === 'cluster') s = CLUSTER_STYLES.indexOf(style) >= 0 ? cfg.clusterStyles[style] : null;
     else if (style === 'large' || style === 'bar') s = cfg.hudStyles.bar;
     else if (style === 'classic') s = cfg.hudStyles.cells;
     return s ? { palette: s.palette, count: s.palette.length, reds: s.reds } : null;
@@ -295,7 +308,76 @@ function lightsOf(cfg, which, style) {
 /** 0..1: config brightness x the display's brightness setting x night dim. */
 const levelOf = (cfg, s) => Math.round(cfg.brightness * s.bright / 100 * (s.night ? cfg.nightDim : 1) * 1000) / 1000;
 
+const safeGet = (get) => (k) => { try { return get(k); } catch (e) { return undefined; } };
+
+/**
+ * The two on/off settings: { hud, cluster, both, display }. hud / cluster: a saved value of exactly true is on.
+ * both: "Which display when both are on" (hud | cluster | map, default hud). display: what geom.layersFor shows: 'both' (HUD
+ * plus the cluster on the map target, experimental), 'hud', 'cluster' or 'off'. Never throws.
+ */
+function readDisplays(get) {
+    const g = safeGet(get), hud = g('hudOn') === true, cluster = g('clusterOn') === true;
+    const both = BOTH_MODES.indexOf(g('bothMode')) >= 0 ? g('bothMode') : 'hud';
+    let display = 'off';
+    if (hud && cluster) display = both === 'map' ? 'both' : both;
+    else if (hud) display = 'hud';
+    else if (cluster) display = 'cluster';
+    return { hud, cluster, both, display };
+}
+
+/**
+ * The writes ([[key, value], ...]) that move settings saved by 0.2.x (a master "enabled" switch, "display"
+ * off | cluster | hud | both, a style of 'off') to the two on/off settings; [] once done (_settingsV 3).
+ * A display stays on only if the old master switch, "display" and its style all showed it (a style that is not
+ * 'off' showed: an unknown one fell back to large). An unknown "display" counts as off; a style of 'off' goes
+ * back to large. Never throws.
+ */
+function migrateSettings(get) {
+    const g = safeGet(get);
+    if (g('_settingsV') === SETTINGS_V) return [];
+    const master = g('enabled') !== false, display = DISPLAYS.indexOf(g('display')) >= 0 ? g('display') : 'off';
+    const on = (which, style) => master && (display === which || display === 'both') && style !== 'off';
+    const writes = [['clusterOn', on('cluster', g('clusterStyle'))], ['hudOn', on('hud', g('hudStyle'))]];
+    if (g('clusterStyle') === 'off') writes.push(['clusterStyle', 'large']);
+    if (g('hudStyle') === 'off') writes.push(['hudStyle', 'large']);
+    writes.push(['_settingsV', SETTINGS_V]);
+    return writes;
+}
+
+/**
+ * The car's drive mode from FES statusFESVehicleDynamicSwitchHMI.actualValueModeDrivingExperience (an enum
+ * number or name, idrive7-apps apps/live_data/signals.js): 'sportplus' | 'sport' | 'comfort', or null when the
+ * car sends none (0, 61 to 63, anything else). Sport individual is sport; Comfort, Eco Pro and Adaptive are comfort.
+ */
+function driveModeOf(raw) {
+    let v = raw;
+    if (typeof v === 'string' && /^\d+$/.test(v.trim())) v = Number(v.trim());
+    if (typeof v === 'number') {
+        if (v === 2) return 'sportplus';
+        if (v === 1 || v === 3) return 'sport';
+        if (v >= 4 && v <= 10 && Math.floor(v) === v) return 'comfort';
+        return null;
+    }
+    if (typeof v !== 'string') return null;
+    const s = v.trim().toUpperCase();
+    if (s.indexOf('SPORT_EXPERT') === 0) return 'sportplus';
+    if (s.indexOf('SPORT') === 0) return 'sport';
+    if (s.indexOf('COMFORT') === 0 || s.indexOf('ECO') === 0 || s.indexOf('ADAPTIVE') === 0) return 'comfort';
+    return null;
+}
+
+/** The mode the thresholds and "Only in Sport+" use: { mode, source: 'car' | 'setting' }. The car's wins. */
+function effectiveMode(carMode, get, cfg) {
+    if (MODES.indexOf(carMode) >= 0) return { mode: carMode, source: 'car' };
+    const v = safeGet(get)('driveMode');
+    return { mode: MODES.indexOf(v) >= 0 ? v : cfg.driveMode, source: 'setting' };
+}
+
+/** "Only in Sport+" holds the lights back: the setting is on and the mode now is not Sport+. */
+const holdForSportPlus = (onlySportPlus, eff) => onlySportPlus === true && !(eff && eff.mode === 'sportplus');
+
 module.exports = {
-    DEFAULTS, TARGETS, DISPLAYS, MODES, CLUSTER_STYLES, HUD_STYLES, validateConfig, modeThresholds, thresholds,
-    rawState, step, flashOn, fieldColor, readStyle, lightsOf, levelOf, fillLit,
+    DEFAULTS, TARGETS, DISPLAYS, BOTH_MODES, MODES, CLUSTER_STYLES, HUD_STYLES, SETTINGS_V, validateConfig, modeThresholds, thresholds,
+    rawState, step, flashOn, fieldColor, readStyle, lightsOf, levelOf, fillLit, readDisplays, migrateSettings, driveModeOf,
+    effectiveMode, holdForSportPlus,
 };

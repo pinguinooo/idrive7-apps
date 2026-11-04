@@ -5,7 +5,7 @@
  *   const out = createOutput({ ClusterRender, socketPath, log, cfg, guard, makeCanvas });
  *   out.apply({ display, active, sel, states, rpm, th, gear });   // on every sample or setting change;
  *       // sel: { cluster, hud } (logic.readStyle), states: { cluster, hud } (logic.step for each style's count)
- *   out.status() -> { link: 'none' | 'connecting' | 'ready', layers: { 'target role': state } }
+ *   out.status() -> { link: 'none' | 'connecting' | 'ready', layers: { 'target role': state }, targets: { name: state } }
  *
  * The plan (geom.layersFor) is keyed on every layer's place and style, not its brightness: a new key drops
  * the old layers and makes the new ones on the open connection (a style switch is live); nothing active
@@ -14,7 +14,7 @@
  * renderer-side step animation of u_on, started when the flash starts, so nothing is sent per frame.
  * The bracket image is drawn once (hudart.js) and sent whole; a gear change sends only the digit's box.
  */
-const { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, cellUniform } = require('./shader');
+const { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, cellUniform, unlitAlpha } = require('./shader');
 const geom = require('./geom');
 const hudart = require('./hudart');
 const L = require('./logic');
@@ -22,7 +22,7 @@ const L = require('./logic');
 function createOutput(o) {
     const cfg = o.cfg, log = o.log, guard = o.guard;
     let cr = null, planKey = '[]', layers = [], linkState = 'none';
-    const layerStates = Object.create(null), warned = Object.create(null);
+    const layerStates = Object.create(null), targetStates = Object.create(null), warned = Object.create(null);
     const warn = (text) => { if (!warned[text]) { warned[text] = true; log.warn(text); } };
 
     function client() {
@@ -38,7 +38,9 @@ function createOutput(o) {
             log.info('cluster-render: layer ' + ref + ' ' + state + (reason ? ' (' + reason + ')' : ''));
         }));
         c.on('target', guard('cr target', (name, state, holder, reason) => {
-            if (cr === c) log.info('cluster-render: target ' + name + ' ' + state + (holder ? ' holder ' + holder : '') + (reason ? ' (' + reason + ')' : ''));
+            if (cr !== c) return;
+            targetStates[name] = state;
+            log.info('cluster-render: target ' + name + ' ' + state + (holder ? ' holder ' + holder : '') + (reason ? ' (' + reason + ')' : ''));
         }));
         c.on('refused', guard('cr refused', (op, ref, reason) => { if (cr === c) log.error('cluster-render refused ' + op + ' ' + ref + ': ' + reason); }));
         c.connect();
@@ -117,7 +119,7 @@ function createOutput(o) {
         l.level = level;
         if (l.role === 'slats') {
             const flash = st.flashing ? 1 : 0;
-            sendSt(l, [st.lit, flash, level, l.spec.geom.style.dim]);
+            sendSt(l, [st.lit, flash, level, unlitAlpha(l.spec.geom.style)]);
             startFlash(l, flash);
             return;
         }
@@ -145,6 +147,7 @@ function createOutput(o) {
             }
         }
         if (!want.length) {
+            Object.keys(targetStates).forEach((k) => { delete targetStates[k]; });
             if (cr) { cr.close(); cr = null; linkState = 'none'; log.info('cluster-render: closed (nothing to show)'); }
             return;
         }
@@ -154,7 +157,9 @@ function createOutput(o) {
     function status() {
         const out = {};
         layers.forEach((l) => { out[l.target + ' ' + l.role] = layerStates[l.ref] || 'sent'; });
-        return { link: linkState, layers: out };
+        const targets = {};
+        Object.keys(targetStates).forEach((k) => { targets[k] = targetStates[k]; });
+        return { link: linkState, layers: out, targets };
     }
 
     return { apply, status };

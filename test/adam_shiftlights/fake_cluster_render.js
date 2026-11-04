@@ -1,7 +1,8 @@
 'use strict';
 /**
  * A stand-in for the cluster-render service (idrive-apps PROTOCOL.md): frames `u32 len | type | body`,
- * answers a client's hello as the iDrive 7 service does, answers each layer with `shown`, and records
+ * answers a client's hello as the iDrive 7 service does, answers each layer with `shown` (and its target
+ * with a `target ... shown` event), and records
  * every J message and every F (image pixels) message. Node 8 or newer.
  *
  *   node test/fake_cluster_render.js <socket> <log.jsonl>    one JSON line per message: {t, conn, ...msg};
@@ -63,7 +64,7 @@ function createFake(socketPath, onMessage, framesDir) {
                     try { m = JSON.parse(body.toString('utf8')); } catch (e) { onMessage({ t: Date.now(), conn: id, bad: body.toString('utf8') }); continue; }
                     onMessage(Object.assign({ t: Date.now(), conn: id }, m));
                     if (m.op === 'hello') sock.write(frame(HELLO));
-                    else if (m.op === 'layer') sock.write(frame({ ev: 'layer', ref: m.ref, state: 'shown' }));
+                    else if (m.op === 'layer') { sock.write(frame({ ev: 'target', target: m.target, state: 'shown' })); sock.write(frame({ ev: 'layer', ref: m.ref, state: 'shown' })); }
                 }
             });
         });

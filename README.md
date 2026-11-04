@@ -49,7 +49,7 @@ syntax check and the tests find it by listing `apps/`. Steps, rules and testing:
 | `apps/<id>/` | one app: `app.json`, `main.js`, `icon.png`, its modules and its README. `apps/_template` is the skeleton the Store ignores |
 | `test/` | `run.js` (the runner), `apps.test.js` (checks every app folder), `test/<id>/` (one app's own tests) |
 | `tools/check.sh` | the self-check: Node 8 syntax of the kit and every app, then all tests |
-| `kit/` | the build kit, an unmodified part of upstream idrive7-apps |
+| `kit/` | the build kit from upstream idrive7-apps, with one added line in `kit/tools/build.py` (an app.json `"mguAppStartType"` goes to the package's `package.json`) |
 | `mgu-repo.json` | what the Store reads: `apps/*` is discovered, `exclude` lists folders it skips, `requires` the tools every app needs |
 | `docs/` | how to add an app |
 
@@ -66,7 +66,8 @@ syntax check and the tests find it by listing `apps/`. Steps, rules and testing:
 
 ## Licences
 
-The apps' own code is MIT (`LICENSE`). `kit/` is an unmodified part of
-[idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps), MIT (`kit/LICENSE`, `kit/NOTICE`).
+The apps' own code is MIT (`LICENSE`). `kit/` is part of
+[idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps), MIT (`kit/LICENSE`, `kit/NOTICE`), unmodified
+but for one line in `kit/tools/build.py` that copies app.json's `"mguAppStartType"` into `package.json`.
 Third-party files inside an app carry their own notice in that app's folder (for example
 `apps/adam_shiftlights/NOTICE`). No BMW code or SDK is in this repo.

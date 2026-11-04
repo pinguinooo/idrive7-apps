@@ -20,7 +20,7 @@ const FS_SLATS = [
     'uniform vec4 u_geo;        // slat width, pitch, axis to the innermost slat at the base, slats a side',
     'uniform vec4 u_geo2;       // lean (px over the bar height), centre slat half width (0: a gap), bar height, glow (px)',
     'uniform vec4 u_mode;       // mirrored lean (1) or the same lean on both sides (0), outward fill, stage, the flash fills the hull',
-    'uniform vec4 u_st;         // lit, flash, brightness, unlit alpha',
+    'uniform vec4 u_st;         // lit, flash, brightness, unlit alpha (> 0: unlit slats show once one is lit; < 0: always, at -w)',
     'uniform float u_on;',
     'vec4 pal(float i) {',
     '    vec4 c = u_colors[9];',
@@ -50,7 +50,7 @@ const FS_SLATS = [
     '        if ((u_mode.w > 0.5 && inBar && d <= hw) || isSlat || isCentre) { gl_FragColor = flashC; return; }',
     '    } else if (isSlat || isCentre) {',
     '        if (slatLit(idx)) { gl_FragColor = vec4(slatColor(idx).rgb * bright, 1.0); return; }',
-    '        if (u_st.x > 0.5 && u_st.w > 0.0) { gl_FragColor = vec4(pal(idx).rgb * bright, u_st.w); return; }',
+    '        if ((u_st.x > 0.5 || u_st.w < 0.0) && u_st.w != 0.0) { gl_FragColor = vec4(pal(idx).rgb * bright, abs(u_st.w)); return; }',
     '        gl_FragColor = vec4(0.0); return;',
     '    }',
     '    if (glow <= 0.0) { gl_FragColor = vec4(0.0); return; }',
@@ -139,6 +139,9 @@ const FS_BRACKET = [
 const rgb = (hex) => [1, 3, 5].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) / 255 * 10000) / 10000);
 const r2 = (v) => Math.round(v * 100) / 100;
 
+/** u_st.w for a slat style: its dim alpha, negative for an `idle` style (the unlit slats show at idle too). */
+const unlitAlpha = (st) => (st.idle ? -st.dim : st.dim);
+
 /** The static uniforms of a slats layer (geom.layersFor spec): [[name, values, opts]], for ClusterRender.uniform. */
 function slatUniforms(spec, colors, level) {
     const g = spec.geom, st = g.style, d = g.dims, cols = [];
@@ -152,7 +155,7 @@ function slatUniforms(spec, colors, level) {
         ['u_geo', [r2(d.slat), r2(d.pitch), r2(d.inner), d.perSide]],
         ['u_geo2', [r2(d.shear), r2(d.centre), r2(d.h), st.glow]],
         ['u_mode', [st.lean === 'same' ? 0 : 1, st.fill === 'outward' ? 1 : 0, st.stage ? 1 : 0, hull]],
-        ['u_st', [0, 0, level, st.dim]],
+        ['u_st', [0, 0, level, unlitAlpha(st)]],
         ['u_on', [1]],
     ];
 }
@@ -190,4 +193,4 @@ function bracketUniforms(spec, colors, level, th, cellsCfg) {
     ];
 }
 
-module.exports = { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, cellUniform, rgb };
+module.exports = { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, cellUniform, rgb, unlitAlpha };

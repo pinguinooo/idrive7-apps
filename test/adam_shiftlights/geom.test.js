@@ -8,8 +8,10 @@ const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, what + ': ' 
 const box = (g) => [g.bar.x0, g.bar.y0, g.bar.x1 - g.bar.x0, g.bar.y1 - g.bar.y0];
 const bar = (name, scale) => G.slatBar(cfg.clusterStyles[name], scale || 1, 'panel');
 const hudBar = (scale) => G.slatBar(cfg.hudStyles.bar, scale || 1, 'hud');
-const sel = (c, h, cs, hs) => ({ cluster: { style: c, size: cs || 100, bright: 100, night: false }, hud: { style: h, size: hs || 100, bright: 100, night: false } });
-const HUD_ROLES = { large: ['slats', 'bracketImg', 'bracketFill'], classic: ['bracketImg', 'bracketFill'], bar: ['slats'], bracket: ['bracketImg', 'bracketFill'], off: [] };
+const sel = (c, h, cs, hs, x, y) => ({ cluster: { style: c, size: cs || 100, bright: 100, night: false }, hud: { style: h, size: hs || 100, bright: 100, night: false, x: x || 0, y: y || 0 } });
+const HUD_ROLES = { large: ['slats', 'bracketImg', 'bracketFill'], classic: ['bracketImg', 'bracketFill'], bar: ['slats'], bracket: ['bracketImg', 'bracketFill'] };
+const hudSpecs = (h, size, x, y) => G.layersFor(cfg, 'hud', sel('large', h, 100, size, x, y));
+const rectsOf = (specs) => specs.map((s) => [s.role, s.rect.x, s.rect.y, s.rect.w, s.rect.h].join(' '));
 
 module.exports = [
     ['bars match the mockups (+-1 px): large 741,109 438x83; classic 753,127 414x46; row 788,134 344x22; HUD 111,92 578x52', () => {
@@ -55,43 +57,110 @@ module.exports = [
         const edge = JSON.parse(JSON.stringify(cfg));
         edge.clusterStyles.large.cx = 1700;
         const warns = [];
-        const sp = G.layersFor(edge, 'cluster', sel('large', 'off', 120), (w) => warns.push(w));
+        const sp = G.layersFor(edge, 'cluster', sel('large', 'large', 120), (w) => warns.push(w));
         assert.strictEqual(sp.length, 1);
         near(sp[0].geom.dims.h, 82.8, 1e-6, 'fell back to 100 %');
         assert.ok(sp[0].geom.fits);
         assert.deepStrictEqual(warns, ['cluster size 120 % does not fit the panel: using 100 %']);
-        assert.strictEqual(G.layersFor(cfg, 'cluster', sel('large', 'off', 120)).length, 1);   // 120 fits normally
-        near(G.layersFor(cfg, 'cluster', sel('large', 'off', 120))[0].geom.dims.h, 99.36, 1e-6, '120 %');
+        assert.strictEqual(G.layersFor(cfg, 'cluster', sel('large', 'large', 120)).length, 1);   // 120 fits normally
+        near(G.layersFor(cfg, 'cluster', sel('large', 'large', 120))[0].geom.dims.h, 99.36, 1e-6, '120 %');
     }],
-    ['layersFor: every display x 25 style pairs gives the expected roles and targets', () => {
+    ['layersFor: every display x 16 style pairs gives the expected roles and targets', () => {
         L.CLUSTER_STYLES.forEach((c) => L.HUD_STYLES.forEach((h) => L.DISPLAYS.forEach((d) => {
             const specs = G.layersFor(cfg, d, sel(c, h));
-            const showCl = (d === 'cluster' || d === 'both') && c !== 'off', showHud = (d === 'hud' || d === 'both') && h !== 'off';
-            const want = (showCl ? [['cluster', 'slats', d === 'both' && showHud ? 'map' : 'panel']] : [])
+            const showCl = d === 'cluster' || d === 'both', showHud = d === 'hud' || d === 'both';
+            const want = (showCl ? [['cluster', 'slats', d === 'both' ? 'map' : 'panel']] : [])
                 .concat(showHud ? HUD_ROLES[h].map((r) => ['hud', r, 'hud']) : []);
             assert.deepStrictEqual(specs.map((s) => [s.which, s.role, s.target]), want, [c, h, d].join('/'));
             specs.forEach((s) => assert.ok(G.inside(s.rect, s.target), [c, h, d, s.role].join('/') + ' rect ' + JSON.stringify(s.rect)));
         })));
         // the cluster's layer is the same whatever the HUD style, but for the target
-        const a = G.layersFor(cfg, 'both', sel('large', 'bar'))[0], b = G.layersFor(cfg, 'both', sel('large', 'off'))[0];
+        const a = G.layersFor(cfg, 'both', sel('large', 'bar'))[0], b = G.layersFor(cfg, 'cluster', sel('large', 'bar'))[0];
         assert.deepStrictEqual([a.rect.x, a.rect.y, a.rect.w, a.rect.h, a.target], [295, 8, 498, 144, 'map']);
         assert.deepStrictEqual([b.rect.x, b.rect.y, b.rect.w, b.rect.h, b.target], [711, 78, 498, 144, 'panel']);
     }],
-    ['bracket: 10-point path 0 to 7, large below the bar (origin y 152), classic at 131; gear box inside the rect', () => {
-        const lg = G.bracket(cfg.hudStyles, 'large'), cl = G.bracket(cfg.hudStyles, 'classic');
-        assert.deepStrictEqual([lg.pts.length, lg.origin, cl.origin], [10, [300, 152], [300, 131]]);
+    ['bracket: 10-point path 0 to 7 centred on x 400 at top 152, the same for every HUD style; gear box inside the rect', () => {
+        const lg = hudSpecs('large')[1].geom, cl = hudSpecs('classic')[0].geom, bk = hudSpecs('bracket')[0].geom;
+        assert.deepStrictEqual([lg.pts.length, lg.origin, cl.origin, bk.origin].map(JSON.stringify), ['10', '[201.4,152]', '[201.4,152]', '[201.4,152]']);
+        assert.deepStrictEqual([lg.rect, cl.rect], [bk.rect, bk.rect]);
         near(lg.L, cl.L, 1e-9, 'same length');
-        assert.ok(lg.rect.y >= hudBar().bar.y1, 'the large bracket starts under the bar: ' + lg.rect.y);
+        assert.ok(lg.rect.y >= hudBar().bar.y1, 'the bracket starts under the bar: ' + lg.rect.y);
         assert.deepStrictEqual(lg.nums.map((n) => n.k), [0, 1, 2, 3, 4, 5, 6, 7]);
         near(lg.sOf(7000), lg.L, 1e-9, 's(7000)'); near(lg.sOf(3500), lg.L / 2, 1e-9, 's(3500)');
         const tip = lg.at(0), end = lg.at(lg.L);
-        assert.deepStrictEqual([tip.x, tip.y].map(Math.round), [300, 214]);
-        assert.deepStrictEqual([end.x, end.y].map(Math.round), [697, 152]);
+        assert.deepStrictEqual([tip.x, tip.y].map(Math.round), [201, 214]);
+        assert.deepStrictEqual([end.x, end.y].map(Math.round), [599, 152]);
         assert.ok(end.ny > 0.99, 'the fill side is below the rail');
-        [lg, cl].forEach((b) => {
+        [lg, cl, bk].forEach((b) => {
             const g = b.gearBox, r = b.rect;
             assert.ok(g.x >= r.x && g.y >= r.y && g.x + g.w <= r.x + r.w && g.y + g.h <= r.y + r.h, 'gear box ' + JSON.stringify(g) + ' in ' + JSON.stringify(r));
             assert.ok(b.fits && G.inside(r, 'hud'));
         });
+    }],
+    ['centred on the stock speed: with no move the bracket path, the bar and the gear sit on hud.centerX (+-1 px)', () => {
+        const sp = hudSpecs('large'), bar = sp[0].geom, b = sp[1].geom;
+        near((b.pts[0][0] + b.pts[b.pts.length - 1][0]) / 2, cfg.hud.centerX, 1, 'bracket path mid');
+        near((bar.bar.x0 + bar.bar.x1) / 2, cfg.hud.centerX, 1, 'bar mid (its lean included)');
+        near(b.gear.x, cfg.hud.centerX, 1e-9, 'gear x');
+        // another centre moves everything with it
+        const c2 = JSON.parse(JSON.stringify(cfg)); c2.hud.centerX = 380;
+        const s2 = G.layersFor(c2, 'hud', sel('large', 'large'));
+        assert.deepStrictEqual(rectsOf(s2), rectsOf(sp).map((r) => r.split(' ').map((v, i) => (i === 1 ? Number(v) - 20 : v)).join(' ')));
+    }],
+    ['HUD size changes the drawn size: bar, bracket and gear scale by k, the bottom stays at anchorY (it grows upward)', () => {
+        ['large', 'classic', 'bar', 'bracket'].forEach((h) => {
+            const by = {};
+            [70, 100, 120].forEach((size) => { by[size] = hudSpecs(h, size); });
+            assert.notDeepStrictEqual(rectsOf(by[70]), rectsOf(by[100]), h + ' 70 vs 100');
+            assert.notDeepStrictEqual(rectsOf(by[120]), rectsOf(by[100]), h + ' 120 vs 100');
+            [70, 120].forEach((size) => {
+                const k = size / 100, s0 = by[100], s1 = by[size];
+                s0.forEach((a, i) => {
+                    const b = s1[i];
+                    if (a.role === 'slats') {
+                        near(b.geom.bar.x1 - b.geom.bar.x0, (a.geom.bar.x1 - a.geom.bar.x0) * k, 1e-6, h + ' bar w ' + size);
+                        near(b.geom.bar.y1 - b.geom.bar.y0, 52 * k, 1e-6, h + ' bar h ' + size);
+                        near(cfg.hud.anchorY - b.geom.bar.y1, (cfg.hud.anchorY - a.geom.bar.y1) * k, 1e-6, h + ' bar grows up ' + size);
+                    } else {
+                        near(b.geom.L, a.geom.L * k, 1e-6, h + ' bracket length ' + size);
+                        near(b.geom.gear.h, 27.6 * k, 1e-6, h + ' gear ' + size);
+                        near(cfg.hud.anchorY - b.geom.gear.y, (cfg.hud.anchorY - a.geom.gear.y) * k, 1e-6, h + ' gear grows up ' + size);
+                        near(b.geom.gearBox.w, a.geom.gearBox.w * k, 2, h + ' gear box ' + size);
+                    }
+                });
+            });
+        });
+    }],
+    ['Bar only: exactly one slats layer, no bracket, no gear', () => {
+        const sp = hudSpecs('bar');
+        assert.deepStrictEqual(sp.map((s) => s.role), ['slats']);
+        assert.ok(sp[0].geom.style.idle, 'the HUD bar shows at idle');
+    }],
+    ['large vs small: the bracket does not move (same rect, origin, gear); they differ in the shift bar (slats vs cells)', () => {
+        const lg = hudSpecs('large'), sm = hudSpecs('classic');
+        const br = (sp) => sp.filter((s) => s.role === 'bracketImg')[0].geom;
+        assert.deepStrictEqual([br(lg).rect, br(lg).origin, br(lg).gear], [br(sm).rect, br(sm).origin, br(sm).gear]);
+        assert.deepStrictEqual([lg.map((s) => s.role), sm.map((s) => s.role)], [['slats', 'bracketImg', 'bracketFill'], ['bracketImg', 'bracketFill']]);
+        assert.deepStrictEqual([lg[2].cells, sm[1].cells], [false, true]);
+    }],
+    ['HUD move: x +40 moves every HUD rect 40 right, y -30 moves them 30 up; off the scene falls back with one warning', () => {
+        L.HUD_STYLES.forEach((h) => {
+            const a = hudSpecs(h), b = hudSpecs(h, 100, 40, 0), c = hudSpecs(h, 100, 0, -30);
+            a.forEach((s, i) => {
+                assert.deepStrictEqual([b[i].rect.x - s.rect.x, b[i].rect.y - s.rect.y, b[i].rect.w, b[i].rect.h], [40, 0, s.rect.w, s.rect.h], h + ' x');
+                assert.deepStrictEqual([c[i].rect.x - s.rect.x, c[i].rect.y - s.rect.y], [0, -30], h + ' y');
+            });
+        });
+        const warns = [], sp = G.layersFor(cfg, 'hud', sel('large', 'large', 100, 120, 120, 0), (w) => warns.push(w));
+        // 120 % moved 120 px right does not fit; 100 % moved 120 px does not either: the centre
+        assert.deepStrictEqual(warns, ['hud size 120 % does not fit the hud: using 100 %', 'hud move 120, 0 px does not fit the hud: using the centre']);
+        const w1 = [];
+        G.layersFor(cfg, 'hud', sel('large', 'large', 100, 120, 100, 0), (w) => w1.push(w));
+        assert.deepStrictEqual(w1, ['hud size 120 % does not fit the hud: using 100 %']);   // 100 % moved 100 px fits
+        assert.deepStrictEqual(rectsOf(sp), rectsOf(hudSpecs('large')));
+        sp.forEach((s) => assert.ok(G.inside(s.rect, 'hud')));
+        const w2 = [], s2 = G.layersFor(cfg, 'hud', sel('large', 'bracket', 100, 120, 60, 0), (w) => w2.push(w));
+        assert.deepStrictEqual(w2, []);   // the bracket alone fits at 120 % moved 60 px
+        assert.ok(s2[0].rect.x > hudSpecs('bracket', 120)[0].rect.x);
     }],
 ];

@@ -142,7 +142,7 @@ module.exports = [
         assert.deepStrictEqual([lt.palette, lt.count], ['yyyyyoor', 8]);
         assert.deepStrictEqual([6799, 6800].map((r) => L.rawState(r, t, 8, 100, 1).lit), [7, 8]);
         assert.strictEqual(L.lightsOf(cfg, 'hud', 'bracket'), null);
-        assert.strictEqual(L.lightsOf(cfg, 'hud', 'off'), null);
+        assert.strictEqual(L.lightsOf(cfg, 'hud', 'off'), null);       // an old saved 'off' draws nothing, never throws
         assert.strictEqual(L.lightsOf(cfg, 'cluster', 'off'), null);
         assert.strictEqual(L.lightsOf(cfg, 'cluster', 'row').count, 6);
     }],
@@ -159,13 +159,13 @@ module.exports = [
         const red = [6800, 6751, 6749].map((x, i) => (r = L.step(r, x, t, 10, cfg, i, 2)));
         assert.deepStrictEqual(red.map((x) => x.lit), [10, 10, 8]);
     }],
-    ['readStyle: all 25 cluster x HUD pairs resolve each display to its own value', () => {
+    ['readStyle: all 16 cluster x HUD pairs resolve each display to its own value', () => {
         L.CLUSTER_STYLES.forEach((c) => L.HUD_STYLES.forEach((h) => {
-            const v = { clusterStyle: c, hudStyle: h, clusterSize: 110, hudSize: 80, clusterBright: 60, hudBright: 40, clusterNight: true, hudNight: false };
+            const v = { clusterStyle: c, hudStyle: h, clusterSize: 110, hudSize: 80, clusterBright: 60, hudBright: 40, clusterNight: true, hudNight: false, hudX: -30, hudY: 20 };
             const get = (k) => v[k];
             const a = L.readStyle(cfg, get, 'cluster'), b = L.readStyle(cfg, get, 'hud');
-            assert.deepStrictEqual([a.style, a.size, a.bright, a.night, a.warnings], [c, 110, 60, true, []], c + '/' + h);
-            assert.deepStrictEqual([b.style, b.size, b.bright, b.night, b.warnings], [h, 80, 40, false, []], c + '/' + h);
+            assert.deepStrictEqual([a.style, a.size, a.bright, a.night, a.warnings, a.x, a.y], [c, 110, 60, true, [], 0, 0], c + '/' + h);
+            assert.deepStrictEqual([b.style, b.size, b.bright, b.night, b.warnings, b.x, b.y], [h, 80, 40, false, [], -30, 20], c + '/' + h);
             // changing one display's setting never changes the other's
             L.CLUSTER_STYLES.forEach((c2) => assert.strictEqual(L.readStyle(cfg, (k) => (k === 'clusterStyle' ? c2 : v[k]), 'hud').style, h));
             L.HUD_STYLES.forEach((h2) => assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudStyle' ? h2 : v[k]), 'cluster').style, c));
@@ -176,8 +176,8 @@ module.exports = [
         bad.forEach((x) => {
             const v = { clusterStyle: x, hudStyle: x, clusterSize: 999, hudSize: x, clusterBright: -5, hudBright: x, clusterNight: 'yes', hudNight: x === true ? 1 : x };
             ['cluster', 'hud'].forEach((w) => {
-                const r = L.readStyle(cfg, (k) => v[k], w);
-                assert.deepStrictEqual([r.style, r.size, r.bright, r.night], ['large', 100, 100, false], w + ' ' + JSON.stringify(x));
+                const r = L.readStyle(cfg, (k) => (k === 'hudX' || k === 'hudY' ? x : v[k]), w);
+                assert.deepStrictEqual([r.style, r.size, r.bright, r.night, r.x, r.y], ['large', 100, 100, false, 0, 0], w + ' ' + JSON.stringify(x));
                 assert.ok(r.warnings.length >= 3, JSON.stringify(r.warnings));
                 assert.ok(r.warnings.some((m) => m.indexOf(w + 'Style: ') === 0), JSON.stringify(r.warnings));
             });
@@ -186,6 +186,61 @@ module.exports = [
         assert.strictEqual(L.readStyle(cfg, boom, 'hud').style, 'large');
         assert.strictEqual(L.readStyle(cfg, () => 'row', 'hud').style, 'large');        // a cluster-only id on the HUD
         assert.strictEqual(L.readStyle(cfg, () => 'bar', 'cluster').style, 'large');    // and the other way round
+        assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudStyle' ? 'off' : undefined), 'hud').style, 'large');   // an old 'off'
+        assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudX' ? 15 : undefined), 'hud').x, 0);   // not a step
+    }],
+    ['readDisplays: HUD and cluster toggle independently; both on follows "When both are on"', () => {
+        const rd = (v) => L.readDisplays((k) => v[k]);
+        const want = { 'false false': 'off', 'true false': 'hud', 'false true': 'cluster' };
+        [false, true].forEach((hud) => [false, true].forEach((cl) => L.BOTH_MODES.concat([undefined, 'junk']).forEach((both) => {
+            const r = rd({ hudOn: hud, clusterOn: cl, bothMode: both });
+            const d = hud && cl ? { map: 'both', hud: 'hud', cluster: 'cluster' }[L.BOTH_MODES.indexOf(both) >= 0 ? both : 'hud'] : want[hud + ' ' + cl];
+            assert.deepStrictEqual([r.hud, r.cluster, r.display], [hud, cl, d], [hud, cl, both].join('/'));
+            // flipping one never changes the other
+            assert.strictEqual(rd({ hudOn: !hud, clusterOn: cl, bothMode: both }).cluster, cl);
+            assert.strictEqual(rd({ hudOn: hud, clusterOn: !cl, bothMode: both }).hud, hud);
+        })));
+        [1, 'true', 'on', null, {}].forEach((x) => assert.deepStrictEqual(rd({ hudOn: x, clusterOn: x }).display, 'off', JSON.stringify(x)));
+        assert.strictEqual(L.readDisplays(() => { throw new Error('x'); }).display, 'off');
+    }],
+    ['migrateSettings: 0.2.x settings move to the two on/off settings; garbage never throws; runs once', () => {
+        const mig = (v) => { const w = L.migrateSettings((k) => v[k]), o = {}; w.forEach((x) => { o[x[0]] = x[1]; }); return o; };
+        assert.deepStrictEqual(mig({ enabled: true, display: 'both', clusterStyle: 'row', hudStyle: 'large' }), { clusterOn: true, hudOn: true, _settingsV: 3 });
+        assert.deepStrictEqual(mig({ enabled: false, display: 'hud' }), { clusterOn: false, hudOn: false, _settingsV: 3 });
+        assert.deepStrictEqual(mig({ display: 'hud', hudStyle: 'off', clusterStyle: 'large' }), { clusterOn: false, hudOn: false, hudStyle: 'large', _settingsV: 3 });
+        assert.deepStrictEqual(mig({ enabled: true, display: 'both', hudStyle: 'off', clusterStyle: 'row' }), { clusterOn: true, hudOn: false, hudStyle: 'large', _settingsV: 3 });
+        assert.deepStrictEqual(mig({ enabled: true, display: 'cluster', clusterStyle: 'stock', hudStyle: 'bar' }), { clusterOn: true, hudOn: false, _settingsV: 3 });
+        assert.deepStrictEqual(mig({}), { clusterOn: false, hudOn: false, _settingsV: 3 });       // a fresh install: both off
+        // an unknown style showed large in 0.2.x: it stays on
+        assert.deepStrictEqual(mig({ display: 'both', clusterStyle: 'banana', hudStyle: 5 }), { clusterOn: true, hudOn: true, _settingsV: 3 });
+        [{ display: 7 }, { display: null, enabled: 'x' }, { display: {}, clusterStyle: [], hudStyle: 5 }, { display: 'DASH' }].forEach((v) => {
+            const o = mig(v);
+            assert.deepStrictEqual([o.hudOn, o._settingsV], [false, 3], JSON.stringify(v));
+            assert.strictEqual(o.clusterOn, false, JSON.stringify(v));
+        });
+        assert.deepStrictEqual(L.migrateSettings(() => { throw new Error('settings broke'); }).map((w) => w[0]), ['clusterOn', 'hudOn', '_settingsV']);
+        assert.deepStrictEqual(L.migrateSettings((k) => ({ _settingsV: 3, display: 'both' })[k]), []);
+    }],
+    ['driveModeOf: the FES drive experience numbers and names; junk gives null', () => {
+        const want = { 1: 'sport', 2: 'sportplus', 3: 'sport', 4: 'comfort', 5: 'comfort', 6: 'comfort', 7: 'comfort', 8: 'comfort', 9: 'comfort', 10: 'comfort' };
+        Object.keys(want).forEach((n) => { assert.strictEqual(L.driveModeOf(Number(n)), want[n], n); assert.strictEqual(L.driveModeOf(n), want[n], '"' + n + '"'); });
+        [0, 61, 62, 63, 11, -1, 2.5, NaN, null, undefined, '', 'X', {}, [], true].forEach((x) => assert.strictEqual(L.driveModeOf(x), null, JSON.stringify(x)));
+        assert.deepStrictEqual(['SPORT_EXPERT', 'SPORT_DYNAMIC', 'SPORT_INDIVIDUAL', 'COMFORT', 'COMFORT_PLUS', 'ECO_PRO_EFFICIENT', 'ADAPTIVE', 'sport_expert'].map(L.driveModeOf),
+            ['sportplus', 'sport', 'sport', 'comfort', 'comfort', 'comfort', 'comfort', 'sportplus']);
+    }],
+    ['effectiveMode and Only in Sport+: the car wins, the setting is the fallback; the gate holds outside Sport+', () => {
+        const get = (v) => (k) => v[k];
+        assert.deepStrictEqual(L.effectiveMode('sportplus', get({ driveMode: 'comfort' }), cfg), { mode: 'sportplus', source: 'car' });
+        assert.deepStrictEqual(L.effectiveMode(null, get({ driveMode: 'comfort' }), cfg), { mode: 'comfort', source: 'setting' });
+        assert.deepStrictEqual(L.effectiveMode(null, get({ driveMode: 'eco' }), cfg), { mode: 'sport', source: 'setting' });
+        assert.deepStrictEqual(L.effectiveMode('junk', () => { throw new Error('x'); }, cfg), { mode: 'sport', source: 'setting' });
+        assert.strictEqual(L.holdForSportPlus(true, { mode: 'sportplus' }), false);
+        assert.strictEqual(L.holdForSportPlus(true, { mode: 'sport' }), true);
+        assert.strictEqual(L.holdForSportPlus(true, { mode: 'comfort' }), true);
+        assert.strictEqual(L.holdForSportPlus(true, null), true);
+        [false, undefined, 'yes', 1].forEach((x) => assert.strictEqual(L.holdForSportPlus(x, { mode: 'comfort' }), false, String(x)));
+        // the thresholds follow the car's mode
+        assert.strictEqual(L.modeThresholds(cfg, () => 0, L.effectiveMode(L.driveModeOf(4), get({ driveMode: 'sportplus' }), cfg).mode).shift, 5000);
     }],
     ['levelOf: brightness setting x night dim x config brightness', () => {
         assert.strictEqual(L.levelOf(cfg, { bright: 100, night: false }), 1);

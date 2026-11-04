@@ -45,7 +45,11 @@ module.exports = [
         hasError(bad((c) => { c.clusterStyles.large.cx = 1800; }), /^clusterStyles\.large: does not fit panel/);
         hasError(bad((c) => { c.hudStyles.bar.cy = 470; }), /^hudStyles\.bar: does not fit hud/);
         hasError(bad((c) => { c.clusterStyles.classic.cx = 1500; }), /^clusterStyles\.classic: does not fit the map/);
-        hasError(bad((c) => { c.hudStyles.bracket.origin = [600, 131]; }), /^hudStyles\.bracket: does not fit the hud/);
+        hasError(bad((c) => { c.hudStyles.bracket.top = 420; }), /^hudStyles\.bracket: does not fit the hud/);
+        hasError(bad((c) => { c.hud = { centerX: 700, anchorY: 260 }; }), /^hud: the HUD art does not fit the hud there \(large, classic, bar, bracket\)/);
+        hasError(bad((c) => { c.hud = { centerX: 400 }; }), /^hud: centerX and anchorY/);
+        hasError(bad((c) => { c.nudge = { x: [10, 20], y: [0] }; }), /^nudge:/);
+        hasError(bad((c) => { c.hudStyles.bar.idle = 'yes'; }), /^hudStyles\.bar: idle must be true or false/);
         hasError(bad((c) => { c.mapOffset = { x: 416 }; }), /^mapOffset/);
     }],
     ['shapes that cannot be drawn fall back: slats over the axis, slat wider than pitch, wrong perSide', () => {
@@ -55,14 +59,16 @@ module.exports = [
         hasError(bad((c) => { c.clusterStyles.stock.reds = 4; }), /^clusterStyles\.stock: reds/);
         hasError(bad((c) => { c.clusterStyles.row.lean = 'sideways'; }), /^clusterStyles\.row: lean/);
     }],
-    ['bad brightness, steps, nightDim, styles, display, driveMode, kill file name fall back', () => {
+    ['bad brightness, steps, nightDim, styles, driveMode, kill file name, hud centre fall back', () => {
         const r = bad((c) => {
             c.brightness = 2; c.sizeSteps = [90, 110]; c.brightSteps = 'x'; c.nightDim = 0; c.styles = { cluster: 'banana', hud: 'large' };
-            c.display = 'dash'; c.driveMode = 'eco'; c.safety.killFile = '../x';
+            c.driveMode = 'eco'; c.safety.killFile = '../x'; c.hud = { centerX: 'x', anchorY: 260 };
         });
-        ['brightness', 'sizeSteps', 'brightSteps', 'nightDim', 'styles', 'display', 'driveMode', 'safety'].forEach((k) => hasError(r, new RegExp('^' + k + ':')));
-        assert.deepStrictEqual([r.cfg.brightness, r.cfg.sizeSteps, r.cfg.nightDim, r.cfg.styles, r.cfg.display, r.cfg.driveMode, r.cfg.safety.killFile],
-            [1, L.DEFAULTS.sizeSteps, 0.35, { cluster: 'large', hud: 'large' }, 'off', 'sport', 'DISABLE']);
+        ['brightness', 'sizeSteps', 'brightSteps', 'nightDim', 'styles', 'driveMode', 'safety', 'hud'].forEach((k) => hasError(r, new RegExp('^' + k + ':')));
+        assert.deepStrictEqual([r.cfg.brightness, r.cfg.sizeSteps, r.cfg.nightDim, r.cfg.styles, r.cfg.driveMode, r.cfg.safety.killFile, r.cfg.hud],
+            [1, L.DEFAULTS.sizeSteps, 0.35, { cluster: 'large', hud: 'large' }, 'sport', 'DISABLE', { centerX: 400, anchorY: 260 }]);
+        // an 'off' style is gone: it is the on/off settings now
+        hasError(bad((c) => { c.styles = { cluster: 'off', hud: 'large' }; }), /^styles:/);
     }],
     ['an empty object gives the defaults; nothing ever throws', () => {
         const r = L.validateConfig({});
@@ -85,29 +91,46 @@ module.exports = [
         assert.deepStrictEqual(L.modeThresholds(cfg, get({ comfortShift: 6900 }), 'comfort').invalid, true);   // over limitWarm - 150
         assert.strictEqual(L.modeThresholds(cfg, get({}), 'eco').mode, 'sport');
     }],
-    ['app.json defaults match config.js (no drift)', () => {
+    ['app.json defaults match config.js (no drift); two on/off settings, no "enabled" or "display"', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
-        const def = (k) => spec.settings.filter((s) => s.key === k)[0].default;
-        assert.strictEqual(def('display'), config.display);
+        const item = (k) => spec.settings.filter((s) => s.key === k)[0];
+        const def = (k) => item(k).default;
         assert.strictEqual(def('driveMode'), config.driveMode);
-        assert.strictEqual(def('enabled'), true);
-        assert.deepStrictEqual(spec.settings.filter((s) => s.key === 'driveMode')[0].options.map((o) => o[0]), L.MODES);
-        assert.deepStrictEqual(spec.settings.filter((s) => s.key === 'display')[0].options.map((o) => o[0]), L.DISPLAYS);
+        assert.strictEqual(item('driveMode').label, 'Drive mode if the car does not send it');
+        assert.deepStrictEqual(item('driveMode').options.map((o) => o[0]), L.MODES);
+        assert.deepStrictEqual(['hudOn', 'clusterOn', 'onlySportPlus', 'autoStart'].map((k) => [item(k).type, def(k)]), [['bool', false], ['bool', false], ['bool', false], ['bool', true]]);
+        assert.deepStrictEqual([item('hudOn').label, item('clusterOn').label, item('onlySportPlus').label], ['HUD', 'Instrument cluster', 'Only in Sport+']);
+        // the car shows one display at a time: the HUD wins by default, the cluster is a choice, the map area is experimental
+        assert.deepStrictEqual([item('bothMode').options.map((o) => o[0]), def('bothMode')], [['hud', 'cluster', 'map'], 'hud']);
+        assert.deepStrictEqual(item('bothMode').options.map((o) => o[1]).slice(0, 2), ['HUD', 'Instrument cluster']);
+        assert.ok(/^Experimental: /.test(item('bothMode').options[2][1]) && /one at a time/.test(item('bothMode').label));
+        assert.strictEqual(item('enabled'), undefined);
+        assert.strictEqual(item('display'), undefined);
+        [['hudX', config.nudge.x, 'px left', 'px right'], ['hudY', config.nudge.y, 'px up', 'px down']].forEach((x) => {
+            const it = item(x[0]);
+            assert.deepStrictEqual([it.steps, it.default, it.labels['0']], [x[1], 0, 'Centre'], x[0]);
+            x[1].forEach((v) => { if (v) assert.strictEqual(it.labels[String(v)], Math.abs(v) + ' ' + (v < 0 ? x[2] : x[3]), x[0] + ' ' + v); });
+        });
+        assert.deepStrictEqual(spec.screens[0].buttons.map((b) => b[0]), ['BTN_HUD', 'BTN_CLUSTER', 'BTN_SETTINGS']);
         L.MODES.forEach((m) => ['Start', 'Shift'].forEach((k) => assert.strictEqual(def(m + k), 0, m + k)));
         assert.strictEqual(def('demo'), 'auto');
     }],
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
-        assert.strictEqual(spec.version, '0.2.0');
-        assert.deepStrictEqual(spec.settings.slice(0, 10).map((s) => s.key),
-            ['enabled', 'display', 'clusterStyle', 'hudStyle', 'clusterSize', 'clusterBright', 'clusterNight', 'hudSize', 'hudBright', 'hudNight']);
+        assert.strictEqual(spec.version, '0.3.0');
+        assert.strictEqual(spec.mguAppStartType, 'autostart');
+        assert.deepStrictEqual(spec.settings.slice(0, 16).map((s) => s.key),
+            ['hudOn', 'clusterOn', 'bothMode', 'onlySportPlus', 'autoStart', 'hudStyle', 'hudSize', 'hudX', 'hudY', 'hudBright', 'hudNight',
+                'clusterStyle', 'clusterSize', 'clusterBright', 'clusterNight', 'driveMode']);
         assert.strictEqual(item('clusterStyle').default, config.styles.cluster);
         assert.strictEqual(item('hudStyle').default, config.styles.hud);
         assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[0]), L.CLUSTER_STYLES);
         assert.deepStrictEqual(item('hudStyle').options.map((o) => o[0]), L.HUD_STYLES);
-        assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[1]), ['M slats large', 'M slats classic', 'Row v3', 'Stock blocks', 'Off']);
-        assert.deepStrictEqual(item('hudStyle').options.map((o) => o[1]), ['Bar + bracket large', 'Bar + bracket classic', 'Bar only', 'Bracket + gear only', 'Off']);
+        assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[1]), ['M slats, large', 'M slats, small', 'Centre row (12 segments)', 'Stock look (one block per dial)']);
+        assert.deepStrictEqual(item('hudStyle').options.map((o) => o[1]), ['Shift bar + rev bracket, large', 'Shift bar + rev bracket, small', 'Shift bar only', 'Rev bracket + gear only']);
+        // plain names: no version jargon or "classic" in what Adam reads
+        spec.settings.forEach((s) => [s.label].concat((s.options || []).map((o) => o[1])).forEach((t) => assert.ok(!/\bv\d|classic/i.test(t), t)));
         ['cluster', 'hud'].forEach((w) => {
             assert.deepStrictEqual([item(w + 'Size').steps, item(w + 'Size').default], [config.sizeSteps, 100]);
             assert.deepStrictEqual([item(w + 'Bright').steps, item(w + 'Bright').default], [config.brightSteps, 100]);
@@ -117,9 +140,13 @@ module.exports = [
         const sig = spec.signals;
         assert.deepStrictEqual(sig['de.bmw.infrastructure.VehicleInformation'], { statusGearboxDrive: 's', DataPowerTrain2: 's' });
         assert.deepStrictEqual(sig['de.bmw.infotainment.vehicle.Vehicle2'], { statusCarSpeed2: 'rs' });
+        // the drive mode: subscribe only (no getter needed) and optional, so no G01 refuses the install
+        const fes = sig['de.bmw.infotainment.drivingexcitement.FES'];
+        assert.strictEqual(fes.statusFESVehicleDynamicSwitchHMI, 's');
+        assert.ok(typeof fes._optional === 'string' && fes._optional.length > 10);
     }],
-    ['the HUD unit label is mph (US car) in config.js and DEFAULTS', () => {
-        assert.strictEqual(config.hudStyles.bracket.unit, 'mph');
-        assert.strictEqual(L.DEFAULTS.hudStyles.bracket.unit, 'mph');
+    ['the HUD draws no speed, unit or line (the stock HUD shows the speed): none in config.js or DEFAULTS', () => {
+        [config.hudStyles.bracket, L.DEFAULTS.hudStyles.bracket].forEach((B) => ['unit', 'unitAt', 'line', 'origin', 'below'].forEach((k) => assert.strictEqual(B[k], undefined, k)));
+        assert.ok(!/km\/h|kph|mph/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'hudart.js'), 'utf8')));
     }],
 ];
