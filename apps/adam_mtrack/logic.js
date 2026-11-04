@@ -7,17 +7,24 @@
  *   allowed(mode, when)           the "When to show" setting against the car's drive mode
  *   decide(s, now, since)         -> { want, reason, since }: whether the cover may show now. Every condition
  *                                 must hold for showHoldMs on the passed wall clock first; any failing one
- *                                 gives want false at once, with its reason.
+ *                                 gives want false at once, with its reason. The Safety settings (BMW popups,
+ *                                 drop if no drive mode, speed timeout) come in s; anything unknown is the strict side.
+ *   speedStatus(at, now, ms, cfg) 'present' | 'stale' | 'missing': the speed signal as the speed guard sees it
  *   thresholds / step             the slats (Shift Lights' logic: cold-oil limit, hysteresis, limiter flash)
- *   readSettings(get, schema)     the saved settings checked against app.json (bad -> default), plus
+ *   readSettings(get, schema)     the saved settings checked against app.json (bad -> default, or the strict side
+ *                                 for a Safety setting), plus
  *   layoutOf(v)                   the panels as drawn: whole widgets take both halves, swap, hidden -> default
  */
 const C = require('./catalogue');
 const { clean } = require('./settings_check');
 
-const SETTINGS_V = 1;       // settings.json shape (written once as _settingsV, for later shape changes)
+const SETTINGS_V = 2;       // settings.json shape: 2 = the Safety settings (0.1.1), 1 = 0.1.0
 const RANK = { sportplus: 3, sport: 2, comfort: 0 };
 const NEED = { sportplus: 3, sport: 2 };
+const POPUP_GUARDS = ['auto', 'require', 'ignore'];
+/** A Safety setting saved with a value that is not valid takes its strict side, never a weaker default. */
+const STRICT = { popupGuard: 'require', modeMissingDrop: true };
+const NEW_IN_V2 = ['popupGuard', 'modeMissingDrop', 'speedStaleMs'];
 const REASONS = {
     showing: 'Showing',
     hold: 'Showing in a moment',
@@ -25,13 +32,16 @@ const REASONS = {
     kill: 'Off: kill file',
     tripped: 'Stopped after errors: turn the cover off and on',
     demo: 'Demo data: the cover never shows on demo data',
+    noart: 'The art file is missing or damaged: reinstall the app',
     renderer: 'Cluster renderer not connected',
-    nocc: 'No Check Control signal on this car: the cover stays off',
-    cc: 'Check Control message: the cover gives way',
+    nocc: 'No BMW popup signal, and BMW popups is set to Require',
+    ccwait: 'Checking for the BMW popup signal',
+    cc: 'BMW popup: the cover gives way',
     held: 'BMW holds the cluster panel (a popup or the speech dialog)',
     hud: 'Waiting: the HUD (Shift Lights) holds the cluster scene',
-    nospeed: 'No speed signal: the cover stays off',
+    nospeed: 'No fresh speed signal: the cover stays off',
     error: 'Error: the cover gives way for a moment',
+    nomode: 'No drive-mode signal, and Drop if missing is on',
     mode: 'Waiting for the drive mode',
 };
 
@@ -62,31 +72,51 @@ function allowed(mode, when) {
     return Object.prototype.hasOwnProperty.call(RANK, mode) && RANK[mode] >= need;
 }
 
+/** BMW popups as the guard reads it: 'auto' | 'require' | 'ignore'; anything else is the strict 'require'. */
+const popupGuardOf = (x) => (POPUP_GUARDS.indexOf(x) >= 0 ? x : STRICT.popupGuard);
+/** The speed timeout in use (ms): a value within the safety bounds, else the tested default. Never off. */
+function staleMsOf(x, cfg) {
+    const S = cfg.safety;
+    return num(x) && x >= S.speedStaleMinMs && x <= S.speedStaleMaxMs ? x : S.speedStaleMs;
+}
+/** The speed signal: 'missing' (never a valid one), 'stale' (older than the timeout, or from the future: a clock jump), 'present'. */
+function speedStatus(at, now, ms, cfg) {
+    if (!num(at)) return 'missing';
+    return now - at > staleMsOf(ms, cfg) || now < at ? 'stale' : 'present';
+}
+
 /** The first condition that keeps the cover off, or ''. s: see decide. */
-function blocker(s, now, S, cfg) {
+function blocker(s, now, cfg) {
+    const S = cfg.safety, pg = popupGuardOf(s.popupGuard);
+    const cc = s.cc === 'present' || s.cc === 'missing' ? s.cc : 'waiting';    // an unknown state counts as not answered yet
     if (s.coverOn !== true) return 'off';
     if (s.killed) return 'kill';
     if (s.tripped) return 'tripped';
     if (s.demo) return 'demo';
+    if (s.art !== true) return 'noart';
     if (s.link !== 'ready') return 'renderer';
-    if (cfg.requireCheckControl && !s.ccKnown) return 'nocc';
-    if (s.ccActive) return 'cc';
-    if (num(s.ccNewAt) && now - s.ccNewAt >= 0 && now - s.ccNewAt < S.showHoldMs) return 'cc';
+    if (pg === 'require' && cc !== 'present') return 'nocc';
+    if (pg === 'auto' && cc === 'waiting') return 'ccwait';
+    if (pg !== 'ignore' && s.ccActive) return 'cc';
+    if (pg !== 'ignore' && num(s.ccNewAt) && now - s.ccNewAt >= 0 && now - s.ccNewAt < S.showHoldMs) return 'cc';
     if (s.target === 'waiting' || s.target === 'parked') return s.holder === 'foreign' ? 'hud' : 'held';
-    if (!num(s.speedAt) || now - s.speedAt > S.speedStaleMs || now < s.speedAt) return 'nospeed';
+    if (speedStatus(s.speedAt, now, s.staleMs, cfg) !== 'present') return 'nospeed';
     if (num(s.lastErrorAt) && now - s.lastErrorAt >= 0 && now - s.lastErrorAt < S.showHoldMs) return 'error';
+    const known = Object.prototype.hasOwnProperty.call(RANK, s.mode);
+    if (!known && s.modeMissingDrop !== false) return 'nomode';                 // only an explicit false lets it through
     if (!allowed(s.mode, s.when)) return 'mode';
     return '';
 }
 
 /**
- * s = { coverOn, killed, tripped, demo, link ('ready' once cluster-render answered), ccKnown (the Check Control
- * list arrived), ccActive, ccNewAt, target, holder (the panel target's last event), speedAt (wall ms of the last
- * valid speed), lastErrorAt, mode, when }. since: when every condition last started holding (null: not holding).
- * A clock that jumps backwards restarts the hold (KB-ANY-203).
+ * s = { coverOn, killed, tripped, demo, art (the art loaded), link ('ready' once cluster-render answered),
+ * cc ('present' | 'waiting' | 'missing': the Check Control list), ccActive, ccNewAt, target, holder (the panel
+ * target's last event), speedAt (wall ms of the last valid speed), lastErrorAt, mode (null: no drive mode), when,
+ * popupGuard, modeMissingDrop, staleMs (the Safety settings) }. since: when every condition last started holding
+ * (null: not holding). A clock that jumps backwards restarts the hold (KB-ANY-203).
  */
 function decide(s, now, since, cfg) {
-    const S = cfg.safety, b = blocker(s || {}, now, S, cfg);
+    const S = cfg.safety, b = blocker(s || {}, now, cfg);
     if (b) return { want: false, reason: b, since: null };
     const t0 = num(since) && since <= now ? since : now;
     const want = now - t0 >= S.showHoldMs;
@@ -130,13 +160,14 @@ function step(prev, rpm, th, cfg) {
 const PANEL_KEYS = ['leftPanel', 'leftLower', 'rightPanel', 'rightLower'];
 
 /**
- * The saved settings checked against app.json (a bad value -> its default, its key in bad), then a hidden widget
- * (no signal in this app) falls back to the setting's default too.
+ * The saved settings checked against app.json (a bad value -> its default, its key in bad; a Safety setting's bad
+ * value -> its strict side, STRICT), then a hidden widget (no signal in this app) falls back to the setting's default too.
  */
 function readSettings(get, schema) {
     const raw = {};
     (schema || []).forEach((s) => { let v; try { v = get(s.key); } catch (e) { v = undefined; } if (v !== undefined) raw[s.key] = v; });
     const r = clean(schema, raw), v = r.values, bad = r.bad.slice();
+    Object.keys(STRICT).forEach((k) => { if (bad.indexOf(k) >= 0) v[k] = STRICT[k]; });
     PANEL_KEYS.forEach((k) => {
         const w = C.get(v[k]);
         if (w && w.inApp) return;
@@ -158,11 +189,21 @@ function layoutOf(v) {
     return v.swapSides === true ? { left: R, right: L } : { left: L, right: R };
 }
 
-/** The writes that bring an older settings.json to this shape: only the version marker in 0.1.0. */
-function migrateSettings(get) {
-    let v;
-    try { v = get('_settingsV'); } catch (e) { v = undefined; }
-    return v === SETTINGS_V ? [] : [['_settingsV', SETTINGS_V]];
+/**
+ * The writes that bring an older settings.json to this shape. 0.1.0 (v1) had no Safety settings: each one not saved
+ * gets its app.json default written (BMW popups = Use when the car sends it), then _settingsV. A saved value is
+ * never overwritten here: a bad one is read as its strict side (readSettings). Never throws.
+ */
+function migrateSettings(get, schema) {
+    const g = (k) => { try { return get(k); } catch (e) { return undefined; } };
+    if (g('_settingsV') === SETTINGS_V) return [];
+    const writes = [];
+    NEW_IN_V2.forEach((k) => {
+        const s = (schema || []).filter((x) => x && x.key === k)[0];
+        if (s && g(k) === undefined) writes.push([k, s.default]);
+    });
+    writes.push(['_settingsV', SETTINGS_V]);
+    return writes;
 }
 
 /**
@@ -191,6 +232,6 @@ function timerStep(t, kmh, now, target) {
 const levelOf = (cfg, v) => Math.round((num(v.bright) ? v.bright : 100) / 100 * (v.nightDim === true ? cfg.nightDim : 1) * 1000) / 1000;
 
 module.exports = {
-    SETTINGS_V, RANK, REASONS, PANEL_KEYS, driveModeOf, allowed, decide, blocker, thresholds, rawState, step,
-    readSettings, layoutOf, sideOf, migrateSettings, levelOf, timerStep,
+    SETTINGS_V, RANK, REASONS, PANEL_KEYS, POPUP_GUARDS, STRICT, driveModeOf, allowed, decide, blocker, popupGuardOf,
+    staleMsOf, speedStatus, thresholds, rawState, step, readSettings, layoutOf, sideOf, migrateSettings, levelOf, timerStep,
 };

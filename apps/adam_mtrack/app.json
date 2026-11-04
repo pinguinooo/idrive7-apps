@@ -2,7 +2,7 @@
   "id": "adam_mtrack",
   "title": "M Track Cluster",
   "description": "An M Track style cover on the instrument cluster in Sport+: bar tachs to 7,000 rpm, gear and mph, side panels, shift-light slats. Off until you turn it on",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "mguAppStartType": "autostart",
   "vendor": "custom",
   "loggingId": "OAD3",
@@ -51,7 +51,7 @@
     },
     "de.bmw.infotainment.checkcontrol.CheckControlMaster": {
       "basicList": "rs",
-      "_optional": "Check Control messages: without it the cover never shows"
+      "_optional": "Check Control messages (Safety > BMW popups): used when the car sends them; Require keeps the cover off without them"
     },
     "de.bmw.infotainment.KombiInterface_2": {
       "newCCMessage": "rs",
@@ -254,6 +254,46 @@
       "label": "Night dim",
       "type": "bool",
       "default": false
+    },
+    {
+      "key": "popupGuard",
+      "label": "BMW popups (Check Control)",
+      "type": "choice",
+      "default": "auto",
+      "options": [
+        ["auto", "Use when the car sends them"],
+        ["require", "Require them (cover stays off without)"],
+        ["ignore", "Ignore popups (risky)"]
+      ]
+    },
+    {
+      "key": "modeMissingDrop",
+      "label": "Drop the cover if the drive mode is missing",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "speedStaleMs",
+      "label": "Speed timeout (always on)",
+      "type": "number",
+      "default": 1000,
+      "markDefault": true,
+      "steps": [
+        500,
+        1000,
+        1500,
+        2000,
+        2500,
+        3000
+      ],
+      "labels": {
+        "500": "0.5 s",
+        "1000": "1 s",
+        "1500": "1.5 s",
+        "2000": "2 s",
+        "2500": "2.5 s",
+        "3000": "3 s"
+      }
     },
     {
       "key": "demo",

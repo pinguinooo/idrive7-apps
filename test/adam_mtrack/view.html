@@ -13,6 +13,7 @@
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   button { background: #22252d; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font: inherit; cursor: pointer; }
   button:hover { border-color: #4a4f5a; } button[aria-pressed="true"] { background: #a8101a; border-color: var(--red); }
+  button:disabled { opacity: 0.4; cursor: default; }
   label { color: var(--dim); display: flex; gap: 8px; align-items: center; } input[type=range] { width: 220px; }
   #status { font-weight: 600; } .on { color: var(--ok); } .off { color: var(--dim); }
   .note { color: var(--dim); font-size: 13px; }
@@ -23,6 +24,7 @@
   <div class="card">
     <canvas id="panel" width="1920" height="720" aria-label="The instrument cluster panel, 1920 x 720"></canvas>
     <div class="row" style="margin-top:10px"><span id="status" class="off">starting...</span><span class="note" id="detail"></span></div>
+    <div class="note" id="applog" style="margin-top:6px" aria-live="polite"></div>
   </div>
   <div class="card">
     <div class="row">
@@ -33,10 +35,14 @@
       <span class="note">Guards</span><button data-t="speedloss">Speed loss</button><button data-t="popup">Check Control popup</button><button data-t="bmw">BMW holds panel</button><button data-t="kill">Kill file</button>
     </div>
     <div class="row" style="margin-top:8px">
+      <span class="note">BMW popups (Safety tab)</span><button data-g="auto">Use if sent</button><button data-g="require">Require</button><button data-g="ignore">Ignore</button>
+      <span class="note" id="popupnote"></span>
+    </div>
+    <div class="row" style="margin-top:8px">
       <label>rpm <input id="rpm" type="range" min="0" max="7200" step="50" value="800"><span id="rpmv">800</span></label>
       <label>speed (km/h fed) <input id="speed" type="range" min="0" max="250" step="1" value="0"><span id="speedv">0</span></label>
     </div>
-    <p class="note">Settings (cover on/off, when to show, panels, units, brightness) are on the centre screen below, as in the car. The emulator proves the app's logic, guards, messages, shaders and art; only the car proves that a G01 shows the panel scene, its pixels, brightness and latency.</p>
+    <p class="note">Settings (cover on/off, when to show, panels, units, brightness, the Safety tab with every guard and the signals it sees) are on the centre screen below, as in the car. The emulator proves the app's logic, guards, messages, shaders and art; only the car proves that a G01 shows the panel scene, its pixels, brightness and latency.</p>
   </div>
   <div class="card"><iframe id="emu" title="The centre screen (idrive7-apps emulator)"></iframe></div>
 </main>
@@ -50,6 +56,7 @@ const post = (a, v) => fetch('/act', { method: 'POST', body: JSON.stringify({ a,
 document.querySelectorAll('[data-a]').forEach((b) => b.onclick = () => post(b.dataset.a));
 document.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => { post('mode', b.dataset.mode); document.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
 document.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => post(b.dataset.t));
+document.querySelectorAll('[data-g]').forEach((b) => b.onclick = () => post('popupGuard', b.dataset.g));
 const slider = (id, a) => { const el = document.getElementById(id), out = document.getElementById(id + 'v'); el.oninput = () => { out.textContent = el.value; post(a, Number(el.value)); }; };
 slider('rpm', 'rpm'); slider('speed', 'speed');
 async function frame() {
@@ -68,7 +75,11 @@ async function frame() {
     st.textContent = shown ? 'Cover shown (' + s.list.length + ' layers)' : 'Cover off: BMW\'s own cluster shows';
     st.className = shown ? 'on' : 'off';
     document.querySelectorAll('[data-t]').forEach((b) => b.setAttribute('aria-pressed', String(!!s.state[{ speedloss: 'speedLost', popup: 'popup', bmw: 'bmw', kill: 'kill' }[b.dataset.t]])));
+    document.querySelectorAll('[data-g]').forEach((b) => b.setAttribute('aria-pressed', String(s.state.popupGuard === b.dataset.g)));
+    document.querySelector('[data-t="popup"]').disabled = !!s.state.noPopups;
+    document.getElementById('popupnote').textContent = s.state.noPopups ? 'this run: a car that sends no popup signal (NO_POPUPS=1)' : '';
     document.getElementById('detail').textContent = 'fed: ' + s.sig.rpm + ' rpm, ' + s.sig.speed + ' km/h, gear ' + s.sig.gear;
+    document.getElementById('applog').textContent = (s.appLog || []).length ? 'app: ' + s.appLog.join('  |  ') : '';
   } catch (e) { document.getElementById('status').textContent = 'waiting for the emulator...'; }
   busy = false;
 }

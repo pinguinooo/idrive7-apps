@@ -2,8 +2,10 @@
 // (centre screen at http://localhost:EMU_PORT), its cluster-render client talks to a fake service inside this process,
 // and http://localhost:VIEW_PORT draws the panel from that service's state in the browser's WebGL (crstate.mjs +
 // crdraw.js, the same renderer stand-in the sweep uses), with buttons that drive the car (rpm, speed, drive mode)
-// and the guards (speed loss, a Check Control popup, BMW taking the panel, the kill file).
-// env: EMU_DIR (idrive7-apps clone with apps/adam_mtrack linked), EMU_PORT (8077), VIEW_PORT (8090), NODE_EMU (node for emu.js).
+// and the guards (speed loss, a Check Control popup, BMW taking the panel, the kill file), the Safety page's BMW popups
+// choice, and the app's own "why off" log line under the panel.
+// env: EMU_DIR (idrive7-apps clone with apps/adam_mtrack linked), EMU_PORT (8077), VIEW_PORT (8090), NODE_EMU (node for emu.js),
+// NO_POPUPS=1: a car that sends no Check Control signal at all (Adam's G01 in the 0.1.0 test): the list is never fed.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,9 +45,19 @@ const emuLog = [];
 const keepLog = (d) => { emuLog.push(d.toString()); if (emuLog.length > 200) emuLog.shift(); };
 emu.stdout.on('data', keepLog); emu.stderr.on('data', keepLog);
 let ws = null, sigV = { rpm: 800, speed: 0, oil: 92, coolant: 90, gear: 'P', torque: 40, gLat: 0, gLong: 0 }, pullTimer = null;
+const NO_POPUPS = process.env.NO_POPUPS === '1', appLines = [];
 function wsSend(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
 function connectWs() {
     try { ws = new WebSocket('ws://127.0.0.1:' + EMU_PORT + '/ws'); } catch (e) { setTimeout(connectWs, 1000); return; }
+    // the app's log: keep the cover's own lines (why it is off, shown / dropped, the popup signal) for the page
+    ws.onmessage = (e) => {
+        if (typeof e.data !== 'string') return;
+        try {
+            const m = JSON.parse(e.data);
+            if (m.t === 'log') m.lines.forEach((l) => { const s = String(l[1]); if (/^(why off: |cover: |BMW popup signal)/.test(s)) { appLines.push(s); if (appLines.length > 6) appLines.shift(); } });
+            else if ((m.t === 'settings' || m.t === 'spec') && m.values && typeof m.values.popupGuard === 'string') state.popupGuard = m.values.popupGuard;
+        } catch (x) { /* not ours */ }
+    };
     ws.onopen = () => { wsSend({ t: 'sig', mode: 'manual', v: sigV }); start(); };
     ws.onclose = () => { ws = null; setTimeout(connectWs, 1000); };
     ws.onerror = () => {};
@@ -55,9 +67,10 @@ let started = false;
 function start() {
     if (started) return;
     started = true;
-    // a car in Sport+, no Check Control message, tyres, fuel, outside temperature (the emulator sends none of these)
+    // a car in Sport+, no Check Control message (NO_POPUPS: no Check Control signal at all), tyres, fuel, outside temperature
+    // (the emulator sends none of these)
     setTimeout(() => {
-        feed({ iface: CCM, field: 'basicList', value: [] });
+        if (!NO_POPUPS) feed({ iface: CCM, field: 'basicList', value: [] });
         feed({ iface: FES, field: 'statusFESVehicleDynamicSwitchHMI', value: { actualValueModeDrivingExperience: 2 } });
         feed({ iface: 'de.bmw.infotainment.vehicle.TPMS', field: 'statusTyrePressure', value: { actualValuePressureTyreFLH: 23, actualValuePressureTyreFRH: 23, actualValuePressureTyreRLH: 24, actualValuePressureTyreRRH: 24 } });
         feed({ iface: 'de.bmw.infotainment.vehicle.TPMS', field: 'statusTyreTemperature', value: { actualValueTemperatureTyreFLH: 54, actualValueTemperatureTyreFRH: 55, actualValueTemperatureTyreRLH: 53, actualValueTemperatureTyreRRH: 54 } });
@@ -67,7 +80,7 @@ function start() {
         wsSend({ t: 'set', k: 'coverOn', v: true });
     }, 2500);
 }
-const state = { mode: 'sportplus', speedLost: false, popup: false, bmw: false, kill: false };
+const state = { mode: 'sportplus', speedLost: false, popup: false, bmw: false, kill: false, noPopups: NO_POPUPS, popupGuard: 'auto' };
 function sig(v) { sigV = Object.assign({}, sigV, v); wsSend({ t: 'sig', mode: 'manual', v: sigV }); }
 function act(a, v) {
     if (pullTimer && (a === 'pull' || a === 'idle' || a === 'rpm')) { clearInterval(pullTimer); pullTimer = null; }
@@ -84,7 +97,8 @@ function act(a, v) {
     else if (a === 'speed') sig({ speed: Number(v) || 0, gear: sigV.gear === 'P' ? 'D3' : sigV.gear });
     else if (a === 'mode') { state.mode = v; feed({ iface: FES, field: 'statusFESVehicleDynamicSwitchHMI', value: { actualValueModeDrivingExperience: { comfort: 4, sport: 1, sportplus: 2 }[v] } }); }
     else if (a === 'speedloss') { state.speedLost = !state.speedLost; feed({ block: 'speed', on: state.speedLost }); }
-    else if (a === 'popup') { state.popup = !state.popup; feed({ iface: CCM, field: 'basicList', value: [{ ccmId: 1, activeState: state.popup ? 'AKTIV' : 'INAKTIV' }] }); }
+    else if (a === 'popup') { if (NO_POPUPS) return; state.popup = !state.popup; feed({ iface: CCM, field: 'basicList', value: [{ ccmId: 1, activeState: state.popup ? 'AKTIV' : 'INAKTIV' }] }); }
+    else if (a === 'popupGuard') { if (['auto', 'require', 'ignore'].indexOf(v) < 0) return; state.popupGuard = v; wsSend({ t: 'set', k: 'popupGuard', v }); }
     else if (a === 'bmw') { state.bmw = !state.bmw; fake.target('panel', state.bmw ? 'waiting' : 'shown', state.bmw ? 'stock' : ''); }
     else if (a === 'kill') {
         state.kill = !state.kill;
@@ -103,7 +117,7 @@ const server = http.createServer((req, res) => {
             const list = layersAt(S, Date.now(), 'panel'), assets = {};
             assetsOf(list).forEach((k) => { const a = S.assets.get(k); if (a && a.version) assets[k] = { v: a.version, format: a.format, w: a.w, h: a.h, sampling: a.sampling }; });
             res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-            res.end(JSON.stringify({ list, assets, state, sig: sigV, emuPort: EMU_PORT }));
+            res.end(JSON.stringify({ list, assets, state, sig: sigV, emuPort: EMU_PORT, appLog: appLines.slice(-3) }));
             return;
         }
         if (u.pathname === '/asset') {

@@ -3,11 +3,13 @@
  * M Track Cluster - an M Track style cover over the instrument cluster (the cluster-render service's `panel`
  * target, 1920 x 720): bar tachs to 7,000 rpm, gear over speed in mph, side panels, corner gauges, shift-light
  * slats. It covers the real speedometer, so it shows only while every guard holds (logic.decide): the cover is on,
- * the drive mode is allowed, a valid speed arrived within 1 s, no Check Control message, BMW does not hold the
- * panel, no kill file, no recent error, live data. Any of them failing drops every layer within one tick (100 ms).
+ * the drive mode is allowed, a valid speed arrived within the speed timeout (1 s), no BMW popup (when the car sends
+ * that signal, Safety > BMW popups), BMW does not hold the panel, no kill file, no recent error, live data. Any of
+ * them failing drops every layer within one tick (100 ms).
  * A hung app's cover blanks by itself (output.js dead-man switch); a crashed or exited app's connection closes and
  * the service drops its layers at once. Default off.
- * Centre screen: the settings pages (ui.js), drawn only when something changes. Every callback goes through
+ * Centre screen: the settings pages (ui.js), drawn only when something changes (a setting, the cover's reason, a
+ * signal's status on the Safety page: present / missing / stale). Every callback goes through
  * safety.guard: nothing may throw out of the main loop (three app crashes in ~33 s wipe every app).
  * Tunables: config.js. Pure parts: logic.js, geom.js, units.js, widgets.js.
  */
@@ -26,6 +28,7 @@ const { createPoll } = require('./poll');
 const { ClusterRender } = require('./cluster_render_client');
 const { Canvas } = require('./kit/canvas');
 const { createUi } = require('./ui');
+const P = require('./pages');
 
 const CDS = 'de.bmw.infotainment.vehicle.CDS', V2 = 'de.bmw.infotainment.vehicle.Vehicle2';
 const FES = 'de.bmw.infotainment.drivingexcitement.FES', TPMS = 'de.bmw.infotainment.vehicle.TPMS';
@@ -50,8 +53,9 @@ mgu.run({
             log.info('kill switch file: ' + killPath);
             const get = (k) => settings.get(k);
             const schema = settings.schema || (ctx.spec && ctx.spec.settings) || [];
-            const moves = L.migrateSettings(get);
+            const moves = L.migrateSettings(get, schema);
             moves.forEach((w) => { try { settings.set(w[0], w[1]); } catch (e) { log.warn('settings migration ' + w[0] + ': ' + e); } });
+            if (moves.length) log.info('settings migrated to v' + L.SETTINGS_V + ': ' + JSON.stringify(moves));
             const warned = Object.create(null);
             const read = () => {
                 const r = L.readSettings(get, schema);
@@ -72,7 +76,7 @@ mgu.run({
             };
 
             /* ---------- car state ---------- */
-            let carMode = null, d = {}, speedAt = null, speedKmh = null, killed = safety.pollKill(fs, killPath);
+            let carMode = null, modeRaw, d = {}, speedAt = null, speedKmh = null, killed = safety.pollKill(fs, killPath);
             const carUnits = { press: null, temp: null };
             const cc = { active: new Set(), newAt: null };
             const vals = { tyres: { p: [], t: [] }, trip: {}, timer: null, peaks: { right: 0, brake: 0, left: 0, accel: 0 }, boost: null, fuelL: null, rangeKm: null, ambient: null };
@@ -80,6 +84,19 @@ mgu.run({
             const units = () => U.resolve(v.units, carUnits);
             const ifaceUp = (i) => !!(seen[i] || (watchRes[i] && watchRes[i].available));
             const avail = (id) => { const w = CAT.get(id); return !!w && w.needs.every(ifaceUp); };
+            // monotonic on purpose: the startup wait for a signal must not stretch or shrink with a wall-clock jump
+            const started = process.hrtime();
+            const upMs = () => { const t = process.hrtime(started); return t[0] * 1e3 + t[1] / 1e6; };
+            /**
+             * A signal's interface: 'present' (the car answered or sent it), 'waiting' (its watch has not settled, in
+             * the first signalWaitMs), 'unoffered' (no SOME/IP config for it on this unit, or the watch failed),
+             * 'missing' (no answer). Missing and present-but-idle stay apart: an idle Check Control list is present.
+             */
+            const ifaceState = (i) => {
+                if (ifaceUp(i)) return 'present';
+                if (watchRes[i] && watchRes[i].error) return 'unoffered';
+                return watchRes[i] || upMs() >= cfg.safety.signalWaitMs ? 'missing' : 'waiting';
+            };
             // emulator hooks (emufeed.js, never on a car): the handlers each interface was watched with, a speed block
             const hooks = { handlers: Object.create(null), blockSpeed: false };
 
@@ -133,6 +150,7 @@ mgu.run({
                 [FES]: {
                     statusFESVehicleDynamicSwitchHMI: guard('drive mode', (x) => {
                         const raw = x && x.actualValueModeDrivingExperience, m = L.driveModeOf(raw);
+                        modeRaw = typeof raw === 'number' || typeof raw === 'string' ? String(raw).replace(/[^\x20-\x7e]/g, '?').slice(0, 20) : '?';
                         if (m === carMode) return;
                         carMode = m;
                         log.info('car drive mode ' + JSON.stringify(raw) + ' -> ' + (m || 'none'));
@@ -188,7 +206,27 @@ mgu.run({
 
             /* ---------- the cover ---------- */
             let since = null, dec = { want: false, reason: 'off' }, slat = null, lastPanels = -Infinity, lastStats = Date.now();
-            const ccKnown = () => ifaceUp(CCM);
+            let sigKey = '', ccWas = '';
+            const recentError = (now) => { const e = safety.lastErrorAt(); return isNum(e) && now - e >= 0 && now - e < cfg.safety.showHoldMs; };
+            /** Every signal and guard state the Safety page shows (coarse: no counters, so it redraws only on a change). */
+            function sigNow(now) {
+                const st = output.status();
+                return {
+                    speed: L.speedStatus(speedAt, now, v.speedStaleMs, cfg), mode: carMode, modeRaw, fes: ifaceState(FES),
+                    cc: ifaceState(CCM), ccUp: cc.active.size, ki2: ifaceState(KI2), rpm: ifaceState(CDS),
+                    link: st.link, target: st.target, holder: st.holder, shown: st.shown, art: artOk,
+                    killed, tripped: safety.tripped(), errorRecent: recentError(now), demo: !!d.demo,
+                };
+            }
+            const model = () => ({ get, schema, cfg, carMode, reason: dec.reason, avail, version: (ctx.spec && ctx.spec.version) || '', sig: sigNow(Date.now()) });
+            // why the cover is off, in the log: once a reason per 10 s (a backward clock jump logs again, KB-ANY-204)
+            const whyAt = Object.create(null);
+            function whyLog(reason, now) {
+                if (reason === 'showing' || reason === 'hold') return;
+                if (now >= whyAt[reason] && now - whyAt[reason] < 10000) return;
+                whyAt[reason] = now;
+                log.info('why off: ' + P.whyOf(model()).short);
+            }
             function rearm() {
                 const want = v.coverOn === true && !killed && !safety.tripped() && artOk;
                 if (want) {
@@ -247,11 +285,13 @@ mgu.run({
                 put('cornerR', W.cornerKey(1, x, u, cfg) + (u.temp === 'C' ? 'm' : 'u'), (cv, r) => W.drawCorner(cv, r, 1, baseOf(u.temp === 'C' ? 'cornerR_metric' : 'cornerR_us'), x, u, cfg));
             }
             function coverTick() {
-                const now = Date.now(), st = output.status();
+                const now = Date.now(), st = output.status(), ccs = ifaceState(CCM);
                 const s = {
-                    coverOn: v.coverOn, killed, tripped: safety.tripped(), demo: !!d.demo, link: st.link, ccKnown: ccKnown(),
+                    coverOn: v.coverOn, killed, tripped: safety.tripped(), demo: !!d.demo, art: artOk, link: st.link,
+                    cc: ccs === 'present' || ccs === 'waiting' ? ccs : 'missing',
                     ccActive: cc.active.size > 0, ccNewAt: cc.newAt, target: st.target, holder: st.holder, speedAt,
                     lastErrorAt: safety.lastErrorAt(), mode: carMode, when: v.whenToShow,
+                    popupGuard: v.popupGuard, modeMissingDrop: v.modeMissingDrop, staleMs: v.speedStaleMs,
                 };
                 const r = L.decide(s, now, since, cfg);
                 since = r.since;
@@ -261,7 +301,10 @@ mgu.run({
                 else if (r.want && !st.shown) { output.show(frame()); log.info('cover: shown'); }
                 else if (r.want) output.update(frame());
                 output.tick(Date.now());   // after show() stamped its start: an older `now` would read as a clock jump
-                if (r.reason !== before) changed();
+                const key = JSON.stringify(sigNow(now));
+                if (r.reason !== before || key !== sigKey) { sigKey = key; changed(); }
+                if (r.reason !== before) whyLog(r.reason, now);
+                if (ccs !== ccWas) { ccWas = ccs; log.info('BMW popup signal (CheckControlMaster): ' + ccs); }
             }
             const tick = guard('cover', () => {
                 const k = safety.pollKill(fs, killPath);
@@ -271,7 +314,7 @@ mgu.run({
                 if (now < lastPanels || now - lastPanels >= 1000 / cfg.panelHz) { lastPanels = now; boxes(false); }
                 if (now < lastStats || now - lastStats >= cfg.statsLogMs) {
                     const sp = speedPoll.stats();
-                    log.info('speed alive ' + (isNum(speedAt) ? (now - speedAt) + ' ms ago' : 'never') + ', notified/s ' + sp.notified.toFixed(1) + ', speed poll ' + sp.polled.toFixed(1) + '/s, poll failures ' + sp.fails + ', cover ' + dec.reason);
+                    log.info('speed alive ' + (isNum(speedAt) ? (now - speedAt) + ' ms ago' : 'never') + ', notified/s ' + sp.notified.toFixed(1) + ', speed poll ' + sp.polled.toFixed(1) + '/s, poll failures ' + sp.fails + ', cover ' + dec.reason + ', popups ' + ifaceState(CCM) + ', drive mode ' + (carMode || 'missing'));
                     lastStats = now;
                 }
             });
@@ -298,7 +341,7 @@ mgu.run({
                 drawQueued = false;
                 if (!ui.isVisible('MAIN')) return undefined;
                 const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);
-                pages.draw(cv, t, { get, schema, cfg, carMode, reason: dec.reason, avail, version: (ctx.spec && ctx.spec.version) || '' }, act);
+                pages.draw(cv, t, model(), act);
                 return ui.image('MAIN_GFX', cv);
             });
             function changed() { if (!drawQueued) { drawQueued = true; setTimeout(draw, 0); } }
@@ -330,11 +373,15 @@ mgu.run({
             process.on('exit', () => { try { output.disarm('exit'); } catch (e) { /* exiting */ } });
             if (process.env.MTRACK_EMU_FEED) require('./emufeed').start(process.env.MTRACK_EMU_FEED, hooks, log, guard);
 
-            Promise.all(watched).then(guard('polls start', () => { speedPoll.start(); rpmPoll.start(); }), (e) => log.warn('polls not started: ' + e));
+            Promise.all(watched).then(guard('polls start', () => {
+                speedPoll.start(); rpmPoll.start();
+                log.info('signals after the watches: ' + P.sigSummary(model()));
+            }), (e) => log.warn('polls not started: ' + e));
             setInterval(tick, cfg.safety.tickMs);
             rearm();
             changed();
-            log.info('started: cover ' + (v.coverOn ? 'on' : 'off') + ', when ' + v.whenToShow + ', units ' + v.units + ', panels ' + JSON.stringify(L.layoutOf(v)));
+            log.info('started: cover ' + (v.coverOn ? 'on' : 'off') + ', when ' + v.whenToShow + ', BMW popups ' + v.popupGuard + ', drop if no drive mode ' + v.modeMissingDrop +
+                ', speed timeout ' + v.speedStaleMs + ' ms, units ' + v.units + ', panels ' + JSON.stringify(L.layoutOf(v)));
         } catch (e) {
             log.error('start: ' + (e && e.stack || e));
         }

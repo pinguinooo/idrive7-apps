@@ -39,7 +39,11 @@ module.exports = Object.freeze({
         errorWindowMs: 10000,
         killFile: 'DISABLE',    // this file in the app's data folder turns the cover off (path logged at start)
         killPollMs: 250,        // the cover loop looks for it this often (and on every tick)
-        speedStaleMs: 1000,     // no valid speed for longer than this: the cover drops (it covers the speedometer)
+        speedStaleMs: 1000,     // no valid speed for longer than this: the cover drops (it covers the speedometer);
+                                // the default of Safety > Speed timeout and what a bad saved value falls back to
+        speedStaleMinMs: 500,   // the Speed timeout setting stays within these (app.json steps); outside: speedStaleMs
+        speedStaleMaxMs: 3000,
+        signalWaitMs: 10000,    // a signal not answered this long after start counts as missing (BMW popups waits for it)
         showHoldMs: 1000,       // every condition must hold this long before the cover shows (again)
         tickMs: 100,            // the cover loop's period: a drop happens within one tick of its cause
         aliveResendMs: 250,     // dead-man switch: u_alive's animation is restarted this often while shown
@@ -49,7 +53,6 @@ module.exports = Object.freeze({
     speedPoll: { pollMs: 250, pollIdleMs: 500, pollTimeoutMs: 400, pollMaxBackoffMs: 2000 },
     rpmPoll: { pollMs: 50, pollIdleMs: 500, pollTimeoutMs: 200, pollMaxBackoffMs: 2000 },
     speedFactor: 1.0,           // shown speed = true speed x this; calibrate against the OEM reading on car day [U]
-    requireCheckControl: true,  // no Check Control interface on the car: the cover never shows (popups unknown)
     tankLitres: 65,             // G01 tank for the fuel gauge (no signal for it) [U]
     nightDim: 0.35,             // "Night dim" on: brightness x this [U] (no lights-on signal is read)
     uploadBudgetBytes: 4500000, // asset bytes uploaded at arm, at most (art/art.json + the four panel boxes)

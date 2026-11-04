@@ -1,6 +1,6 @@
 'use strict';
 /**
- * ui.js - the centre screen (1600 x 520): four settings pages under header tabs (Home, Panels, Look, About), drawn
+ * ui.js - the centre screen (1600 x 520): five settings pages under header tabs (Home, Panels, Look, Safety, About), drawn
  * from pages.js with the kit's own parts (G.frame tabs, G.button pills, cv.target rows), in Shift Lights 0.4.0's look
  * (apps/adam_shiftlights/ui.js). The kit draws the controller's focus ring and runs a press. Where the kit does not
  * run the screen there are no page buttons: a read-only Home, and the bar's Settings button opens the HMI's list.
@@ -54,7 +54,7 @@ function control(cv, t, r, xr, cy, act) {
 function drawRow(cv, t, r, x, y, w, act) {
     cv.roundRect(x, y, w, ROW_H, 14, withAlpha('#ffffff', 0.05));
     txt(cv, r.label, x + 24, y + 28, 24, r.enabled ? t.text : t.dim);
-    txt(cv, r.desc, x + 24, y + 51, 18, r.greyed ? t.warn : t.dim);
+    txt(cv, r.desc, x + 24, y + 51, 18, r.greyed ? t.warn : toneOf(t, r.tone));
     control(cv, t, r, x + w - 18, y + ROW_H / 2, act);
     if (r.kind === 'toggle' && r.enabled && cv.own) cv.target(x, y, w, ROW_H, act(r.controls[0].writes), r.controls[0].key, 14);
 }
@@ -75,8 +75,8 @@ function homePage(cv, t, v, act, own) {
     cv.roundRect(X0, sy, W, ROW_H + 8, 14, withAlpha('#ffffff', 0.05));
     if (s.tone === 'warn' || s.tone === 'crit') cv.roundRect(X0, sy, 8, ROW_H + 8, 4, s.tone === 'crit' ? t.crit : t.warn);
     txt(cv, s.line, X0 + 24, sy + 30, 22, toneOf(t, s.tone), { font: 'bold' });
-    txt(cv, s.mode, X0 + 24, sy + 56, 18, t.dim);
-    txt(cv, own ? 'Kill switch: the DISABLE file (About)' : 'Buttons below: Cover on/off, Settings (every setting)', X0 + W - 18, sy + 43, 18, t.dim, { align: 'right' });
+    txt(cv, s.signals, X0 + 24, sy + 56, 18, t.dim);
+    txt(cv, own ? 'Every guard: Safety tab' : 'Buttons: Cover on/off, Settings', X0 + W - 18, sy + 56, 18, t.dim, { align: 'right' });
 }
 function rowsPage(cv, t, v, act) {
     noteLine(cv, t, v);
@@ -97,6 +97,17 @@ function aboutPage(cv, t, v) {
     col(v.blocks, X0, 820);
     col(v.right, X0 + 840, W - 840);
 }
+/** Safety: the setting rows, then two blocks (the signals now; the always-on guards) with a line each, coloured by tone. */
+function safetyPage(cv, t, v, act) {
+    rowsPage(cv, t, v, act);
+    const y = ROW_Y + v.rows.length * PITCH, h = 514 - y, bw = (W - 20) / 2;
+    v.blocks.forEach((b, i) => {
+        const x = X0 + i * (bw + 20);
+        cv.roundRect(x, y, bw, h, 14, withAlpha('#ffffff', 0.05));
+        txt(cv, b.title, x + 24, y + 30, 22, t.text, { font: 'bold' });
+        b.lines.forEach((l, k) => txt(cv, l.text, x + 24, y + 56 + k * 22, 18, toneOf(t, l.tone)));
+    });
+}
 
 /** One screen's pages: tab(i) picks a page, draw(cv, t, m, act) draws it. */
 function createUi() {
@@ -111,6 +122,7 @@ function createUi() {
             const v = P.view(page, m);
             if (v.id === 'home') homePage(cv, t, v, a, true);
             else if (v.id === 'about') aboutPage(cv, t, v);
+            else if (v.id === 'safety') safetyPage(cv, t, v, a);
             else rowsPage(cv, t, v, a);
         },
     };

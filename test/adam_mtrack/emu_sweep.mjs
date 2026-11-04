@@ -111,6 +111,10 @@ async function shot(name, at) {
 }
 const stage = page.locator('#stage');
 const uiShot = async (name) => { await wait(900); await stage.screenshot({ path: path.join(OUT, name + '.png') }); };
+const key = async (k, n) => { for (let i = 0; i < (n || 1); i++) { await page.keyboard.press(k); await wait(180); } };
+// a settings tab by index: the first turn lands on the page's own tab, extra turns stop at the ends, focus stays on the
+// tab after Enter. So: all the way left, Enter (Home), then i turns right, Enter.
+const tab = async (i) => { await page.focus('#stage'); await key('[', 6); await key('Enter'); if (i) { await key(']', i); await key('Enter'); } await wait(500); };
 const COVER = 0.25 * 1920 * 720;          // a shown cover lights most of the panel; an empty one none
 const LAYERS = 8;
 
@@ -128,6 +132,31 @@ try {
     check(!since(0).some((m) => m.ev === 'connect'), '1 install defaults: no cluster-render connection at all');
     check(!live().length, '1 install defaults: no layers');
 
+    // Adam's car (0.1.0 car test): no Check Control signal at all. The emulator's watch settles with the provider
+    // unavailable, so nothing fed = the signal is missing, as on his car
+    console.log('step 1b no popup signal (Adam\'s car): Use if sent shows the cover, Require keeps it off and says why');
+    const t1b = Date.now();
+    mode(2);
+    await set('coverOn', true);
+    check(await untilLive((n) => n >= LAYERS, 6000, 'the cover without a popup signal'), '1b BMW popups = Use if sent, no popup signal: the cover shows');
+    // logged once at start (the emulator's watch settles at once): read the whole log so far
+    const lgStart = await appLog();
+    check(lgStart.indexOf('BMW popup signal (CheckControlMaster): missing') >= 0 && lgStart.indexOf('BMW popup signal (CheckControlMaster): present') < 0,
+        '1b the app logs the popup signal as missing (and never present)');
+    await shot('mtrack-nocc-auto-cover');
+    await send({ t: 'ccu' });
+    await wait(300);
+    await tab(3);
+    await uiShot('mtrack-nocc-auto-safety');
+    await dropStep('1b Require without the popup signal', () => set('popupGuard', 'require'), 400);
+    await uiShot('mtrack-nocc-require-safety');
+    check((await appLog(t1b)).some((l) => /^why off: BMW popups \(Require\): the popup signal is missing/.test(l)), '1b why off logged: BMW popups (Require), popup signal missing');
+    await tab(0);
+    await uiShot('mtrack-nocc-require-home');
+    await backStep('1b back to Use if sent', () => set('popupGuard', 'auto'));
+    await set('coverOn', false);
+    check(await untilLive((n) => n === 0, 1500, 'cover off after 1b'), '1b cover off: dropped');
+
     console.log('step 2 cover on in Comfort');
     mode(4); ccList([]);
     let t = Date.now();
@@ -135,7 +164,7 @@ try {
     await wait(2500);
     check(since(t).some((m) => m.op === 'asset'), '2 cover on: connected and the assets uploaded');
     check(!since(t).some((m) => m.op === 'layer'), '2 Comfort with Sport+ only: no layer');
-    const up = (await appLog()).filter((l) => /upload at arm: /.test(l));
+    const up = (await appLog(t)).filter((l) => /upload at arm: /.test(l));
     results.upload = up;
     check(up.length === 1 && Number(/(\d+) bytes/.exec(up[0])[1]) <= cfg.uploadBudgetBytes, '2 upload at arm within ' + cfg.uploadBudgetBytes + ': ' + up.join(' / '));
     const assetFrames = since(t).filter((m) => m.op === 'frame');
@@ -270,14 +299,20 @@ try {
     await set('bright', 100);
 
     console.log('step 17 settings pages');
-    await page.focus('#stage');
-    const key = async (k, n) => { for (let i = 0; i < (n || 1); i++) { await page.keyboard.press(k); await wait(180); } };
+    const PAGE_IDS = ['home', 'panels', 'look', 'safety', 'about'];
     await send({ t: 'ccu' });
     await wait(300);
-    await uiShot('mtrack-page-home');
-    // the first turn lands on the page's own tab, then each turn moves one tab (focus stays on the tab after Enter)
-    for (let i = 1; i <= 3; i++) { await key(']', i === 1 ? 2 : 1); await key('Enter'); await wait(500); await uiShot('mtrack-page-' + ['home', 'panels', 'look', 'about'][i]); }
-    await key('[', 4); await key('Enter');
+    for (let i = 0; i < PAGE_IDS.length; i++) { await tab(i); await uiShot('mtrack-page-' + PAGE_IDS[i]); }
+    // the Safety page while a guard holds the cover off: the why line names the guard and its signal's status
+    await tab(3);
+    const tWhy = Date.now();
+    feed({ block: 'speed', on: true });
+    check(await untilLive((n) => n === 0, 2500, 'speed stale on the Safety page'), '17 speed stale with the Safety page open: dropped');
+    await uiShot('mtrack-page-safety-why-off');
+    check((await appLog(tWhy)).some((l) => /^why off: Speed timeout: speed signal stale \(none for 1 s\)$/.test(l)), '17 why off logged: Speed timeout, speed signal stale');
+    feed({ block: 'speed', on: false });
+    await untilLive((n) => n >= LAYERS, 5000, 'back after the Safety shot');
+    await tab(0);
 
     console.log('step 12 hang (SIGSTOP the app process)');
     const pid = execSync("pgrep -f 'hu-stub.js .*adam_mtrack' | head -1").toString().trim();

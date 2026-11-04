@@ -15,8 +15,19 @@ const S = require('../../apps/adam_mtrack/shader');
 const item = (k) => SPEC.settings.filter((s) => s.key === k)[0];
 
 module.exports = [
-    ['app.json: id, title, version 0.1.0, installs with the cover off, Sport+ only, US units', () => {
-        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.0', 'OAD3']);
+    ['app.json: the Safety settings: BMW popups (Use if sent by default, Require, Ignore), drop if no drive mode (off), the speed timeout within config\'s bounds', () => {
+        assert.deepStrictEqual([item('popupGuard').default, item('popupGuard').options.map((o) => o[0])], ['auto', ['auto', 'require', 'ignore']]);
+        assert.deepStrictEqual([item('modeMissingDrop').type, item('modeMissingDrop').default], ['bool', false]);
+        const st = item('speedStaleMs'), S = cfg.safety;
+        assert.strictEqual(st.default, S.speedStaleMs);
+        assert.deepStrictEqual([st.steps[0], st.steps[st.steps.length - 1]], [S.speedStaleMinMs, S.speedStaleMaxMs]);
+        assert.ok(st.steps.every((x, i) => x >= S.speedStaleMinMs && x <= S.speedStaleMaxMs && (!i || x > st.steps[i - 1])), 'steps inside the bounds, rising');
+        assert.ok(st.steps.every((x) => typeof st.labels[String(x)] === 'string'), 'every step has a label');
+        assert.ok(!('requireCheckControl' in cfg), 'the old config switch is gone (BMW popups replaces it)');
+        assert.ok(st.steps.indexOf(S.speedStaleMs) >= 0);
+    }],
+    ['app.json: id, title, version 0.1.1, installs with the cover off, Sport+ only, US units', () => {
+        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.1', 'OAD3']);
         assert.strictEqual(item('coverOn').default, false);
         assert.strictEqual(item('whenToShow').default, 'sportplus');
         assert.strictEqual(item('units').default, 'us');

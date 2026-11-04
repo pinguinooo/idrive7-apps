@@ -4,6 +4,9 @@
 # EMU_DIR: an upstream idrive7-apps clone (default ~/Documents/Projects/idrive7-apps-upstream). This script links
 # apps/adam_mtrack into it and adds the emulator's placeholder oap-sdk/ if it is missing (both idempotent).
 # EMU_PORT (8077) is the centre screen, VIEW_PORT (8090) the panel view. Needs node 22 or newer. Nothing talks to a car.
+# NO_POPUPS=1 bash test/adam_mtrack/view.sh   a car that sends no Check Control signal (Adam's G01 in the 0.1.0 test): see
+# the cover with Safety > BMW popups = Use if sent, and the "why off" line with Require (centre screen Safety tab, and
+# the app line under the panel).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD

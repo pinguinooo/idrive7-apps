@@ -2,7 +2,10 @@
 /* main.js end to end: the kit's real Car on a fake signal link, the real cluster-render client against the fake
  * service. A default install never connects; the cover shows only after every condition held 1 s; each drop
  * condition removes every layer within one tick; exit closes the connection; the dead-man animation is restarted
- * every ~250 ms while shown; assets go once per arm, never on show or drop. */
+ * every ~250 ms while shown; assets go once per arm, never on show or drop. The Safety settings: no popup signal
+ * (Adam's car) shows with Use if sent and stays off with Require; Ignore; a popup signal not answered yet; drop if no
+ * drive mode; the speed timeout; a hand-edited settings file cannot switch an always-on guard off; 0.1.0 settings
+ * migrate; the trip disarms; no art never arms. */
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -29,9 +32,10 @@ async function until(fn, ms, what) {
 }
 process.setMaxListeners(100);
 
-function settingsOf(saved) {
+/** The kit's Settings (defaults under the saved values); raw: only the saved values, as a bare settings.json reads. */
+function settingsOf(saved, raw) {
     const values = {}, listeners = [];
-    SPEC.settings.forEach((s) => { values[s.key] = s.default; });
+    if (!raw) SPEC.settings.forEach((s) => { values[s.key] = s.default; });
     Object.assign(values, saved);
     const item = (k) => SPEC.settings.filter((s) => s.key === k)[0];
     const set = (k, v) => { values[k] = v; listeners.forEach((fn) => fn(k, v)); };
@@ -39,19 +43,25 @@ function settingsOf(saved) {
 }
 
 let seq = 0;
-/** main.js on a fresh fake ctx. r.feed(iface, field, value) is a car notification; r.speed(kmh|null) keeps a speed coming. */
+/**
+ * main.js on a fresh fake ctx. r.feed(iface, field, value) is a car notification; r.speed(kmh|null) keeps a speed coming.
+ * opts: unavailable [ifaces] (the watch settles, the provider never answers), delay { iface: ms } (the watch settles
+ * that late; -1 never), raw (settingsOf raw), noArt (the art pack fails to open).
+ */
 async function start(saved, opts) {
     const o = opts || {};
     const sock = path.join(os.tmpdir(), 'mt-main-' + process.pid + '-' + (++seq) + '.sock');
     const msgs = [], lines = [], subs = {};
     const fake = createFake(sock, (m) => msgs.push(m));
-    const settings = settingsOf(saved);
+    const settings = settingsOf(saved, o.raw);
     const log = { info: (m) => lines.push(m), warn: (m) => lines.push('WARN ' + m), error: (m) => lines.push('ERR ' + m) };
     const signals = {
         watch: (iface, inst, handlers) => {
             const res = { iface, available: o.unavailable && o.unavailable.indexOf(iface) >= 0 ? false : true, proxy: null, error: null };
             (subs[iface] = subs[iface] || []).push(handlers);
-            return Promise.resolve(res);
+            const ms = o.delay && o.delay[iface];
+            if (ms === -1) return new Promise(() => {});
+            return ms ? new Promise((res2) => setTimeout(() => res2(res), ms)) : Promise.resolve(res);
         },
     };
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mt-main-data-'));
@@ -67,16 +77,18 @@ async function start(saved, opts) {
         return realResolve.apply(this, arguments);
     };
     let app = null;
-    const id = path.join(KIT, 'mgu.js');
+    const id = path.join(KIT, 'mgu.js'), packId = path.join(KIT, 'pack.js');
     try {
         process.env.MTRACK_CR_SOCKET = sock;
         require.cache[id] = { id, filename: id, loaded: true, exports: { run: (a) => { app = a; } } };
+        if (o.noArt) require.cache[packId] = { id: packId, filename: packId, loaded: true, exports: { open: () => { throw new Error('no art (test)'); } } };
         delete require.cache[MAIN];
         require(MAIN);
         await app.start(ctx);
     } finally {
         Module._resolveFilename = realResolve;
         delete require.cache[id];
+        if (o.noArt) delete require.cache[packId];
         delete process.env.MTRACK_CR_SOCKET;
     }
     const feed = (iface, field, value) => (subs[iface] || []).forEach((h) => { if (h[field]) h[field](value); });
@@ -208,11 +220,121 @@ module.exports = [
         assert.strictEqual(r.layerOps().length, 0);
         await r.done();
     }],
-    ['no Check Control interface (unavailable, nothing sent): the cover never shows', async () => {
+    ['no popup signal (CheckControlMaster never answers, Adam\'s car), default BMW popups = Use if sent: the cover shows', async () => {
         const r = await start({ coverOn: true }, { unavailable: [I.CCM] });
         r.speed(0); r.mode(2);
+        await until(() => r.live().length >= 8, 4000, 'the cover without a popup signal');
+        assert.ok(r.lines.indexOf('BMW popup signal (CheckControlMaster): missing') >= 0, r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^signals after the watches: Signals: speed .*, BMW popups missing \(no answer\)$/.test(l)), r.lines.join('\n'));
+        await r.done();
+    }],
+    ['Require: no popup signal keeps the cover off (why logged); Use if sent shows it; back to Require drops it at once', async () => {
+        const r = await start({ coverOn: true, popupGuard: 'require' }, { unavailable: [I.CCM] });
+        r.speed(0); r.mode(2);
         await wait(1500);
-        assert.strictEqual(r.layerOps().length, 0);
+        assert.strictEqual(r.layerOps().length, 0, 'the 0.1.0 rule');
+        assert.ok(r.lines.some((l) => /^why off: BMW popups \(Require\): the popup signal is missing \(no answer\)$/.test(l)), r.lines.join('\n'));
+        r.settings.set('popupGuard', 'auto');
+        await until(() => r.live().length >= 8, 3000, 'shown with Use if sent');
+        await dropsWithin(r, () => r.settings.set('popupGuard', 'require'), 60, 'back to Require');
+        await r.done();
+    }],
+    ['Ignore: a Check Control message (list or new-message event) does not drop the cover; BMW holding the panel still does', async () => {
+        const r = await shownApp({ popupGuard: 'ignore' });
+        r.feed(I.CCM, 'basicList', [{ ccmId: 7, activeState: 'AKTIV' }]);
+        r.feed(I.KI2, 'newCCMessage', { cCIdentifier: 1 });
+        await wait(400);
+        assert.strictEqual(r.drops().length, 0, 'a popup with Ignore');
+        await dropsWithin(r, () => r.fake.target('panel', 'waiting', 'stock'), 150, 'BMW holds the panel with Ignore');
+        await r.done();
+    }],
+    ['Use if sent waits for a popup signal whose watch has not settled, and shows 1 s after it answers', async () => {
+        const r = await start({ coverOn: true }, { delay: { [I.CCM]: 1500 } });
+        const t0 = Date.now();
+        r.speed(0); r.mode(2);
+        await until(() => r.live().length >= 8, 5000, 'shown after the popup signal answered');
+        assert.ok(r.live()[0].t - t0 >= 2300, 'shown ' + (r.live()[0].t - t0) + ' ms after start: it waited');
+        assert.ok(r.lines.indexOf('BMW popup signal (CheckControlMaster): waiting') >= 0 && r.lines.indexOf('BMW popup signal (CheckControlMaster): present') >= 0);
+        await r.done();
+    }],
+    ['Use if sent: a popup signal that never answers counts as missing after signalWaitMs (monotonic), then the cover shows', async () => {
+        const realHr = process.hrtime;
+        let shift = 0;
+        process.hrtime = function (prev) { const x = realHr.call(process, prev); if (prev) x[0] += shift; return x; };
+        try {
+            const r = await start({ coverOn: true }, { delay: { [I.CCM]: -1 } });
+            r.speed(0); r.mode(2);
+            await wait(1400);
+            assert.strictEqual(r.layerOps().length, 0, 'waits while the popup signal may still answer');
+            assert.ok(r.lines.some((l) => /^why off: BMW popups: waiting for the popup signal/.test(l)), r.lines.join('\n'));
+            shift = Math.ceil(cfg.safety.signalWaitMs / 1000);
+            await until(() => r.live().length >= 8, 3000, 'shown once the wait ran out');
+            assert.ok(r.lines.indexOf('BMW popup signal (CheckControlMaster): missing') >= 0);
+            await r.done();
+        } finally { process.hrtime = realHr; }
+    }],
+    ['Drop if no drive mode: on keeps Always off with no drive mode (why logged); off shows it; on again drops it', async () => {
+        const r = await start({ coverOn: true, whenToShow: 'always', modeMissingDrop: true });
+        r.speed(0); r.feed(I.CCM, 'basicList', []);
+        await wait(1500);
+        assert.strictEqual(r.layerOps().length, 0, 'no drive mode, Drop if missing on');
+        assert.ok(r.lines.some((l) => /^why off: Drop if no drive mode \(on\): the drive-mode signal is missing \(no mode sent yet\)$/.test(l)), r.lines.join('\n'));
+        r.settings.set('modeMissingDrop', false);
+        await until(() => r.live().length >= 8, 3000, 'Always without a drive mode');
+        r.mode(0);
+        await wait(300);
+        assert.strictEqual(r.drops().length, 0, 'a value with no mode, Drop if missing off: stays');
+        await dropsWithin(r, () => r.settings.set('modeMissingDrop', true), 60, 'Drop if missing turned on');
+        await r.done();
+    }],
+    ['Speed timeout 0.5 s: no speed drops the cover by about 0.6 s', async () => {
+        const r = await shownApp({ speedStaleMs: 500 });
+        const ms = await dropsWithin(r, () => r.speed(null), 700, 'speed stale at 0.5 s');
+        assert.ok(ms >= 400, 'dropped too early: ' + ms + ' ms');
+        await r.done();
+    }],
+    ['a hand-edited settings file with bad values cannot switch an always-on guard off (speed timeout, kill file)', async () => {
+        const r = await shownApp({ popupGuard: 'off', modeMissingDrop: 'no', speedStaleMs: 999999, whenToShow: 'never',
+            requireCheckControl: false, killFile: '', errorLimit: 1e9, speedStaleMinMs: 0, safety: { speedStaleMs: 1e9 } });
+        ['popupGuard', 'modeMissingDrop', 'speedStaleMs', 'whenToShow'].forEach((k) => assert.ok(r.lines.some((l) => l.indexOf('WARN settings: ' + k + ' was not valid') === 0), k));
+        assert.ok(r.lines.some((l) => /BMW popups require, drop if no drive mode true, speed timeout 1000 ms/.test(l)), 'read as the strict side');
+        const ms = await dropsWithin(r, () => r.speed(null), 1150, 'speed stale with 999999 saved');
+        assert.ok(ms >= 900, 'dropped too early: ' + ms + ' ms');
+        r.speed(0);
+        await until(() => r.live().length >= 8, 3000, 'back');
+        await dropsWithin(r, () => fs.writeFileSync(path.join(r.dataDir, cfg.safety.killFile), ''), 150, 'kill file with a bad killFile saved');
+        fs.unlinkSync(path.join(r.dataDir, cfg.safety.killFile));
+        await r.done();
+    }],
+    ['settings saved by 0.1.0 (no Safety keys, _settingsV 1) migrate to v2, and the cover shows on a car with no popup signal', async () => {
+        const r = await start({ coverOn: true, whenToShow: 'sportplus', units: 'us', _settingsV: 1 }, { raw: true, unavailable: [I.CCM] });
+        const V = r.settings.values;
+        assert.deepStrictEqual([V.popupGuard, V.modeMissingDrop, V.speedStaleMs, V._settingsV, V.coverOn], ['auto', false, 1000, 2, true]);
+        assert.ok(r.lines.some((l) => /^settings migrated to v2: /.test(l)), r.lines.join('\n'));
+        r.speed(0); r.mode(2);
+        await until(() => r.live().length >= 8, 4000, 'the cover after the migration');
+        await r.done();
+    }],
+    ['5 errors in 10 s: the trip disarms (connection closed), the cover stays off until Cover the cluster goes off and on', async () => {
+        const r = await shownApp({});
+        const bad = {};
+        Object.defineProperty(bad, 'displayBoostPressure', { get() { throw new Error('test throw'); } });
+        for (let i = 0; i < cfg.safety.errorLimit; i++) r.feed(I.FES, 'statusSwitchDriveDynamicSport2', bad);
+        await until(() => r.msgs.some((m) => m.ev === 'close'), 1000, 'disarmed on the trip');
+        assert.ok(r.lines.some((l) => /^ERR STOPPED after /.test(l)));
+        await wait(1300);
+        assert.strictEqual(r.live().length, 0, 'stays off after the trip');
+        r.settings.set('coverOn', false); r.settings.set('coverOn', true);
+        await until(() => r.live().length >= 8, 4000, 'back after off and on');
+        await r.done();
+    }],
+    ['no art: the cover never arms or connects, and says why', async () => {
+        const r = await start({ coverOn: true }, { noArt: true });
+        r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
+        await wait(1400);
+        assert.ok(!r.msgs.some((m) => m.ev === 'connect'), 'connected without art');
+        assert.ok(r.lines.some((l) => /art\/art\.json is missing or damaged/.test(l)));
+        assert.ok(r.lines.some((l) => /^why off: Art check: the art file is missing or damaged/.test(l)), r.lines.join('\n'));
         await r.done();
     }],
     ['Always shows in Comfort; Sport and above shows in Sport individual (3), not in Comfort', async () => {

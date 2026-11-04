@@ -4,20 +4,32 @@
  * control model are Shift Lights 0.4.0's (apps/adam_shiftlights/pages.js): header tabs, rows with a label, a
  * one-line description and a toggle, pills or a stepper. Option ids come from app.json (m.schema).
  *
- * m = { get, schema, cfg, carMode, reason (logic.decide's), avail(widget id) -> bool, version, link }
+ * m = { get, schema, cfg, carMode, reason (logic.decide's), avail(widget id) -> bool, version, sig (main.js sigNow:
+ *       every signal's and guard's state; missing fields read as unknown) }
  * A control: { key ('<page>:<setting>[:<option>|:-|:+]'), text, on, end, writes: [[setting, value], ...] }
- * A row: { id, kind: 'toggle' | 'pills' | 'stepper', label, desc, value, enabled, controls }
+ * A row: { id, kind: 'toggle' | 'pills' | 'stepper', label, desc, tone ('warn' | 'crit': the desc's colour), value, enabled, controls }
+ * whyOf(m) -> { text: 'Why the cover is off right now: ...', short, tone }: the blocking guard and its signal's status.
  */
 const L = require('./logic');
 const C = require('./catalogue');
 
-const PAGES = ['Home', 'Panels', 'Look', 'About'];
-const IDS = ['home', 'panels', 'look', 'about'];
+const PAGES = ['Home', 'Panels', 'Look', 'Safety', 'About'];
+const IDS = ['home', 'panels', 'look', 'safety', 'about'];
 const MODE_NAME = { comfort: 'Comfort', sport: 'Sport', sportplus: 'Sport+' };
 const SHORT = {
     whenToShow: { sportplus: 'Sport+ only', sport: 'Sport and above', always: 'Always' },
     units: { us: 'US', metric: 'Metric', car: 'Follow car' },
+    popupGuard: { auto: 'Use if sent', require: 'Require', ignore: 'Ignore' },
 };
+const POPUP_DESC = {
+    auto: 'Protects BMW warnings: a popup drops the cover. No popup signal from the car: no block',
+    require: 'Protects BMW warnings, strict: no popup signal from the car keeps the cover off',
+    ignore: 'RISKY, the guard is off: popups never drop the cover, so a BMW warning can hide under it',
+};
+const MODE_MISSING_DESC = 'Protects: no cover while the drive mode is unknown. Off: Always shows without one';
+/** A signal interface's state (main.js ifaceState) in words. */
+const IFACE_WORD = { present: 'present', waiting: 'waiting for the car', missing: 'missing (no answer)', unoffered: 'missing (not offered on this unit)' };
+const secs = (ms) => (typeof ms === 'number' && isFinite(ms) ? ms / 1000 + ' s' : '?');
 const WHEN_DESC = {
     sportplus: 'Shows only in Sport+. Leaving Sport+ drops it at once',
     sport: 'Shows in Sport and Sport+ (Sport individual counts as Sport)',
@@ -60,16 +72,73 @@ function statusOf(m) {
     if (r === 'showing') return { text: 'Showing on the cluster', tone: 'on' };
     if (r === 'hold') return { text: L.REASONS.hold, tone: 'on' };
     if (r === 'off') return { text: 'Off: BMW\'s own cluster, untouched', tone: 'off' };
-    return { text: L.REASONS[r] || r, tone: r === 'tripped' || r === 'nocc' ? 'crit' : 'warn' };
+    return { text: L.REASONS[r] || r, tone: r === 'tripped' || r === 'nocc' || r === 'noart' ? 'crit' : 'warn' };
+}
+
+/* ---------- the signals and the "why" (Home and Safety) ---------- */
+
+const sigOf = (m) => m.sig || {};
+function speedWord(s, v, cfg) {
+    if (s.speed === 'missing') return 'missing (none received yet)';
+    if (s.speed === 'stale') return 'stale (none for ' + secs(L.staleMsOf(v.speedStaleMs, cfg)) + ')';
+    return s.speed === 'present' ? 'present' : 'unknown';
+}
+function modeWord(s, m) {
+    const mode = s.mode !== undefined ? s.mode : m.carMode;
+    if (MODE_NAME[mode]) return MODE_NAME[mode] + ' (present)';
+    if (s.modeRaw !== undefined) return 'missing (the car sends ' + s.modeRaw + ', no mode)';
+    if (s.fes === 'present') return 'missing (no mode sent yet)';
+    return IFACE_WORD[s.fes] || 'missing';
+}
+const ccWord = (s) => (s.cc === 'present' ? 'present, ' + (s.ccUp > 0 ? s.ccUp + ' up' : 'none up') : IFACE_WORD[s.cc] || 'unknown');
+function rendererWord(s, v) {
+    if (s.art === false) return 'not connected: the art file is missing';
+    if (s.link === 'connecting') return 'connecting';
+    if (s.link !== 'ready') return v.coverOn === true ? 'not connected' : 'off (connects when the cover is on)';
+    if (s.target === 'waiting' || s.target === 'parked') return s.holder === 'foreign' ? 'connected, Shift Lights\' HUD holds the scene' : 'connected, BMW holds the panel';
+    return 'connected, panel free';
+}
+/** One line of the signals the guards read (Home, and the log once the car's watches settle). */
+function sigSummary(m) {
+    const s = sigOf(m), v = settingsOf(m);
+    return 'Signals: speed ' + speedWord(s, v, m.cfg) + ', drive mode ' + modeWord(s, m) + ', BMW popups ' + ccWord(s);
+}
+
+const WHY_TONE = { off: 'off', showing: 'on', hold: 'on', kill: 'crit', tripped: 'crit', noart: 'crit', nocc: 'crit' };
+/** Why the cover is off: the blocking guard by its Safety-page name and its signal's status (present / missing / stale). */
+function whyOf(m) {
+    const r = m.reason || 'off', v = settingsOf(m), s = sigOf(m), S = m.cfg.safety;
+    if (r === 'showing') return { text: 'Showing on the cluster: every guard holds', short: 'showing', tone: 'on' };
+    if (r === 'hold') return { text: 'Showing in a moment: every guard has to hold for ' + secs(S.showHoldMs), short: 'holding for ' + secs(S.showHoldMs), tone: 'on' };
+    const when = SHORT.whenToShow[v.whenToShow], mode = s.mode !== undefined ? s.mode : m.carMode;
+    const SAY = {
+        off: 'Cover the cluster is off',
+        kill: 'Kill switch: the DISABLE file is there',
+        tripped: 'Error guard: stopped after ' + S.errorLimit + ' errors. Turn Cover the cluster off and on',
+        demo: 'Live data only: the car sends no data, this is demo data',
+        noart: 'Art check: the art file is missing or damaged. Reinstall the app',
+        renderer: 'Cluster renderer: ' + rendererWord(s, v),
+        nocc: 'BMW popups (Require): the popup signal is ' + (s.cc === 'waiting' ? 'not answered yet' : IFACE_WORD[s.cc] || 'missing'),
+        ccwait: 'BMW popups: waiting for the popup signal (up to ' + secs(S.signalWaitMs) + ' after start)',
+        cc: 'BMW popups: ' + (s.ccUp > 0 ? 'a Check Control message is up' : 'a new Check Control message') + ' (popup signal present)',
+        held: 'BMW panel: BMW holds the cluster panel (a popup or the speech dialog)',
+        hud: 'BMW panel: Shift Lights\' HUD holds the cluster scene. Turn the HUD off',
+        nospeed: 'Speed timeout: speed signal ' + speedWord(s, v, m.cfg),
+        error: 'Error guard: an error a moment ago, back after ' + secs(S.showHoldMs),
+        nomode: 'Drop if no drive mode (on): the drive-mode signal is ' + modeWord(s, m),
+        mode: 'When to show (' + when + '): ' + (MODE_NAME[mode] ? 'drive mode is ' + MODE_NAME[mode] + ' (signal present)' : 'the drive-mode signal is ' + modeWord(s, m)),
+    };
+    const short = SAY[r] || L.REASONS[r] || r;
+    return { text: 'Why the cover is off right now: ' + short, short, tone: WHY_TONE[r] || 'warn' };
 }
 
 function home(m) {
-    const v = settingsOf(m), on = v.coverOn === true, st = statusOf(m);
+    const v = settingsOf(m), on = v.coverOn === true, st = statusOf(m), w = whyOf(m);
     return {
         id: 'home',
         card: { id: 'coverOn', label: 'Cover the cluster', on, state: on ? st : { text: 'Off: BMW\'s own cluster, untouched', tone: 'off' }, controls: toggle('home', 'coverOn', on) },
         rows: [row('whenToShow', 'pills', 'When to show', WHEN_DESC[v.whenToShow], pills(m, 'home', 'whenToShow', v.whenToShow), { value: SHORT.whenToShow[v.whenToShow] })],
-        status: { line: st.text, tone: st.tone, mode: 'Drive mode: ' + (MODE_NAME[m.carMode] ? MODE_NAME[m.carMode] + ', from the car' : 'none from the car yet') },
+        status: { line: w.text, tone: w.tone, signals: sigSummary(m) },
     };
 }
 
@@ -113,6 +182,57 @@ function look(m) {
     };
 }
 
+/**
+ * Safety: the three Safety settings (BMW popups, drop if no drive mode, the speed timeout), why the cover is off, every
+ * signal the guards read and every always-on guard with its state and why it has no switch.
+ */
+function safety(m) {
+    const v = settingsOf(m), bad = L.readSettings(m.get, m.schema).bad, s = sigOf(m), cfg = m.cfg, S = cfg.safety, r = m.reason || 'off';
+    const w = whyOf(m), stale = L.staleMsOf(v.speedStaleMs, cfg), risky = stale > S.speedStaleMs;
+    const isBad = (k) => bad.indexOf(k) >= 0;
+    const tone = (ids, t) => (ids.indexOf(r) >= 0 ? t || 'warn' : 'dim');
+    const errors = s.tripped ? 'STOPPED' : s.errorRecent ? 'one just now' : 'none';
+    return {
+        id: 'safety',
+        note: w.text, noteTone: w.tone,
+        rows: [
+            row('popupGuard', 'pills', 'BMW popups (Check Control)',
+                isBad('popupGuard') ? 'The saved value was not valid: Require is used (the strict side)' : POPUP_DESC[v.popupGuard],
+                pills(m, 'safety', 'popupGuard', v.popupGuard),
+                { value: SHORT.popupGuard[v.popupGuard], tone: isBad('popupGuard') ? 'warn' : v.popupGuard === 'ignore' ? 'crit' : undefined }),
+            row('modeMissingDrop', 'toggle', 'Drop the cover if the drive-mode signal is missing',
+                isBad('modeMissingDrop') ? 'The saved value was not valid: On is used (the strict side)' : MODE_MISSING_DESC,
+                toggle('safety', 'modeMissingDrop', v.modeMissingDrop === true), { tone: isBad('modeMissingDrop') ? 'warn' : undefined }),
+            row('speedStaleMs', 'stepper', 'Speed timeout (always on)',
+                isBad('speedStaleMs') ? 'The saved value was not valid: ' + secs(stale) + ' is used'
+                    : risky ? 'RISKY above ' + secs(S.speedStaleMs) + ': a frozen speed can stay up for ' + secs(stale) + ' before the cover drops'
+                        : 'Always on: no fresh speed for this long drops the cover. A frozen speed is dangerous',
+                stepper(m, 'safety', 'speedStaleMs', v.speedStaleMs, itemOf(m, 'speedStaleMs').steps || []),
+                { value: secs(v.speedStaleMs), tone: isBad('speedStaleMs') || risky ? 'warn' : undefined }),
+        ],
+        blocks: [
+            { title: 'Signals now', lines: [
+                { text: 'Speed (Vehicle2): ' + speedWord(s, v, cfg), tone: tone(['nospeed']) },
+                { text: 'Drive mode (FES): ' + modeWord(s, m), tone: tone(['mode', 'nomode']) },
+                { text: 'Popup list (CheckControlMaster): ' + ccWord(s), tone: tone(['nocc', 'ccwait', 'cc']) },
+                { text: 'New-popup event (KombiInterface_2): ' + (IFACE_WORD[s.ki2] || 'unknown'), tone: 'dim' },
+                { text: 'Engine rpm (CDS): ' + (IFACE_WORD[s.rpm] || 'unknown'), tone: 'dim' },
+                { text: 'Car data: ' + (s.demo ? 'demo, not live' : 'live'), tone: tone(['demo']) },
+                { text: 'Cluster renderer: ' + rendererWord(s, v), tone: tone(['renderer', 'held', 'hud', 'noart']) },
+            ] },
+            { title: 'Always on (no switch), and why', lines: [
+                { text: 'Speed timeout: on, ' + secs(stale) + '. A frozen speed over the real one is dangerous', tone: tone(['nospeed']) },
+                { text: 'Kill switch (' + S.killFile + ' file): ' + (s.killed ? 'FOUND, cover off' : 'clear') + '. Works with no screen', tone: tone(['kill'], 'crit') },
+                { text: 'Errors: ' + errors + '. ' + S.errorLimit + ' in ' + secs(S.errorWindowMs) + ' stop the cover until off and on', tone: tone(['error', 'tripped'], s.tripped ? 'crit' : 'warn') },
+                { text: 'Heartbeat: ' + (s.shown ? 'running' : 'idle') + '. A hung app\'s cover blanks within 1.2 s', tone: 'dim' },
+                { text: 'Exit or crash: ready. The renderer drops the cover at once', tone: 'dim' },
+                { text: 'Clock jump: guarded. A jump never revives an old speed', tone: 'dim' },
+                { text: 'Demo data, BMW taking the panel and the art check always win', tone: 'dim' },
+            ] },
+        ],
+    };
+}
+
 function about(m) {
     const hidden = C.CATALOGUE.filter((w) => !w.inApp).map((w) => w.label);
     return {
@@ -125,12 +245,13 @@ function about(m) {
                 'Popups above or below; the KOMBI GPU and the shaders',
                 'The renderer clock for the dead-man switch; the speed getter',
                 'Drive mode values, boost scale, range unit, clock time zone',
+                'Which signals the car sends (the Safety tab lists them)',
             ] },
-            { title: 'Not in 0.1.0', lines: [hidden.slice(0, 4).join(', '), hidden.slice(4).join(', ')] },
+            { title: 'Not in ' + (m.version || 'this version'), lines: [hidden.slice(0, 4).join(', '), hidden.slice(4).join(', ')] },
         ],
         right: [
             { title: 'Remove safely', lines: ['Store > M Track Cluster > Remove.', 'Never kill or restart it by hand: three crashes', 'in about 30 s wipe every app.'] },
-            { title: 'Kill switch', lines: ['Home > Cover the cluster off, or a file named', m.cfg.safety.killFile + ' in the app\'s data folder.'] },
+            { title: 'Kill switch', lines: ['Home > Cover the cluster off, or a file named', m.cfg.safety.killFile + ' in the app\'s data folder (Safety tab).'] },
             { title: 'With Shift Lights', lines: ['The cover hides Shift Lights\' cluster slats while it', 'shows and draws its own. Turn Shift Lights\' HUD off:', 'the HUD and the cluster panel share one scene.'] },
         ],
     };
@@ -140,6 +261,7 @@ function view(i, m) {
     const p = IDS[i] || 'home';
     if (p === 'panels') return panels(m);
     if (p === 'look') return look(m);
+    if (p === 'safety') return safety(m);
     if (p === 'about') return about(m);
     return home(m);
 }
@@ -152,4 +274,4 @@ function controlsOf(v) {
     return out;
 }
 
-module.exports = { PAGES, IDS, view, controlsOf, stepOf, choices, statusOf, SHORT };
+module.exports = { PAGES, IDS, view, controlsOf, stepOf, choices, statusOf, whyOf, sigSummary, SHORT };
