@@ -24,15 +24,16 @@ const DEFAULTS = {
     brightness: 1,
     hud: { centerX: 400, anchorY: 260 },
     nudge: { x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60] },
+    clusterNudge: { x: [-50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50], y: [-40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40] },
     colors: {
         y: '#ffc20e', o: '#ff7a00', r: '#ff2b1f', w: '#f2f5f8', a: '#ffa800', c: '#ff1a22', A: '#f3ab10', C: '#ee1c25',
         Y: '#ffd000', O: '#ff7000', R: '#ff1a14', cream: '#ebecc8', rail: '#fbfbe8', zy: '#eef0a8', zr: '#ee6a64',
     },
     mapOffset: { x: 416, y: 126, minY: 8 },
     clusterStyles: {
-        large: { palette: 'aaaaaaaacc', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 15.6, pitch: 18.6, inner: 36, centre: 0, h: 82.8, shear: 29.81, cx: 960, cy: 150, glow: 30, dim: 0.2 },
-        classic: { palette: 'AAAAAAAACC', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 15, pitch: 18, inner: 30, centre: 0, h: 46, shear: 22.08, cx: 960, cy: 150, glow: 0, dim: 0.13 },
-        row: { palette: 'yyyoor', reds: 1, fill: 'inward', lean: 'none', perSide: 6, slat: 25, pitch: 29, inner: 2, centre: 0, h: 22, shear: 0, cx: 960, cy: 145, glow: 0, dim: 0 },
+        large: { palette: 'aaaaaaaacc', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 15.6, pitch: 18.6, inner: 36, centre: 0, h: 82.8, shear: 29.81, cx: 960, cy: 175, glow: 30, dim: 0.2 },
+        classic: { palette: 'AAAAAAAACC', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 15, pitch: 18, inner: 30, centre: 0, h: 46, shear: 22.08, cx: 960, cy: 175, glow: 0, dim: 0.13 },
+        row: { palette: 'yyyoor', reds: 1, fill: 'inward', lean: 'none', perSide: 6, slat: 25, pitch: 29, inner: 2, centre: 0, h: 22, shear: 0, cx: 960, cy: 170, glow: 0, dim: 0 },
         stock: { palette: 'yoC', reds: 1, fill: 'inward', lean: 'mirror', stage: true, perSide: 1, slat: 40, pitch: 40, inner: 205.3, centre: 0, h: 92, shear: 50.6, cx: 960, cy: 185, glow: 14, dim: 0 },
     },
     hudStyles: {
@@ -46,6 +47,8 @@ const DEFAULTS = {
         },
     },
     safety: { errorLimit: 5, errorWindowMs: 10000, killFile: 'DISABLE', killPollMs: 1000 },
+    rpm: { leadMs: 60, slopeWindowMs: 150, slopeMinSpanMs: 60, minSlope: 1, maxSlope: 20, pollMs: 40, pollTimeoutMs: 200, pollMaxBackoffMs: 2000, pollIdleMs: 1000 },
+    previewFps: 10,
 };
 const TARGETS = G.TARGETS;
 const DISPLAYS = ['off', 'cluster', 'hud', 'both'];   // what geom.layersFor shows (from the two on/off settings)
@@ -58,6 +61,7 @@ const HUD_STYLES = ['large', 'classic', 'bar', 'bracket'];
 const SETTINGS_V = 3;   // settings.json shape: 3 = hudOn / clusterOn (0.3.0); before: enabled + display
 const MIN_SPAN = 200;   // a mode's shift sits at least this far over its start (rpm)
 const MAX_PALETTE = 10; // FS_SLATS' u_colors[10]
+const LEAD_STEPS = [0, 20, 40, 60, 80, 100, 120, 150];   // the "Shift lights lead" setting (ms); app.json too
 
 const copy = (x) => JSON.parse(JSON.stringify(x));
 const num = (v) => typeof v === 'number' && isFinite(v);
@@ -147,6 +151,7 @@ function validateConfig(input) {
     take('flashHz', (v) => (!(num(v) && v >= 4 && v <= 20) ? 'must be 4 to 20 (the limiter flash at least 4 Hz)' : null));
     take('brightness', (v) => (!(num(v) && v >= 0 && v <= 1) ? 'must be 0 to 1' : null));
     take('nudge', (v) => (!isObj(v) || steps(-400, 400, 0)(v.x) || steps(-400, 400, 0)(v.y) ? 'x and y must be whole numbers -400 to 400 including 0' : null));
+    take('clusterNudge', (v) => (!isObj(v) || steps(-400, 400, 0)(v.x) || steps(-400, 400, 0)(v.y) ? 'x and y must be whole numbers -400 to 400 including 0' : null));
     out.colors = {};
     Object.keys(DEFAULTS.colors).concat(Object.keys(isObj(src.colors) ? src.colors : {})).forEach((k) => {
         if (out.colors[k]) return;
@@ -191,6 +196,17 @@ function validateConfig(input) {
         if (typeof s.killFile !== 'string' || !/^[A-Za-z0-9._-]+$/.test(s.killFile)) return 'killFile must be a plain file name';
         return null;
     });
+    take('rpm', (r) => {
+        if (!isObj(r) || !Object.keys(DEFAULTS.rpm).every((k) => num(r[k]) && r[k] > 0 || k === 'leadMs')) return 'every value must be a number > 0';
+        if (LEAD_STEPS.indexOf(r.leadMs) < 0) return 'leadMs must be one of ' + LEAD_STEPS.join(', ');
+        if (!isInt(r.pollMs, 20, 1000)) return 'pollMs must be a whole number 20 to 1000 (never faster than 50 Hz)';
+        if (!(r.maxSlope > 2 * r.minSlope)) return 'maxSlope must be over 2 x minSlope';
+        if (!(r.slopeMinSpanMs <= r.slopeWindowMs)) return 'slopeMinSpanMs must be at most slopeWindowMs';
+        if (!(r.pollTimeoutMs >= 50 && r.pollTimeoutMs <= 1000)) return 'pollTimeoutMs must be 50 to 1000';
+        if (!(r.pollMaxBackoffMs >= r.pollMs)) return 'pollMaxBackoffMs must be at least pollMs';
+        return null;
+    });
+    take('previewFps', (v) => (!isInt(v, 1, 30) ? 'must be a whole number 1 to 30' : null));
     return { cfg: out, errors };
 }
 
@@ -246,9 +262,10 @@ function rawState(rpm, th, n, band, reds) {
  * on; red and the flash likewise. flashT0 = when the flash started (kept while it lasts), else null.
  * n = fields a side, reds = how many of them light together at the shift point (default 1).
  */
-function step(prev, rpm, th, n, cfg, nowMs, reds) {
+function step(prev, rpm, th, n, cfg, nowMs, reds, leadAdd) {
     if (!validRpm(rpm)) return { lit: 0, red: false, flashing: false, flashT0: null };
-    const H = cfg.engine.hysteresisRpm, band = cfg.engine.limiterBand;
+    // a predicted rpm (makeLead) goes off by its own lead too, so the prediction falling away never flickers a light
+    const H = cfg.engine.hysteresisRpm + (num(leadAdd) && leadAdd > 0 ? leadAdd : 0), band = cfg.engine.limiterBand;
     const p = prev || { lit: 0, red: false, flashing: false, flashT0: null };
     const raw = rawState(rpm, th, n, band, reds);
     const flashing = raw.flashing || (p.flashing && rpm >= th.limit - band - H);
@@ -257,6 +274,43 @@ function step(prev, rpm, th, n, cfg, nowMs, reds) {
     if (red || flashing) lit = n;
     else lit = Math.max(raw.lit, Math.min(p.lit, fillLit(rpm + H, th, n, reds)));
     return { lit, red, flashing, flashT0: flashing ? (p.flashing && p.flashT0 !== null ? p.flashT0 : nowMs) : null };
+}
+
+/**
+ * The rpm a moment ahead: makeLead(cfg.rpm) -> lead(rpm, tMs, leadMs) -> { rpm: rpm + add, add } with add >= 0.
+ * add = slope (rpm/ms over the last slopeWindowMs, at most maxSlope) x leadMs (0 to 150). Only a rise leads: a
+ * slope under minSlope gives none (noise, a steady rpm, a fall), ramping in to the full slope at 2 x minSlope.
+ * Speed ticks re-send the same rpm: an unchanged rpm inside the window keeps the last slope. An invalid rpm or
+ * time clears the history (no lead). Never throws.
+ */
+function makeLead(R) {
+    let h = [], k = 0;      // h: [tMs, rpm] at each change, oldest first; k: the gated slope (rpm/ms)
+    return function lead(rpm, tMs, leadMs) {
+        const ms = num(leadMs) ? clamp(leadMs, 0, 150) : 0;
+        if (!validRpm(rpm) || !num(tMs)) { h = []; k = 0; return { rpm, add: 0 }; }
+        const top = h[h.length - 1];
+        if (top && tMs < top[0]) h = [];        // time went back (a new source): start again
+        else if (top && top[1] === rpm && tMs - top[0] < R.slopeWindowMs) return { rpm: rpm + k * ms, add: k * ms };
+        if (!top || top[1] !== rpm || !h.length) h.push([tMs, rpm]);
+        h = h.filter((x) => tMs - x[0] <= 2 * R.slopeWindowMs);
+        let ref = h[0];
+        h.forEach((x) => { if (tMs - x[0] >= R.slopeWindowMs) ref = x; });
+        k = 0;
+        if (ref && tMs - ref[0] >= R.slopeMinSpanMs) {
+            const s = Math.min((rpm - ref[1]) / (tMs - ref[0]), R.maxSlope);
+            k = s > R.minSlope ? s * clamp((s - R.minSlope) / R.minSlope, 0, 1) : 0;
+        }
+        return { rpm: rpm + k * ms, add: k * ms };
+    };
+}
+
+/** The lead and fast-RPM settings, checked: { leadMs, poll, warnings }. Missing: config's; never throws. */
+function readLead(cfg, get) {
+    const v = safeGet(get)('leadMs'), warnings = [];
+    let leadMs = cfg.rpm.leadMs;
+    if (LEAD_STEPS.indexOf(v) >= 0) leadMs = v;
+    else if (v !== undefined) warnings.push('leadMs: ' + JSON.stringify(v) + ' is not one of ' + LEAD_STEPS.join(', ') + ' (using ' + leadMs + ')');
+    return { leadMs, poll: safeGet(get)('rpmPoll') !== false, warnings };
 }
 
 /** The flash's on half (from its start): on, off, on ... at hz cycles a second. */
@@ -272,8 +326,8 @@ function fieldColor(state, palette, i, colors, on) {
 
 const KEYS = { cluster: 'cluster', hud: 'hud' };
 /**
- * One display's persisted settings, checked: { style, size, bright, night, warnings, x, y } (x, y: the HUD's
- * "move" settings in scene px, 0 for the cluster). get(key) reads a
+ * One display's persisted settings, checked: { style, size, bright, night, warnings, x, y } (x, y: the display's
+ * "move" settings, HUD scene px or cluster panel px). get(key) reads a
  * setting (kit Settings.get, which never validates settings.json). A value outside its list (missing, null,
  * a typo, a wrong type) gives config's default and a warning naming the key. Never throws.
  */
@@ -292,7 +346,9 @@ function readStyle(cfg, get, which) {
     const nv = read(w + 'Night');
     if (nv !== true && nv !== false) warnings.push(w + 'Night: ' + (nv === undefined ? 'missing' : JSON.stringify(nv)) + ' is not true or false (using false)');
     const out = { style, size, bright, night: nv === true, warnings, x: 0, y: 0 };
-    if (w === 'hud') { out.x = pick('hudX', cfg.nudge.x, 0); out.y = pick('hudY', cfg.nudge.y, 0); }
+    const nudge = w === 'hud' ? cfg.nudge : cfg.clusterNudge;
+    out.x = pick(w + 'X', nudge.x, 0);
+    out.y = pick(w + 'Y', nudge.y, 0);
     return out;
 }
 
@@ -379,5 +435,5 @@ const holdForSportPlus = (onlySportPlus, eff) => onlySportPlus === true && !(eff
 module.exports = {
     DEFAULTS, TARGETS, DISPLAYS, BOTH_MODES, MODES, CLUSTER_STYLES, HUD_STYLES, SETTINGS_V, validateConfig, modeThresholds, thresholds,
     rawState, step, flashOn, fieldColor, readStyle, lightsOf, levelOf, fillLit, readDisplays, migrateSettings, driveModeOf,
-    effectiveMode, holdForSportPlus,
+    effectiveMode, holdForSportPlus, LEAD_STEPS, makeLead, readLead,
 };

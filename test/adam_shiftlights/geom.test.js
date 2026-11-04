@@ -13,9 +13,29 @@ const HUD_ROLES = { large: ['slats', 'bracketImg', 'bracketFill'], classic: ['br
 const hudSpecs = (h, size, x, y) => G.layersFor(cfg, 'hud', sel('large', h, 100, size, x, y));
 const rectsOf = (specs) => specs.map((s) => [s.role, s.rect.x, s.rect.y, s.rect.w, s.rect.h].join(' '));
 
+const clSel = (c, size, x, y) => { const v = sel(c, 'bar', size); v.cluster.x = x; v.cluster.y = y; return v; };
+
 module.exports = [
-    ['bars match the mockups (+-1 px): large 741,109 438x83; classic 753,127 414x46; row 788,134 344x22; HUD 111,92 578x52', () => {
-        [['large', [741, 109, 438, 83]], ['classic', [753, 127, 414, 46]], ['row', [788, 134, 344, 22]]].forEach((x) => {
+    ['cluster move: every step of every style fits the panel at every size, lands x, y px from the default; off the panel falls back', () => {
+        L.CLUSTER_STYLES.forEach((c) => cfg.sizeSteps.forEach((size) => {
+            const home = G.layersFor(cfg, 'cluster', clSel(c, size, 0, 0))[0].geom.bar;
+            cfg.clusterNudge.x.forEach((x) => cfg.clusterNudge.y.forEach((y) => {
+                const said = [], g = G.layersFor(cfg, 'cluster', clSel(c, size, x, y), (m) => said.push(m))[0].geom;
+                assert.deepStrictEqual(said, [], [c, size, x, y].join(' '));
+                assert.ok(g.fits, [c, size, x, y].join(' '));
+                near(g.bar.x0 - home.x0, x, 1e-9, c + ' x'); near(g.bar.y0 - home.y0, y, 1e-9, c + ' y');
+            }));
+        }));
+        const said = [], g = G.layersFor(cfg, 'cluster', clSel('large', 120, 0, 700), (m) => said.push(m))[0].geom;
+        assert.deepStrictEqual(said, ['cluster size 120 % does not fit the panel: using 100 %', 'cluster move 0, 700 px does not fit the panel: using the default place']);
+        assert.deepStrictEqual(box(g), box(bar('large')));
+        const m = [], b = G.layersFor(cfg, 'both', clSel('large', 100, 0, 400), (x) => m.push(x))[0];
+        assert.ok(G.inside(b.rect, 'map') && /^cluster move 0, 400 px does not fit the map/.test(m[0]), m.join('; '));
+        // the default place is 25 px under the mockup's (0.3.1), still on the panel above its middle
+        assert.deepStrictEqual([bar('large').bar.y0, bar('row').bar.y0].map(Math.round), [134, 159]);
+    }],
+    ['bars match the mockups (+-1 px): large 741,134 438x83; classic 753,152 414x46; row 788,159 344x22 (25 px under the mockup); HUD 111,92 578x52', () => {
+        [['large', [741, 134, 438, 83]], ['classic', [753, 152, 414, 46]], ['row', [788, 159, 344, 22]]].forEach((x) => {
             box(bar(x[0])).forEach((v, i) => near(v, x[1][i], 1, x[0] + ' ' + i));
         });
         box(hudBar()).forEach((v, i) => near(v, [111, 92, 578, 52][i], 1, 'hud ' + i));
@@ -77,7 +97,7 @@ module.exports = [
         // the cluster's layer is the same whatever the HUD style, but for the target
         const a = G.layersFor(cfg, 'both', sel('large', 'bar'))[0], b = G.layersFor(cfg, 'cluster', sel('large', 'bar'))[0];
         assert.deepStrictEqual([a.rect.x, a.rect.y, a.rect.w, a.rect.h, a.target], [295, 8, 498, 144, 'map']);
-        assert.deepStrictEqual([b.rect.x, b.rect.y, b.rect.w, b.rect.h, b.target], [711, 78, 498, 144, 'panel']);
+        assert.deepStrictEqual([b.rect.x, b.rect.y, b.rect.w, b.rect.h, b.target], [711, 103, 498, 144, 'panel']);
     }],
     ['bracket: 10-point path 0 to 7 centred on x 400 at top 152, the same for every HUD style; gear box inside the rect', () => {
         const lg = hudSpecs('large')[1].geom, cl = hudSpecs('classic')[0].geom, bk = hudSpecs('bracket')[0].geom;

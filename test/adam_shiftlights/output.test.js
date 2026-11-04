@@ -46,12 +46,12 @@ const rectOf = (m) => [m.target, m.x, m.y, m.w, m.h, m.kind].join(' ');
 const want = (spec) => [spec.target, spec.rect.x, spec.rect.y, spec.rect.w, spec.rect.h, spec.role === 'bracketImg' ? 'image' : 'effect'].join(' ');
 
 module.exports = [
-    ['cluster large: one effect layer at 711,78 498x144 on the panel with the slat uniforms', async () => {
+    ['cluster large: one effect layer at 711,103 498x144 on the panel with the slat uniforms', async () => {
         const r = rig();
         r.out.apply(A('cluster', 'large', 'large'));
         await until(() => r.ops('layer').length === 1 && r.out.status().link === 'ready', 3000, 'layer + ready');
         const m = r.ops('layer')[0];
-        assert.deepStrictEqual(layerOf(m), { target: 'panel', x: 711, y: 78, w: 498, h: 144, kind: 'effect', class: 'overlay' });
+        assert.deepStrictEqual(layerOf(m), { target: 'panel', x: 711, y: 103, w: 498, h: 144, kind: 'effect', class: 'overlay' });
         assert.ok(/u_geo2/.test(m.fs) && /gl_FragColor/.test(m.fs));
         const u = {};
         r.ops('uniform').forEach((x) => { u[x.name] = x; });
@@ -145,7 +145,7 @@ module.exports = [
         const n1 = r.msgs.length;
         r.out.apply(A('cluster', 'classic', 'bar'));
         await until(() => r.ops('layer', n1).length === 1, 3000, 'panel layer');
-        assert.deepStrictEqual(r.ops('layer', n1).map(rectOf), ['panel 753 127 414 46 effect']);
+        assert.deepStrictEqual(r.ops('layer', n1).map(rectOf), ['panel 753 152 414 46 effect']);
         await r.done();
     }],
     ['a brightness or night change sends only u_st to the effects and opacity to the image', async () => {

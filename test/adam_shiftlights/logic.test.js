@@ -161,10 +161,10 @@ module.exports = [
     }],
     ['readStyle: all 16 cluster x HUD pairs resolve each display to its own value', () => {
         L.CLUSTER_STYLES.forEach((c) => L.HUD_STYLES.forEach((h) => {
-            const v = { clusterStyle: c, hudStyle: h, clusterSize: 110, hudSize: 80, clusterBright: 60, hudBright: 40, clusterNight: true, hudNight: false, hudX: -30, hudY: 20 };
+            const v = { clusterStyle: c, hudStyle: h, clusterSize: 110, hudSize: 80, clusterBright: 60, hudBright: 40, clusterNight: true, hudNight: false, hudX: -30, hudY: 20, clusterX: 15, clusterY: -10 };
             const get = (k) => v[k];
             const a = L.readStyle(cfg, get, 'cluster'), b = L.readStyle(cfg, get, 'hud');
-            assert.deepStrictEqual([a.style, a.size, a.bright, a.night, a.warnings, a.x, a.y], [c, 110, 60, true, [], 0, 0], c + '/' + h);
+            assert.deepStrictEqual([a.style, a.size, a.bright, a.night, a.warnings, a.x, a.y], [c, 110, 60, true, [], 15, -10], c + '/' + h);
             assert.deepStrictEqual([b.style, b.size, b.bright, b.night, b.warnings, b.x, b.y], [h, 80, 40, false, [], -30, 20], c + '/' + h);
             // changing one display's setting never changes the other's
             L.CLUSTER_STYLES.forEach((c2) => assert.strictEqual(L.readStyle(cfg, (k) => (k === 'clusterStyle' ? c2 : v[k]), 'hud').style, h));
@@ -176,7 +176,7 @@ module.exports = [
         bad.forEach((x) => {
             const v = { clusterStyle: x, hudStyle: x, clusterSize: 999, hudSize: x, clusterBright: -5, hudBright: x, clusterNight: 'yes', hudNight: x === true ? 1 : x };
             ['cluster', 'hud'].forEach((w) => {
-                const r = L.readStyle(cfg, (k) => (k === 'hudX' || k === 'hudY' ? x : v[k]), w);
+                const r = L.readStyle(cfg, (k) => (/^(hud|cluster)[XY]$/.test(k) ? x : v[k]), w);
                 assert.deepStrictEqual([r.style, r.size, r.bright, r.night, r.x, r.y], ['large', 100, 100, false, 0, 0], w + ' ' + JSON.stringify(x));
                 assert.ok(r.warnings.length >= 3, JSON.stringify(r.warnings));
                 assert.ok(r.warnings.some((m) => m.indexOf(w + 'Style: ') === 0), JSON.stringify(r.warnings));
@@ -188,6 +188,8 @@ module.exports = [
         assert.strictEqual(L.readStyle(cfg, () => 'bar', 'cluster').style, 'large');    // and the other way round
         assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudStyle' ? 'off' : undefined), 'hud').style, 'large');   // an old 'off'
         assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudX' ? 15 : undefined), 'hud').x, 0);   // not a step
+        assert.deepStrictEqual(['clusterX', 'clusterY'].map((key) => L.readStyle(cfg, (k) => (k === key ? 7 : undefined), 'cluster')[key.slice(-1).toLowerCase()]), [0, 0]);
+        assert.ok(L.readStyle(cfg, (k) => (k === 'clusterY' ? 300 : undefined), 'cluster').warnings.some((m) => /^clusterY: 300 is not one of/.test(m)));
     }],
     ['readDisplays: HUD and cluster toggle independently; both on follows "When both are on"', () => {
         const rd = (v) => L.readDisplays((k) => v[k]);
@@ -247,5 +249,80 @@ module.exports = [
         assert.strictEqual(L.levelOf(cfg, { bright: 40, night: false }), 0.4);
         assert.strictEqual(L.levelOf(cfg, { bright: 100, night: true }), 0.35);
         assert.strictEqual(L.levelOf(cfg, { bright: 60, night: true }), 0.21);
+    }],
+    ['lead: leadMs 0 adds nothing; flat, falling and noisy-flat rpm get no lead', () => {
+        const ramp = (f, rpmAt, n, hz, ms) => { const out = []; for (let i = 0; i < n; i++) out.push(f(rpmAt(i * 1000 / hz), i * 1000 / hz, ms)); return out; };
+        ramp(L.makeLead(cfg.rpm), (t) => 5000 + 3 * t, 40, 20, 0).forEach((r) => assert.strictEqual(r.add, 0));
+        let seed = 7;
+        const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+        [(t) => 6200, (t) => 6800 - 2 * t, (t) => 6200 + Math.round((rnd() * 2 - 1) * 25)].forEach((g, i) => {
+            [10, 20, 50].forEach((hz) => ramp(L.makeLead(cfg.rpm), g, 60, hz, 150).forEach((r) => assert.strictEqual(r.add, 0, 'case ' + i + ' at ' + hz + ' Hz')));
+        });
+    }],
+    ['lead: a 3 rpm/ms rise at 20 Hz leads 180 rpm at 60 ms once the window is full; the slope stops at maxSlope', () => {
+        const f = L.makeLead(cfg.rpm);
+        let r;
+        for (let t = 0; t <= 400; t += 50) r = f(5000 + 3 * t, t, 60);
+        assert.ok(Math.abs(r.add - 180) <= 2, String(r.add));
+        assert.strictEqual(r.rpm, 5000 + 3 * 400 + r.add);
+        const g = L.makeLead(cfg.rpm);
+        for (let t = 0; t <= 400; t += 50) r = g(1000 + 30 * t, t, 60);
+        assert.strictEqual(r.add, cfg.rpm.maxSlope * 60);
+        assert.strictEqual(g(13000, 450, 500).add, cfg.rpm.maxSlope * 150, 'leadMs clamps at 150');
+    }],
+    ['lead: the soft gate gives none at 1 rpm/ms, half the slope at 1.5, all of it from 2', () => {
+        const at = (slope) => { const f = L.makeLead(cfg.rpm); let r; for (let t = 0; t <= 400; t += 20) r = f(5000 + slope * t, t, 100); return r.add / (slope * 100); };
+        assert.ok(Math.abs(at(1.0)) < 0.01, String(at(1.0)));
+        assert.ok(Math.abs(at(1.5) - 0.5) < 0.01, String(at(1.5)));
+        assert.ok(Math.abs(at(2.0) - 1) < 0.01, String(at(2.0)));
+    }],
+    ['lead: a gap over 2 x the window, or an invalid rpm, starts again with no lead', () => {
+        const f = L.makeLead(cfg.rpm);
+        for (let t = 0; t <= 400; t += 50) f(5000 + 3 * t, t, 60);
+        assert.strictEqual(f(6500, 400 + 2 * cfg.rpm.slopeWindowMs + 10, 60).add, 0, 'gap');
+        [undefined, NaN, -1, '6000'].forEach((bad) => {
+            const g = L.makeLead(cfg.rpm);
+            for (let t = 0; t <= 400; t += 50) g(5000 + 3 * t, t, 60);
+            const r = g(bad, 450, 60);
+            assert.ok(Object.is(r.rpm, bad) && r.add === 0, String(bad));     // Object.is: Node 8's deepStrictEqual has NaN !== NaN
+            assert.strictEqual(g(6400, 500, 60).add, 0, 'history cleared after ' + String(bad));
+        });
+        assert.strictEqual(L.makeLead(cfg.rpm)(6000, NaN, 60).add, 0);
+    }],
+    ['lead: an unchanged rpm (a speed tick) keeps the last lead inside the window, then decays to 0', () => {
+        const f = L.makeLead(cfg.rpm);
+        let r;
+        for (let t = 0; t <= 400; t += 50) r = f(5000 + 3 * t, t, 60);
+        assert.strictEqual(f(6200, 410, 60).add, r.add);
+        assert.strictEqual(f(6200, 540, 60).add, r.add);
+        assert.strictEqual(f(6200, 400 + cfg.rpm.slopeWindowMs + 1, 60).add, 0);
+    }],
+    ['step with a lead: on in the same call a boundary is crossed (no smoothing up), off only lead + 50 under it', () => {
+        const t = th('sportplus', 95);
+        [0, 100].forEach((add) => {
+            let s = null;
+            for (let r = 5900; r <= 7000; r++) {
+                s = L.step(s, r, t, N, cfg, r, 1, add);
+                assert.strictEqual(s.lit, raw(r, t).lit, 'rpm ' + r + ' lead ' + add);
+            }
+        });
+        const s = L.step(null, 6161, t, N, cfg, 0, 1, 100);
+        assert.strictEqual(s.lit, 2);
+        assert.deepStrictEqual([6111, 6011, 6010].map((r) => L.step(s, r, t, N, cfg, 0, 1, 100).lit), [2, 2, 1]);
+        assert.deepStrictEqual([6111, 6110].map((r) => L.step(s, r, t, N, cfg, 0, 1, 0).lit), [2, 1]);
+        assert.deepStrictEqual([-5, NaN, 'x'].map((a) => L.step(s, 6110, t, N, cfg, 0, 1, a).lit), [1, 1, 1], 'a bad lead counts as 0');
+    }],
+    ['readLead: missing gives config (60, poll on); garbage falls back with a warning; only false turns the poll off', () => {
+        const get = (v) => (k) => v[k];
+        assert.deepStrictEqual(L.readLead(cfg, get({})), { leadMs: 60, poll: true, warnings: [] });
+        ['x', 55, 151, null, -20].forEach((v) => {
+            const r = L.readLead(cfg, get({ leadMs: v }));
+            assert.strictEqual(r.leadMs, 60, String(v));
+            assert.ok(r.warnings.length === 1 && /^leadMs: /.test(r.warnings[0]), JSON.stringify(r.warnings));
+        });
+        L.LEAD_STEPS.forEach((v) => assert.deepStrictEqual(L.readLead(cfg, get({ leadMs: v })).leadMs, v));
+        assert.strictEqual(L.readLead(cfg, get({ rpmPoll: 'no' })).poll, true);
+        assert.strictEqual(L.readLead(cfg, get({ rpmPoll: false })).poll, false);
+        assert.strictEqual(L.readLead(cfg, () => { throw new Error('x'); }).leadMs, 60);
     }],
 ];

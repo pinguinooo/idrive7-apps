@@ -21,8 +21,15 @@ async function until(fn, ms, what) {
     throw new Error('timed out waiting for ' + what);
 }
 
+const CDS = 'de.bmw.infotainment.vehicle.CDS';
 class FakeCar {
-    constructor(ctx, groups, extra) { FakeCar.last = this; this.extra = extra || {}; }
+    constructor(ctx, groups, extra) {
+        FakeCar.last = this; this.extra = extra || {};
+        // with ctx.signals (a test's fake car link), the rpm comes in like the real Car's: through signals.watch
+        if (ctx.signals && ctx.signals.watch) {
+            ctx.signals.watch(CDS, '1', { statusEngineSpeed2: (v) => this.emit({ rpm: v.actualValueRPMEngineCrankshaft / 4, oil: 95, gear: 3 }, Date.now()) }, ctx.log);
+        }
+    }
     onSample(fn) { this.emit = fn; }
     mode(v) { this.extra[FES].statusFESVehicleDynamicSwitchHMI({ actualValueModeDrivingExperience: v }); }
 }
@@ -42,7 +49,7 @@ function settingsOf(saved) {
 
 let seq = 0;
 /** main.js started on a fresh fake ctx; r.layers() = the layer ops the fake service got so far. */
-function start(saved, visible) {
+function start(saved, visible, signals) {
     const sock = path.join(os.tmpdir(), 'sl-main-' + process.pid + '-' + (++seq) + '.sock');
     const msgs = [], lines = [], vis = [], clicks = {};
     const fake = createFake(sock, (m) => msgs.push(m));
@@ -51,7 +58,7 @@ function start(saved, visible) {
     const ctx = {
         settings, log, dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'sl-main-data-')),
         ui: { isVisible: (n) => n === 'MAIN' && !!visible, onVisible: (fn) => vis.push(fn), onClick: (id, fn) => { clicks[id] = fn; }, image: () => Promise.resolve() },
-        loop: () => {}, theme: () => ({}), canvas: () => null,
+        loop: () => {}, theme: () => ({}), canvas: () => null, signals,
     };
     const realResolve = Module._resolveFilename;
     Module._resolveFilename = function (req, parent) {
@@ -154,5 +161,37 @@ module.exports = [
         assert.strictEqual(again.settings.get('hudOn'), true);
         assert.ok(!again.lines.some((l) => /migrated/.test(l)));
         await again.done();
+    }],
+    ['a 0.3.0 save (no leadMs, no rpmPoll) starts with lead 60 ms and the rpm poll on; garbage leadMs warns once, no ERR', async () => {
+        const r = await start({ _settingsV: 3, hudOn: true, hudStyle: 'bar', leadMs: undefined, rpmPoll: undefined });
+        assert.ok(r.lines.some((l) => /^started: .*, lead 60 ms, rpm poll on$/.test(l)), r.lines.join('\n'));
+        r.sample(6500);
+        await until(() => r.layers().length === 1, 3000, 'a layer');
+        await r.done();
+        const g = await start({ _settingsV: 3, hudOn: true, hudStyle: 'bar', leadMs: 'fast', rpmPoll: 'x' });
+        for (let i = 0; i < 5; i++) g.sample(6000 + i * 100);
+        await until(() => g.layers().length === 1, 3000, 'a layer');
+        assert.ok(g.lines.some((l) => /, lead 60 ms, rpm poll on$/.test(l)), g.lines.join('\n'));
+        assert.strictEqual(g.lines.filter((l) => /^WARN settings: leadMs: "fast"/.test(l)).length, 1, g.lines.join('\n'));
+        assert.ok(!g.lines.some((l) => /^ERR/.test(l)), g.lines.join('\n'));
+        await g.done();
+    }],
+    ['Fast RPM: with no notifications the getter feeds Car\'s own rpm handler; off, it is never called', async () => {
+        const run = async (poll) => {
+            const calls = [];
+            const signals = { watch: () => Promise.resolve({ available: true, proxy: { getValue: (f) => { calls.push(f); return Promise.resolve({ actualValueRPMEngineCrankshaft: 6500 * 4 }); } } }) };
+            const r = await start({ _settingsV: 3, hudOn: true, hudStyle: 'bar', rpmPoll: poll }, false, signals);
+            await wait(300);
+            const lit = r.msgs.filter((m) => m.op === 'uniform' && m.name === 'u_st' && Number(m.v.split(' ')[0]) > 0).length;
+            const out = { calls: calls.length, lit, field: calls[0], lines: r.lines };
+            await r.done();
+            return out;
+        };
+        const on = await run(true);
+        assert.ok(on.calls >= 3 && on.field === 'statusEngineSpeed2', JSON.stringify(on));
+        assert.ok(on.lit >= 1, 'the polled 6500 rpm lit the bar');
+        const off = await run(false);
+        assert.deepStrictEqual([off.calls, off.lit], [0, 0]);
+        assert.ok(off.lines.some((l) => /rpm poll off$/.test(l)));
     }],
 ];

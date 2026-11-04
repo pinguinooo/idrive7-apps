@@ -157,22 +157,26 @@ function hudLayout(cfg, hudSel, warn) {
  * The layer specs for a display mode ('off' | 'cluster' | 'hud' | 'both', logic.readDisplays) and the two
  * style selections (logic.readStyle results):
  * [{ key, which, role: 'slats' | 'bracketImg' | 'bracketFill', target, rect, z, geom, style, cells, flash }].
- * 'both' puts the cluster on the map target (panel and hud share one scene: never up at once). A cluster size
- * whose bar does not fit its target falls back to 100 % and calls warn(text); the HUD: hudLayout.
+ * 'both' puts the cluster on the map target (panel and hud share one scene: never up at once). The cluster bar is
+ * moved by sel.cluster.x, y; a size, then a move, that does not fit its target falls back (100 %, then the default
+ * place) with a warn(text); the HUD: hudLayout.
  */
 function layersFor(cfg, display, sel, warn) {
     const out = [], say = typeof warn === 'function' ? warn : () => {};
     const showCl = display === 'cluster' || display === 'both', showHud = display === 'hud' || display === 'both';
-    const sized = (which, st, size, target, map) => {
+    const sized = (which, st, size, target, map, x, y) => {
         const fit = (g) => g.fits && (!map || inside(toMap(g.rect, map), 'map'));
-        let g = slatBar(st, size / 100, target);
-        if (!fit(g)) { say(which + ' size ' + size + ' % does not fit the ' + (map ? 'map' : target) + ': using 100 %'); g = slatBar(st, 1, target); }
+        const at = (k, dx, dy) => slatBar(dx || dy ? Object.assign({}, st, { cx: st.cx + dx, cy: st.cy + dy }) : st, k, target);
+        const where = map ? 'map' : target;
+        let g = at(size / 100, x, y);
+        if (!fit(g) && size !== 100) { say(which + ' size ' + size + ' % does not fit the ' + where + ': using 100 %'); g = at(1, x, y); }
+        if (!fit(g) && (x || y)) { say(which + ' move ' + x + ', ' + y + ' px does not fit the ' + where + ': using the default place'); g = at(1, 0, 0); }
         if (map) g.rect = toMap(g.rect, map);
         return g;
     };
     if (showCl && cfg.clusterStyles[sel.cluster.style]) {
         const map = display === 'both' ? cfg.mapOffset : null;
-        const g = sized('cluster', cfg.clusterStyles[sel.cluster.style], sel.cluster.size, 'panel', map);
+        const g = sized('cluster', cfg.clusterStyles[sel.cluster.style], sel.cluster.size, 'panel', map, sel.cluster.x || 0, sel.cluster.y || 0);
         out.push({ key: 'cluster:slats', which: 'cluster', role: 'slats', target: g.rect.target, rect: g.rect, z: 0, geom: g, style: sel.cluster.style });
     }
     if (showHud) {

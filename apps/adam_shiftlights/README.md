@@ -39,6 +39,8 @@ Updates follow the `main` branch.
 | Which display when both are on | HUD, Instrument cluster, Experimental: HUD + cluster centre area | HUD |
 | Only in Sport+ | on / off | off |
 | Start with the car | on / off | on |
+| Shift lights lead (light up early by this much) | Off, 20 to 150 ms | 60 ms |
+| Fast RPM (ask the car when its updates are slow) | on / off | on |
 | HUD: style | Shift bar + rev bracket, large; Shift bar + rev bracket, small; Shift bar only; Rev bracket + gear only | large |
 | HUD: size | 70 to 120 % | 100 % |
 | HUD: move left / right | 100 px left to 100 px right, steps of 10 | Centre |
@@ -47,6 +49,8 @@ Updates follow the `main` branch.
 | HUD: night dim, Cluster: night dim | on / off | off |
 | Cluster: style | M slats, large; M slats, small; Centre row (12 segments); Stock look (one block per dial) | M slats, large |
 | Cluster: size | 70 to 120 % | 100 % |
+| Cluster: move left / right | 50 px left to 50 px right, steps of 5 | Default |
+| Cluster: move up / down | 40 px up to 40 px down, steps of 5 | Default |
 | Drive mode if the car does not send it | Comfort, Sport, Sport+ | Sport |
 | Comfort / Sport / Sport+: first light | Default, 2000 to 6500 rpm | Default |
 | Comfort / Sport / Sport+: shift (red) | Default, 2500 to 6900 rpm | Default |
@@ -78,6 +82,23 @@ in Sport+" shows the lights only while the car is in Sport+. When the car sends 
 The app starts with the car (it is installed as an autostart app). With this setting off, it still starts,
 but sends nothing to the cluster or the HUD until you open its screen once.
 
+### Cluster position
+
+Since 0.3.1 the cluster bar sits 25 px lower than in 0.3.0 (the M slats' top edge at y 134 of the 1920 x 720
+panel, was 109). "Cluster: move" shifts it from there in 5 px steps; a move that would put the bar off the
+panel falls back to the default place. Keep it clear of the dial numerals either side.
+
+### Lead and Fast RPM
+
+The car sends the engine speed only when it changes, and not very often, so the lights trail the real rpm by up
+to one update. Two settings close that gap:
+
+- **Shift lights lead** lights each light that much earlier while the rpm climbs (from the slope of the last
+  150 ms; nothing when the rpm is steady, falls, or climbs under 1,000 rpm/s). Lights go out a little later by
+  the same amount, so they don't flicker. Off gives 0.3.0's behaviour.
+- **Fast RPM** asks the car for the rpm (its getter) when no update came for 40 ms: at most 25 times a second,
+  one request at a time, backing off to once every 2 s if the car doesn't answer.
+
 ### HUD position
 
 The HUD art is centred on the stock speed. "HUD: move" shifts it if it sits off centre on your car; a bigger
@@ -93,6 +114,19 @@ size grows upward, away from the speed. The app draws no speed or unit: the stoc
 - Never reinstall an app that crashed. Remove it with the Store.
 - The app stops all cluster and HUD output after 5 errors in 10 seconds. Turn a display off and on to reset
   that. Demo data never reaches the cluster or the HUD.
+
+## Latency
+
+Measured on claudius-vm under Node 8 with `test/adam_shiftlights/latency_trace.js` (the real main.js and kit
+car.js against a fake car and a fake cluster-render, 5 pulls at 3000 rpm/s; the getter is the best case):
+
+- The app's own delay from an rpm update to the cluster-render message is about 0.2 ms (p50) in every mode.
+  0.3.0's 30 fps software preview stalled it up to 25 ms; the 10 fps cap keeps it under 1 ms (p95).
+- What the driver sees is set by the car's update rate: with no lead, 47 ms (p50) behind the rpm at 10 updates
+  a second, 22 ms at 20. Fast RPM with a fresh getter: 19 and 15 ms. Lead 60: about 40 ms early at the socket,
+  which leaves room for the cluster's own flush and refresh (not measured here).
+- Re-run: `node --expose-gc test/adam_shiftlights/latency_trace.js --hz 10 --lead 60 --poll on --preview gpu`
+  (`--app <older checkout>/apps/adam_shiftlights` for a before run).
 
 ## For developers
 

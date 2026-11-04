@@ -43,6 +43,10 @@ module.exports = Object.freeze({
     // "HUD: move left / right" and "up / down" setting steps (scene px; negative = left / up), app.json too
     nudge: { x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
         y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60] },
+    // "Cluster: move left / right" and "up / down" setting steps (panel px from the style's cx, cy; negative = left / up),
+    // app.json too. Kept small: the dial numerals sit either side of the bar [U]
+    clusterNudge: { x: [-50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50],
+        y: [-40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40] },
     colors: {
         y: '#ffc20e', o: '#ff7a00', r: '#ff2b1f', w: '#f2f5f8',   // centre row, small HUD cells, stock blocks
         a: '#ffa800', c: '#ff1a22',                               // cluster M slats large: amber, red
@@ -53,13 +57,15 @@ module.exports = Object.freeze({
     // where the cluster style goes on the map target when both displays show (panel and hud share one scene):
     // the panel rect moved by this, y at least minY [U]
     mapOffset: { x: 416, y: 126, minY: 8 },
-    clusterStyles: {            // on the 1920x720 panel, axis x 960 (cy = the bar's centre y)
+    // on the 1920x720 panel, axis x 960 (cy = the bar's centre y). The slat styles sit 25 px lower than the mockup
+    // (0.3.1, Adam's car test 2026-11-04: "need to move down a little"); the move settings go from there
+    clusterStyles: {
         large: { palette: 'aaaaaaaacc', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 15.6, pitch: 18.6, inner: 36,
-            centre: 0, h: 82.8, shear: 29.81, cx: 960, cy: 150, glow: 30, dim: 0.2 },        // M slats large: 438 x 83 at 741,109
+            centre: 0, h: 82.8, shear: 29.81, cx: 960, cy: 175, glow: 30, dim: 0.2 },        // M slats large: 438 x 83 at 741,134
         classic: { palette: 'AAAAAAAACC', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 15, pitch: 18, inner: 30,
-            centre: 0, h: 46, shear: 22.08, cx: 960, cy: 150, glow: 0, dim: 0.13 },           // M slats small: 414 x 46 at 753,127
+            centre: 0, h: 46, shear: 22.08, cx: 960, cy: 175, glow: 0, dim: 0.13 },           // M slats small: 414 x 46 at 753,152
         row: { palette: 'yyyoor', reds: 1, fill: 'inward', lean: 'none', perSide: 6, slat: 25, pitch: 29, inner: 2,
-            centre: 0, h: 22, shear: 0, cx: 960, cy: 145, glow: 0, dim: 0 },                   // centre row: 12 fields, 344 x 22 at 788,134
+            centre: 0, h: 22, shear: 0, cx: 960, cy: 170, glow: 0, dim: 0 },                   // centre row: 12 fields, 344 x 22 at 788,159
         stock: { palette: 'yoC', reds: 1, fill: 'inward', lean: 'mirror', stage: true, perSide: 1, slat: 40, pitch: 40, inner: 205.3,
             centre: 0, h: 92, shear: 50.6, cx: 960, cy: 185, glow: 14, dim: 0 },               // one block a dial: yellow, orange, red [U]
     },
@@ -82,4 +88,16 @@ module.exports = Object.freeze({
         killFile: 'DISABLE',    // a file of this name in the app's data folder turns all output off
         killPollMs: 1000,       // how often the kill file is looked for
     },
+    rpm: {
+        leadMs: 60,             // "Shift lights lead" default: light up this far ahead of the rpm (ms, app.json steps 0 to 150)
+        slopeWindowMs: 150,     // the rpm slope for the lead is taken over about this much history (ms)
+        slopeMinSpanMs: 60,     // less history than this: no lead (ms)
+        minSlope: 1,            // below 1,000 rpm/s no lead (rpm/ms; noise and a steady rpm), full lead from 2 x this
+        maxSlope: 20,           // the slope never counts above this (rpm/ms): the lead adds at most maxSlope x leadMs
+        pollMs: 40,             // "Fast RPM": ask the car for the rpm when no update came for this long (ms, 20 at least)
+        pollTimeoutMs: 200,     // a getter answer later than this counts as a failure (ms)
+        pollMaxBackoffMs: 2000, // failures double the wait up to this (ms); one answer resets it to pollMs
+        pollIdleMs: 1000,       // while polling is off or the car is not there, look again this often (ms)
+    },
+    previewFps: 10,             // centre-screen preview; each frame is synchronous JS that delays rpm handling
 });

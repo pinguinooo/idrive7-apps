@@ -106,9 +106,11 @@ module.exports = [
         assert.ok(/^Experimental: /.test(item('bothMode').options[2][1]) && /one at a time/.test(item('bothMode').label));
         assert.strictEqual(item('enabled'), undefined);
         assert.strictEqual(item('display'), undefined);
-        [['hudX', config.nudge.x, 'px left', 'px right'], ['hudY', config.nudge.y, 'px up', 'px down']].forEach((x) => {
+        [['hudX', config.nudge.x, 'px left', 'px right', 'Centre'], ['hudY', config.nudge.y, 'px up', 'px down', 'Centre'],
+            ['clusterX', config.clusterNudge.x, 'px left', 'px right', 'Default'], ['clusterY', config.clusterNudge.y, 'px up', 'px down', 'Default']].forEach((x) => {
             const it = item(x[0]);
-            assert.deepStrictEqual([it.steps, it.default, it.labels['0']], [x[1], 0, 'Centre'], x[0]);
+            assert.deepStrictEqual([it.steps, it.default, it.labels['0']], [x[1], 0, x[4]], x[0]);
+            assert.strictEqual(Object.keys(it.labels).length, x[1].length, x[0]);
             x[1].forEach((v) => { if (v) assert.strictEqual(it.labels[String(v)], Math.abs(v) + ' ' + (v < 0 ? x[2] : x[3]), x[0] + ' ' + v); });
         });
         assert.deepStrictEqual(spec.screens[0].buttons.map((b) => b[0]), ['BTN_HUD', 'BTN_CLUSTER', 'BTN_SETTINGS']);
@@ -118,11 +120,11 @@ module.exports = [
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
-        assert.strictEqual(spec.version, '0.3.0');
+        assert.strictEqual(spec.version, '0.3.1');
         assert.strictEqual(spec.mguAppStartType, 'autostart');
-        assert.deepStrictEqual(spec.settings.slice(0, 16).map((s) => s.key),
-            ['hudOn', 'clusterOn', 'bothMode', 'onlySportPlus', 'autoStart', 'hudStyle', 'hudSize', 'hudX', 'hudY', 'hudBright', 'hudNight',
-                'clusterStyle', 'clusterSize', 'clusterBright', 'clusterNight', 'driveMode']);
+        assert.deepStrictEqual(spec.settings.slice(0, 20).map((s) => s.key),
+            ['hudOn', 'clusterOn', 'bothMode', 'onlySportPlus', 'autoStart', 'leadMs', 'rpmPoll', 'hudStyle', 'hudSize', 'hudX', 'hudY', 'hudBright', 'hudNight',
+                'clusterStyle', 'clusterSize', 'clusterX', 'clusterY', 'clusterBright', 'clusterNight', 'driveMode']);
         assert.strictEqual(item('clusterStyle').default, config.styles.cluster);
         assert.strictEqual(item('hudStyle').default, config.styles.hud);
         assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[0]), L.CLUSTER_STYLES);
@@ -144,6 +146,27 @@ module.exports = [
         const fes = sig['de.bmw.infotainment.drivingexcitement.FES'];
         assert.strictEqual(fes.statusFESVehicleDynamicSwitchHMI, 's');
         assert.ok(typeof fes._optional === 'string' && fes._optional.length > 10);
+    }],
+    ['app.json lead and Fast RPM settings match config.js; bad rpm and previewFps values fall back', () => {
+        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
+        const item = (k) => spec.settings.filter((s) => s.key === k)[0];
+        assert.deepStrictEqual([item('leadMs').type, item('leadMs').steps, item('leadMs').default, item('leadMs').unit, item('leadMs').labels['0']],
+            ['number', L.LEAD_STEPS, config.rpm.leadMs, 'ms', 'Off']);
+        assert.deepStrictEqual([item('rpmPoll').type, item('rpmPoll').default], ['bool', true]);
+        [[(c) => { c.rpm.pollMs = 5; }, /^rpm: pollMs must be a whole number 20 to 1000/], [(c) => { c.rpm.minSlope = 0; }, /^rpm: every value/],
+            [(c) => { c.rpm.leadMs = 55; }, /^rpm: leadMs must be one of/], [(c) => { c.rpm.maxSlope = 2; }, /^rpm: maxSlope/],
+            [(c) => { c.rpm.pollMaxBackoffMs = 30; }, /^rpm: pollMaxBackoffMs/], [(c) => { c.rpm.pollTimeoutMs = 5000; }, /^rpm: pollTimeoutMs/],
+            [(c) => { c.rpm = null; }, /^rpm: every value/]].forEach((x) => {
+            const r = bad(x[0]);
+            hasError(r, x[1]);
+            assert.deepStrictEqual(r.cfg.rpm, L.DEFAULTS.rpm);
+        });
+        hasError(bad((c) => { c.clusterNudge = { x: [5, 10], y: [0] }; }), /^clusterNudge: x and y must be whole numbers/);
+        [60, 0, 2.5, '10'].forEach((v) => {
+            const r = bad((c) => { c.previewFps = v; });
+            hasError(r, /^previewFps: must be a whole number 1 to 30/);
+            assert.strictEqual(r.cfg.previewFps, 10);
+        });
     }],
     ['the HUD draws no speed, unit or line (the stock HUD shows the speed): none in config.js or DEFAULTS', () => {
         [config.hudStyles.bracket, L.DEFAULTS.hudStyles.bracket].forEach((B) => ['unit', 'unitAt', 'line', 'origin', 'below'].forEach((k) => assert.strictEqual(B[k], undefined, k)));
