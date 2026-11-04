@@ -46,8 +46,10 @@ module.exports = [
         hasError(bad((c) => { c.hudStyles.bar.cy = 470; }), /^hudStyles\.bar: does not fit hud/);
         hasError(bad((c) => { c.clusterStyles.classic.cx = 1500; }), /^clusterStyles\.classic: does not fit the map/);
         hasError(bad((c) => { c.hudStyles.bracket.top = 420; }), /^hudStyles\.bracket: does not fit the hud/);
-        hasError(bad((c) => { c.hud = { centerX: 700, anchorY: 260 }; }), /^hud: the HUD art does not fit the hud there \(large, classic, bar, bracket\)/);
+        hasError(bad((c) => { c.hud = Object.assign({}, c.hud, { centerX: 700 }); }), /^hud: the HUD art does not fit the hud there \(large, classic, bracket\)/);
         hasError(bad((c) => { c.hud = { centerX: 400 }; }), /^hud: centerX and anchorY/);
+        hasError(bad((c) => { c.hud = Object.assign({}, c.hud, { visible: { x0: 700, y0: 90, x1: 60, y1: 390 } }); }), /^hud: visible needs/);
+        hasError(bad((c) => { c.hud = Object.assign({}, c.hud, { defaults: { size: 111, x: -80, y: 60, barX: 70 } }); }), /^hud: defaults must be steps/);
         hasError(bad((c) => { c.nudge = { x: [10, 20], y: [0] }; }), /^nudge:/);
         hasError(bad((c) => { c.hudStyles.bar.idle = 'yes'; }), /^hudStyles\.bar: idle must be true or false/);
         hasError(bad((c) => { c.mapOffset = { x: 416 }; }), /^mapOffset/);
@@ -62,11 +64,11 @@ module.exports = [
     ['bad brightness, steps, nightDim, styles, driveMode, kill file name, hud centre fall back', () => {
         const r = bad((c) => {
             c.brightness = 2; c.sizeSteps = [90, 110]; c.brightSteps = 'x'; c.nightDim = 0; c.styles = { cluster: 'banana', hud: 'large' };
-            c.driveMode = 'eco'; c.safety.killFile = '../x'; c.hud = { centerX: 'x', anchorY: 260 };
+            c.driveMode = 'eco'; c.safety.killFile = '../x'; c.hud = Object.assign({}, c.hud, { centerX: 'x' });
         });
         ['brightness', 'sizeSteps', 'brightSteps', 'nightDim', 'styles', 'driveMode', 'safety', 'hud'].forEach((k) => hasError(r, new RegExp('^' + k + ':')));
         assert.deepStrictEqual([r.cfg.brightness, r.cfg.sizeSteps, r.cfg.nightDim, r.cfg.styles, r.cfg.driveMode, r.cfg.safety.killFile, r.cfg.hud],
-            [1, L.DEFAULTS.sizeSteps, 0.35, { cluster: 'large', hud: 'large' }, 'sport', 'DISABLE', { centerX: 400, anchorY: 260 }]);
+            [1, L.DEFAULTS.sizeSteps, 0.35, { cluster: 'large', hud: 'large' }, 'sport', 'DISABLE', L.DEFAULTS.hud]);
         // an 'off' style is gone: it is the on/off settings now
         hasError(bad((c) => { c.styles = { cluster: 'off', hud: 'large' }; }), /^styles:/);
     }],
@@ -109,7 +111,8 @@ module.exports = [
         [['hudX', config.nudge.x, 'px left', 'px right', 'Centre'], ['hudY', config.nudge.y, 'px up', 'px down', 'Centre'],
             ['clusterX', config.clusterNudge.x, 'px left', 'px right', 'Default'], ['clusterY', config.clusterNudge.y, 'px up', 'px down', 'Default']].forEach((x) => {
             const it = item(x[0]);
-            assert.deepStrictEqual([it.steps, it.default, it.labels['0']], [x[1], 0, x[4]], x[0]);
+            const fresh = { hudX: config.hud.defaults.x, hudY: config.hud.defaults.y };   // a fresh install starts where Adam tuned it (0.4.1)
+            assert.deepStrictEqual([it.steps, it.default, it.labels['0']], [x[1], fresh[x[0]] || 0, x[4]], x[0]);
             assert.strictEqual(Object.keys(it.labels).length, x[1].length, x[0]);
             x[1].forEach((v) => { if (v) assert.strictEqual(it.labels[String(v)], Math.abs(v) + ' ' + (v < 0 ? x[2] : x[3]), x[0] + ' ' + v); });
         });
@@ -121,11 +124,11 @@ module.exports = [
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
-        assert.strictEqual(spec.version, '0.4.0');
+        assert.strictEqual(spec.version, '0.4.1');
         assert.strictEqual(spec.mguAppStartType, 'autostart');
         // in page order (Home, HUD, Cluster, Behavior, About): the HMI's settings list reads the same way
         assert.deepStrictEqual(spec.settings.map((s) => s.key),
-            ['hudOn', 'clusterOn', 'bothMode', 'hudStyle', 'hudSize', 'hudBright', 'hudNight', 'hudX', 'hudY',
+            ['hudOn', 'clusterOn', 'bothMode', 'hudStyle', 'hudSize', 'hudBright', 'hudNight', 'hudX', 'hudY', 'hudBarX',
                 'clusterStyle', 'clusterSize', 'clusterBright', 'clusterNight', 'clusterX', 'clusterY',
                 'onlySportPlus', 'autoStart', 'leadMs', 'rpmPoll', 'driveMode', 'comfortStart', 'comfortShift', 'sportStart', 'sportShift', 'sportplusStart', 'sportplusShift',
                 'layout', 'renderer', 'demo']);
@@ -138,7 +141,7 @@ module.exports = [
         // plain names: no version jargon or "classic" in what Adam reads
         spec.settings.forEach((s) => [s.label].concat((s.options || []).map((o) => o[1])).forEach((t) => assert.ok(!/\bv\d|classic/i.test(t), t)));
         ['cluster', 'hud'].forEach((w) => {
-            assert.deepStrictEqual([item(w + 'Size').steps, item(w + 'Size').default], [config.sizeSteps, 100]);
+            assert.deepStrictEqual([item(w + 'Size').steps, item(w + 'Size').default], [config.sizeSteps, w === 'hud' ? config.hud.defaults.size : 100]);
             assert.deepStrictEqual([item(w + 'Bright').steps, item(w + 'Bright').default], [config.brightSteps, 100]);
             assert.deepStrictEqual([item(w + 'Night').type, item(w + 'Night').default], ['bool', false]);
         });
@@ -185,7 +188,21 @@ module.exports = [
             if (x.markDefault !== undefined) e.markDefault = x.markDefault;
             return e;
         });
-        assert.deepStrictEqual(now, was);
+        // 0.4.1 on purpose: a fresh install starts at Adam's tuned HUD (size, x, y defaults), the shift bar got its own move,
+        // and the three shift (all red) settings go in 100 rpm steps (every old step is still one). Nothing else moved.
+        const evolved = now.filter((e) => e.key !== 'hudBarX');
+        const old = (k) => was.filter((e) => e.key === k)[0];
+        assert.deepStrictEqual(evolved.map((e) => e.key), was.map((e) => e.key));
+        evolved.forEach((e) => {
+            const o = old(e.key);
+            if (e.key === 'hudSize') assert.deepStrictEqual(e, Object.assign({}, o, { default: 110 }));
+            else if (e.key === 'hudX') assert.deepStrictEqual(e, Object.assign({}, o, { default: -80 }));
+            else if (e.key === 'hudY') assert.deepStrictEqual(e, Object.assign({}, o, { default: 60 }));
+            else if (/Shift$/.test(e.key)) {
+                assert.deepStrictEqual(Object.assign({}, e, { steps: 0 }), Object.assign({}, o, { steps: 0 }), e.key);
+                o.steps.filter((v) => v <= 6800).forEach((v) => assert.ok(e.steps.indexOf(v) >= 0, e.key + ' keeps ' + v));
+            } else assert.deepStrictEqual(e, o, e.key);
+        });
         assert.strictEqual(L.SETTINGS_V, 3, 'no settings migration added');
     }],
 ];

@@ -130,21 +130,41 @@ function bracket(hud, T, k) {
 }
 
 /**
- * The HUD style's art (hudSel = logic.readStyle(..., 'hud')): { k, size, x, y, bar, bracket, fits }. Every point
+ * The shift that puts [a0, a1] (one axis) inside [lo + m, hi - m], as close to `want` as it can. Wider than the room:
+ * centred in [lo, hi].
+ */
+function pull(a0, a1, lo, hi, m, want) {
+    const min = lo + m - a0, max = hi - m - a1;
+    if (min > max) return (lo + hi) / 2 - (a0 + a1) / 2;      // does not fit: centred (the margin cannot be kept)
+    return Math.min(max, Math.max(min, want));
+}
+
+/**
+ * The HUD style's art (hudSel = logic.readStyle(..., 'hud')): { k, size, x, y, bar, bracket, barShift, fits }. Every point
  * of the design goes through T(x, y) = [C + (x - 400) k, A + y' + (y - A) k], C = hud.centerX + the move
  * x, A = hud.anchorY, y' = the move y, k = size / 100: centred on the stock speed, the bottom fixed while the size
  * grows upward. bar: the slat bar (large, bar), bracket: the tach bracket and gear (large, classic, bracket).
+ * The bar alone also moves by hudSel.barX (px, right; default 0) and is then held inside the visible box
+ * (cfg.hud.visible.x0 / x1, less cfg.hud.barMargin; left and right only: up / down is the HUD move's job, and a bar pulled down
+ * would sit on the bracket): barShift = { x (px actually moved from T), asked (barX), clamped }.
  * Art off the scene falls back to size 100, then to no move, each with one warn(text).
  */
 function hudLayout(cfg, hudSel, warn) {
-    const say = typeof warn === 'function' ? warn : () => {}, hs = hudSel.style, st = cfg.hudStyles.bar;
+    const say = typeof warn === 'function' ? warn : () => {}, hs = hudSel.style, st = cfg.hudStyles.bar, H = cfg.hud;
+    const V = H.visible || { x0: 0, y0: 0, x1: TARGETS.hud[0], y1: TARGETS.hud[1] }, m = H.barMargin || 0, barX = hudSel.barX || 0;
     const at = (size, x, y) => {
-        const k = size / 100, C = cfg.hud.centerX + x, A = cfg.hud.anchorY;
+        const k = size / 100, C = H.centerX + x, A = H.anchorY;
         const T = (p) => [C + (p[0] - HUD_CX) * k, A + y + (p[1] - A) * k];
         const c = T([st.cx, st.cy]);
-        const bar = hs === 'large' || hs === 'bar' ? slatBar(Object.assign({}, st, { cx: c[0], cy: c[1] }), k, 'hud') : null;
+        let bar = null, barShift = { x: 0, asked: barX, clamped: false };
+        if (hs === 'large' || hs === 'bar') {
+            const mk = (dx) => slatBar(Object.assign({}, st, { cx: c[0] + dx, cy: c[1] }), k, 'hud');
+            const b0 = mk(0).bar, dx = pull(b0.x0, b0.x1, V.x0, V.x1, m, barX);
+            bar = mk(dx);
+            barShift = { x: dx, asked: barX, clamped: Math.abs(dx - barX) > 0.01 };
+        }
         const br = hs === 'large' || hs === 'classic' || hs === 'bracket' ? bracket(cfg.hudStyles, T, k) : null;
-        return { k, size, x, y, bar, bracket: br, fits: (!bar || bar.fits) && (!br || br.fits) };
+        return { k, size, x, y, bar, bracket: br, barShift, fits: (!bar || bar.fits) && (!br || br.fits) };
     };
     const x = hudSel.x || 0, y = hudSel.y || 0;
     let l = at(hudSel.size || 100, x, y);
@@ -192,4 +212,4 @@ function layersFor(cfg, display, sel, warn) {
     return out;
 }
 
-module.exports = { TARGETS, HUD_CX, slatBar, toMap, bracket, hudLayout, layersFor, inside };
+module.exports = { TARGETS, HUD_CX, slatBar, toMap, bracket, hudLayout, layersFor, inside, pull };

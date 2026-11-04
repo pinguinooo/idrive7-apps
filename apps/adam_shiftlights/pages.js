@@ -11,6 +11,7 @@
  * A row: { id, kind: 'toggle' | 'pills' | 'stepper', label, desc, value, enabled, controls }
  */
 const L = require('./logic');
+const G = require('./geom');
 
 const PAGES = ['Home', 'HUD', 'Cluster', 'Behavior', 'About'];
 const IDS = ['home', 'hud', 'cluster', 'behavior', 'about'];
@@ -118,6 +119,10 @@ function display(m, which) {
     else if (!shown) note = 'On, not showing: the ' + D.other + ' wins when both are on (change it on Home)';
     else if (which === 'cluster' && ds.display === 'both') note = 'Showing in the cluster centre area (experimental)';
     const dim = Math.round(m.cfg.nightDim * 100);
+    const barStyle = which === 'hud' && (s.style === 'large' || s.style === 'bar');
+    // the shift bar is held inside the visible area: say so when that moved it (pure geometry, no drawing)
+    const held = on && barStyle && G.hudLayout(m.cfg, s).barShift.clamped;
+    if (held) note = 'Shift bar held inside the visible area (it was past the edge)';
     const rows = [
         row(k('Style'), 'pills', 'Style', STYLE_DESC[k('Style')][s.style], pills(m, page, k('Style'), s.style), { value: SHORT[k('Style')][s.style] }),
         row(k('Size'), 'stepper', 'Size', D.size, stepper(m, page, k('Size'), s.size), { value: s.size + '%' }),
@@ -126,9 +131,15 @@ function display(m, which) {
         row(k('X'), 'stepper', 'Move left / right', D.x, stepper(m, page, k('X'), s.x), { value: stepLabel(m, k('X'), s.x) }),
         row(k('Y'), 'stepper', 'Move up / down', D.y, stepper(m, page, k('Y'), s.y), { value: stepLabel(m, k('Y'), s.y) }),
     ];
-    rows.forEach((r) => { r.enabled = on; });
+    if (which === 'hud') {
+        const bar = row('hudBarX', 'stepper', 'Shift bar left / right', barStyle ? 'Moves the shift bar only; kept inside the visible area' : 'Only for the Large and Bar only styles',
+            stepper(m, page, 'hudBarX', s.barX), { value: stepLabel(m, 'hudBarX', s.barX) });
+        bar.enabled = on && barStyle;
+        rows.push(bar);
+    }
+    rows.forEach((r) => { if (r.id !== 'hudBarX') r.enabled = on; });
     return {
-        id: page, rows, note, noteTone: !on ? 'warn' : shown ? 'dim' : 'warn',
+        id: page, rows, note, noteTone: !on ? 'warn' : held || !shown ? 'warn' : 'dim',
         noteAction: on ? null : { key: page + ':turnon', text: 'Turn ' + D.name + ' on', writes: [[k('On'), true]] },
     };
 }
@@ -150,7 +161,7 @@ function behavior(m) {
     const modes = L.MODES.map((mode) => {
         const base = m.cfg.modes[mode], enabled = !sportOnly || mode === 'sportplus';
         const cell = (part, def) => {
-            const key = mode + part, n = Number(g(key)), v = num(n) && n > 0 ? n : 0;
+            const key = mode + part, n = Number(g(key)), v = part === 'Shift' ? L.shiftRpm(n) : num(n) && n > 0 ? n : 0;
             // "Default" (0) steps as its rpm: between the steps under and over it, before an equal one
             const rpm = (x) => x || def, it = itemOf(m, key);
             const order = Object.assign({}, it, { steps: (it.steps || []).slice().sort((a, b) => rpm(a) - rpm(b) || a - b) });
@@ -176,7 +187,7 @@ function about(m) {
         noteTone: 'dim',
         blocks: [
             { title: 'Not proven on this car yet', lines: [
-                'These pages on the real screen (0.4.0)',
+                'These pages on the real screen (0.4.1)',
                 'Night dim: manual, the car\'s light signal is not read',
                 'Both on, centre area: blank on the M cluster so far',
                 'Stock look: where the blocks sit is a guess',

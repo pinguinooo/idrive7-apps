@@ -22,8 +22,11 @@ const DEFAULTS = {
     nightDim: 0.35,
     flashHz: 4,
     brightness: 1,
-    hud: { centerX: 400, anchorY: 260 },
-    nudge: { x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60] },
+    hud: { centerX: 400, anchorY: 260, visible: { x0: 60, y0: 90, x1: 740, y1: 390 }, barMargin: 8, defaults: { size: 110, x: -80, y: 60, barX: 70 } },
+    nudge: {
+        x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60],
+        barX: [-100, -95, -90, -85, -80, -75, -70, -65, -60, -55, -50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
+    },
     clusterNudge: { x: [-50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50], y: [-40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40] },
     colors: {
         y: '#ffc20e', o: '#ff7a00', r: '#ff2b1f', w: '#f2f5f8', a: '#ffa800', c: '#ff1a22', A: '#f3ab10', C: '#ee1c25',
@@ -58,6 +61,9 @@ const MODES = ['comfort', 'sport', 'sportplus'];
 const CLUSTER_STYLES = ['large', 'classic', 'row', 'stock'];
 const HUD_STYLES = ['large', 'classic', 'bar', 'bracket'];
 const SETTINGS_V = 3;   // settings.json shape: 3 = hudOn / clusterOn (0.3.0); before: enabled + display
+const SHIFT_STEP = 100;   // the shift (all red) settings go in these rpm steps (0.4.1; before: 6,800 and 6,900 were odd ones out)
+/** A saved shift rpm as used: down to a whole SHIFT_STEP (6,850 -> 6,800); 0 or none stays 0 (the mode's default). */
+const shiftRpm = (v) => (num(v) && v > 0 ? Math.floor(v / SHIFT_STEP) * SHIFT_STEP : 0);
 const MIN_SPAN = 200;   // a mode's shift sits at least this far over its start (rpm)
 const MAX_PALETTE = 10; // FS_SLATS' u_colors[10]
 const LEAD_STEPS = [0, 20, 40, 60, 80, 100, 120, 150];   // the "Shift lights lead" setting (ms); app.json too
@@ -149,7 +155,8 @@ function validateConfig(input) {
     take('nightDim', (v) => (!(num(v) && v > 0 && v <= 1) ? 'must be > 0 and <= 1' : null));
     take('flashHz', (v) => (!(num(v) && v >= 4 && v <= 20) ? 'must be 4 to 20 (the limiter flash at least 4 Hz)' : null));
     take('brightness', (v) => (!(num(v) && v >= 0 && v <= 1) ? 'must be 0 to 1' : null));
-    take('nudge', (v) => (!isObj(v) || steps(-400, 400, 0)(v.x) || steps(-400, 400, 0)(v.y) ? 'x and y must be whole numbers -400 to 400 including 0' : null));
+    take('nudge', (v) => (!isObj(v) || steps(-400, 400, 0)(v.x) || steps(-400, 400, 0)(v.y) || steps(-400, 400, 0)(v.barX)
+        ? 'x, y and barX must be whole numbers -400 to 400 including 0' : null));
     take('clusterNudge', (v) => (!isObj(v) || steps(-400, 400, 0)(v.x) || steps(-400, 400, 0)(v.y) ? 'x and y must be whole numbers -400 to 400 including 0' : null));
     out.colors = {};
     Object.keys(DEFAULTS.colors).concat(Object.keys(isObj(src.colors) ? src.colors : {})).forEach((k) => {
@@ -187,6 +194,10 @@ function validateConfig(input) {
     // the HUD art at size 100 with no nudge must fit the scene in every style
     take('hud', (v) => {
         if (!isObj(v) || !num(v.centerX) || !num(v.anchorY)) return 'centerX and anchorY must be numbers';
+        const V = v.visible, D = v.defaults, T = TARGETS.hud;
+        if (!isObj(V) || ![V.x0, V.y0, V.x1, V.y1].every(num) || !(0 <= V.x0 && V.x0 < V.x1 && V.x1 <= T[0] && 0 <= V.y0 && V.y0 < V.y1 && V.y1 <= T[1])) return 'visible needs x0 < x1 and y0 < y1 inside the 800 x 480 scene';
+        if (!num(v.barMargin) || v.barMargin < 0) return 'barMargin must be a number >= 0';
+        if (!isObj(D) || out.sizeSteps.indexOf(D.size) < 0 || out.nudge.x.indexOf(D.x) < 0 || out.nudge.y.indexOf(D.y) < 0 || out.nudge.barX.indexOf(D.barX) < 0) return 'defaults must be steps of sizeSteps and nudge (size, x, y, barX)';
         const bad = HUD_STYLES.filter((st) => !G.hudLayout(Object.assign({}, out, { hud: v }), { style: st, size: 100, x: 0, y: 0 }).fits);
         return bad.length ? 'the HUD art does not fit the hud there (' + bad.join(', ') + ')' : null;
     });
@@ -223,7 +234,7 @@ function modeThresholds(cfg, get, mode) {
     const m = MODES.indexOf(mode) >= 0 ? mode : cfg.driveMode;
     const base = cfg.modes[m];
     const read = (k) => { const v = Number(get(m + k)); return num(v) && v > 0 ? v : 0; };
-    const s = read('Start'), h = read('Shift');
+    const s = read('Start'), h = shiftRpm(read('Shift'));
     const start = s || base.start, shift = h || base.shift;
     const overridden = !!(s || h);
     if (overridden && modePairProblem(start, shift, cfg.engine)) return { mode: m, start: base.start, shift: base.shift, overridden, invalid: true };
@@ -324,8 +335,9 @@ function fieldColor(state, palette, i, colors, on) {
 
 const KEYS = { cluster: 'cluster', hud: 'hud' };
 /**
- * One display's persisted settings, checked: { style, size, bright, night, warnings, x, y } (x, y: the display's
- * "move" settings, HUD scene px or cluster panel px). get(key) reads a
+ * One display's persisted settings, checked: { style, size, bright, night, warnings, x, y [, barX] } (x, y: the display's
+ * "move" settings, HUD scene px or cluster panel px; barX: the HUD's shift bar move). A missing or bad value falls
+ * back to the HUD's config.hud.defaults (a fresh install), the cluster's 100 % / 0. get(key) reads a
  * setting (kit Settings.get, which never validates settings.json). A value outside its list (missing, null,
  * a typo, a wrong type) gives config's default and a warning naming the key. Never throws.
  */
@@ -339,15 +351,33 @@ function readStyle(cfg, get, which) {
         return def;
     };
     const style = pick(w + 'Style', w === 'hud' ? HUD_STYLES : CLUSTER_STYLES, cfg.styles[w]);
-    const size = pick(w + 'Size', cfg.sizeSteps, 100);
+    const D = w === 'hud' ? cfg.hud.defaults : { size: 100, x: 0, y: 0 };   // what a missing or bad value falls back to
+    const size = pick(w + 'Size', cfg.sizeSteps, D.size);
     const bright = pick(w + 'Bright', cfg.brightSteps, 100);
     const nv = read(w + 'Night');
     if (nv !== true && nv !== false) warnings.push(w + 'Night: ' + (nv === undefined ? 'missing' : JSON.stringify(nv)) + ' is not true or false (using false)');
     const out = { style, size, bright, night: nv === true, warnings, x: 0, y: 0 };
     const nudge = w === 'hud' ? cfg.nudge : cfg.clusterNudge;
-    out.x = pick(w + 'X', nudge.x, 0);
-    out.y = pick(w + 'Y', nudge.y, 0);
+    out.x = pick(w + 'X', nudge.x, D.x);
+    out.y = pick(w + 'Y', nudge.y, D.y);
+    if (w === 'hud') out.barX = pick('hudBarX', cfg.nudge.barX, D.barX);   // the shift bar's own move, on top of x
     return out;
+}
+
+/**
+ * What the HUD's gear spot shows, from the Car's data (kit/car.js): stage = the selector 'P' / 'R' / 'N' / 'D', gear = the
+ * engaged gear (1 up, 0 = N or P not told apart, -1 = R). 'P' / 'R' / 'N' when the selector says so; '1' to '9' in D (or when
+ * the car sends no selector); 'R' for gear -1 without a selector; anything else (unknown stage, gear 0 without a selector, a
+ * missing or odd value) is '' = draw nothing, never a wrong gear.
+ */
+function gearGlyph(stage, gear) {
+    if (stage === 'P' || stage === 'R' || stage === 'N') return stage;
+    if (stage !== 'D' && stage !== undefined && stage !== null) return '';
+    if (typeof gear === 'number' && Math.floor(gear) === gear) {
+        if (gear >= 1 && gear <= 9) return String(gear);
+        if (gear === -1 && (stage === undefined || stage === null)) return 'R';
+    }
+    return '';
 }
 
 /** The lights a display's style shows: { palette, count, reds }, or null (the bracket style: no shift lights). */
@@ -433,5 +463,5 @@ const holdForSportPlus = (onlySportPlus, eff) => onlySportPlus === true && !(eff
 module.exports = {
     DEFAULTS, TARGETS, DISPLAYS, BOTH_MODES, MODES, CLUSTER_STYLES, HUD_STYLES, SETTINGS_V, validateConfig, modeThresholds, thresholds,
     rawState, step, flashOn, fieldColor, readStyle, lightsOf, levelOf, fillLit, readDisplays, migrateSettings, driveModeOf,
-    effectiveMode, holdForSportPlus, LEAD_STEPS, makeLead, readLead, MIN_SPAN,
+    effectiveMode, holdForSportPlus, LEAD_STEPS, makeLead, readLead, MIN_SPAN, SHIFT_STEP, shiftRpm, gearGlyph,
 };

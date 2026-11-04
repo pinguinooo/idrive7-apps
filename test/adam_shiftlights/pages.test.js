@@ -93,20 +93,20 @@ module.exports = [
         assert.deepStrictEqual([P.stepOf(s, 100, 1), P.stepOf(s, 100, -1), P.stepOf(s, 120, 1), P.stepOf(s, 70, -1)], [110, 90, 120, 70]);
         assert.deepStrictEqual([P.stepOf(s, 999, -1), P.stepOf(s, 999, 1), P.stepOf(s, 95, 1), P.stepOf(s, 95, -1), P.stepOf(s, 5, -1)], [120, 120, 100, 90, 70]);
         assert.deepStrictEqual([P.stepOf(s, 'x', 1), P.stepOf(s, null, -1)], [70, 70]);
-        // a garbage save shows its fallback and steps from there (readStyle: 100)
+        // a garbage save shows its fallback and steps from there (readStyle: the HUD's 110)
         const row = P.view(1, model({ hudOn: true, hudSize: 'x' })).rows[1];
-        assert.deepStrictEqual([row.value, row.controls[1].writes], ['100%', [['hudSize', 110]]]);
+        assert.deepStrictEqual([row.value, row.controls[1].writes], ['110%', [['hudSize', 120]]]);
         const top = P.view(1, model({ hudOn: true, hudBright: 100 })).rows[2];
         assert.deepStrictEqual([top.controls[1].end, top.controls[1].writes, top.controls[0].writes], [true, [], [['hudBright', 80]]]);
         // a shift point: 0 is the default and steps as its rpm (4,000: between 3,500 and an explicit 4,000); garbage counts
-        // as the default (logic.modeThresholds); 999 is shown as it is used
+        // as the default (logic.modeThresholds); 999 is shown as it is used (down to 100: 900)
         const b = P.view(3, model({ comfortStart: 'x', comfortShift: 999 })).modes[0];
         assert.deepStrictEqual([b.start.value, b.start.controls[0].writes, b.start.controls[1].writes, b.shift.value, b.shift.controls[1].writes],
-            ['Default (4,000)', [['comfortStart', 3500]], [['comfortStart', 4000]], '999', [['comfortShift', 2500]]]);
+            ['Default (4,000)', [['comfortStart', 3500]], [['comfortStart', 4000]], '900', [['comfortShift', 2500]]]);
         const sp = P.view(3, model({})).modes[2].shift.controls;
-        assert.deepStrictEqual(sp.map((c) => c.writes), [[['sportplusShift', 6500]], [['sportplusShift', 6800]]]);
+        assert.deepStrictEqual(sp.map((c) => c.writes), [[['sportplusShift', 6700]], [['sportplusShift', 6800]]]);   // Default sits at 6,800: 100 rpm a press
         const back = P.view(3, model({ sportplusShift: 6800 })).modes[2].shift.controls;
-        assert.deepStrictEqual(back.map((c) => c.writes), [[['sportplusShift', 0]], [['sportplusShift', 6900]]], 'one step down from 6,800 is Default (6,800)');
+        assert.deepStrictEqual(back.map((c) => c.writes), [[['sportplusShift', 0]], []], 'one step down from 6,800 is Default (6,800); it is the top step (the limiter allows 6,850)');
         const lo = P.view(3, model({ comfortStart: 2000 })).modes[0].start.controls;
         assert.deepStrictEqual([lo[0].end, lo[0].writes], [true, []]);
         const lead = P.view(3, model({ leadMs: 'fast' })).rows[2];

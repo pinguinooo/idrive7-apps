@@ -39,10 +39,20 @@ module.exports = Object.freeze({
     brightness: 1.0,            // 0..1, multiplies every lit colour on the cluster and HUD (with the settings)
     // the HUD art (hudStyles, drawn centred on scene x 400) goes centred on the stock speed block: centerX = its
     // centre, anchorY = the bottom of our art (the stock speed sits under it). A bigger size grows upward. [U]
-    hud: { centerX: 400, anchorY: 260 },
-    // "HUD: move left / right" and "up / down" setting steps (scene px; negative = left / up), app.json too
+    // visible: the widest picture the HUD shows, 680 x 300 inside the 800 x 480 scene (idrive-apps PR #41: "wider is cut
+    // off at the HUD's edges"); assumed centred, as in docs/mockups/hud-m-style.html [U]. The shift bar is held inside it
+    // minus barMargin (px). defaults: what a fresh install starts with (Adam's tuned values, 2026-11-04: 80 px left, 60 px
+    // down, 110 %, lines up with the stock mph); settings already saved keep their values. barX: the "Shift bar left / right"
+    // default, the smallest step that puts the bar's left end barMargin inside the visible box at those values
+    // (bar 578 x 1.1 wide at x 2.1 -> 72.1 with +70; +65 would leave 67.1 < 68). test/geom.test.js recomputes it.
+    hud: { centerX: 400, anchorY: 260, visible: { x0: 60, y0: 90, x1: 740, y1: 390 }, barMargin: 8,
+        defaults: { size: 110, x: -80, y: 60, barX: 70 } },
+    // "HUD: move left / right" and "up / down" setting steps (scene px; negative = left / up), app.json too. barX: the
+    // shift bar's own move on top of the HUD move (left / right)
     nudge: { x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
-        y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60] },
+        y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60],
+        barX: [-100, -95, -90, -85, -80, -75, -70, -65, -60, -55, -50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0,
+            5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100] },
     // "Cluster: move left / right" and "up / down" setting steps (panel px from the style's cx, cy; negative = left / up),
     // app.json too. Kept small: the dial numerals sit either side of the bar [U]
     clusterNudge: { x: [-50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50],

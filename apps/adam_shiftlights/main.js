@@ -142,7 +142,7 @@ mgu.run({
                 if (!before.cluster || !before.hud || before.cluster.lit !== states.cluster.lit || before.hud.lit !== states.hud.lit) litChanges++;
                 const active = !offReason();
                 const display = L.readDisplays(get).display;
-                output.apply({ display, active, sel, states, rpm: p.rpm, th, gear: d.gear });
+                output.apply({ display, active, sel, states, rpm: p.rpm, th, gear: L.gearGlyph(d.stage, d.gear) });
                 const s = states.cluster, h = states.hud;
                 // no lit counts here: a log line is a synchronous file write, and the lights change many times a second
                 const line = { cluster: sel.cluster.style, hud: sel.hud.style, red: s.red || h.red, flash: s.flashing || h.flashing, display, active };

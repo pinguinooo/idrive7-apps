@@ -44,11 +44,12 @@ Every page fits one screen. The pill in colour is the value in use; a greyed row
 | Home | When both are on | HUD, Cluster, Both (experimental centre area) | HUD |
 | Home | All off | turns both off (the kill switch) | |
 | HUD | Style | Large, Small (shift bar + rev bracket), Bar only, Bracket (rev bracket + gear) | Large |
-| HUD | Size | 70 to 120 % | 100 % |
+| HUD | Size | 70 to 120 % | 110 % |
 | HUD | Brightness | 20 to 100 % | 100 % |
 | HUD | Night dim | on / off | off |
-| HUD | Move left / right | 100 px left to 100 px right, steps of 10 | Centre |
-| HUD | Move up / down | 60 px up to 60 px down, steps of 10 | Centre |
+| HUD | Move left / right | 100 px left to 100 px right, steps of 10 | 80 px left |
+| HUD | Move up / down | 60 px up to 60 px down, steps of 10 | 60 px down |
+| HUD | Shift bar left / right | 100 px left to 100 px right of the HUD, steps of 5 (Large and Bar only) | 70 px right |
 | Cluster | Style | Large, Small (M slats), Centre row (12 lights), Stock (one block per dial) | Large |
 | Cluster | Size, Brightness, Night dim | as on the HUD page | |
 | Cluster | Move left / right | 50 px left to 50 px right, steps of 5 | Default |
@@ -59,7 +60,7 @@ Every page fits one screen. The pill in colour is the value in use; a greyed row
 | Behavior | Fast RPM | on / off | on |
 | Behavior | Drive mode fallback | Comfort, Sport, Sport+ | Sport |
 | Behavior | Shift points: first light, per mode | Default, 2,000 to 6,500 rpm | Default |
-| Behavior | Shift points: shift (all red), per mode | Default, 2,500 to 6,900 rpm | Default |
+| Behavior | Shift points: shift (all red), per mode | Default, 2,500 to 6,800 rpm, steps of 100 | Default |
 | About | Screen layout | Full screen, Standard | Full screen |
 | About | Renderer | GPU, Software | GPU |
 | About | Demo data | Auto, Always, Never | Auto |
@@ -69,7 +70,7 @@ bar's three buttons: HUD on/off, Cluster on/off and Settings, which opens the HM
 (in the same order as the pages).
 
 A new install starts with both displays off. Settings saved by 0.2.x move over on the first start: a display
-that was showing stays on. 0.4.0 keeps every saved setting as it was.
+that was showing stays on. 0.4.0 keeps every saved setting as it was (and so does 0.4.1: it only adds the Shift bar move, and its start values for fresh installs).
 
 "Default" uses the built-in thresholds for that mode.
 
@@ -109,6 +110,18 @@ to one update. Two settings close that gap:
   one request at a time, backing off to once every 2 s if the car doesn't answer.
 
 ### HUD position
+
+The defaults (0.4.1) are the values tuned on the car: 110 %, 80 px left, 60 px down, which lines the art up with the stock
+mph. Only a fresh install starts there; saved values are never changed.
+
+The shift bar is wide (578 px at 100 %, 636 at 110 %), and the HUD shows a picture of at most 680 x 300 px inside its
+800 x 480 scene (wider is cut off). With the HUD moved 80 px left the bar's left end sat at x 2, outside that box. The bar
+now has its own Shift bar left / right move on top of the HUD move (default +70 px: the smallest 5 px step that keeps its
+left end 8 px inside the box), and it is always held inside the box left and right, whatever the settings (the HUD page
+says so when it did). Too wide for the box (120 %): centred. The box is assumed centred in the scene and has not been
+measured on the car (`hud.visible` in config.js). Up / down is not clamped.
+
+The gear spot shows 1 to 9 in D, and P, R or N from the selector; a value it does not know shows nothing.
 
 The HUD art is centred on the stock speed. The HUD page's Move settings shift it if it sits off centre on your car; a bigger
 size grows upward, away from the speed. The app draws no speed or unit: the stock HUD shows those.

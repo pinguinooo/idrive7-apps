@@ -11,6 +11,8 @@ const GLYPHS = {
     0: '0 0,1 0,1 1.6,0 1.6,z', 1: '.05 .34,.5 0,.5 1.6', 2: '0 0,1 0,1 .8,0 .8,0 1.6,1 1.6', 3: '0 0,1 0,1 1.6,0 1.6|.3 .8,1 .8',
     4: '.72 1.6,.72 0,0 1.04,1 1.04', 5: '1 0,0 0,0 .78,1 .78,1 1.6,0 1.6', 6: '1 0,0 0,0 1.6,1 1.6,1 .78,0 .78',
     7: '0 0,1 0,1 .2,.36 1.6', 8: '0 0,1 0,1 1.6,0 1.6,z|0 .8,1 .8', 9: '1 .82,0 .82,0 0,1 0,1 1.6,0 1.6',
+    // the selector letters (0.4.1), squared like the digits: P, R (P plus a leg), N
+    P: '0 1.6,0 0,1 0,1 .8,0 .8', R: '0 1.6,0 0,1 0,1 .8,0 .8|.45 .8,1 1.6', N: '0 1.6,0 0,1 1.6,1 0',
 };
 const GLYPH = {};
 Object.keys(GLYPHS).forEach((c) => {
@@ -72,11 +74,18 @@ function drawBracketStatic(cv, b, colors, dx, dy, k) {
     band(cv, b, b.sOf(z.red + 30), b.sOf(B.scaleMax - 40), mid - h, mid + h, colors.zr, dx, dy, k);
 }
 
-/** The gear digit (1 to 9; anything else draws nothing), at the bracket's placed gear (b.gear). */
-function drawGear(cv, b, gear, color, dx, dy, k) {
-    if (!(typeof gear === 'number' && Math.floor(gear) === gear && gear >= 1 && gear <= 9)) return;
-    const G = b.gear;
-    digits(cv, String(gear), G.x, G.y, G.h, color, 1.3, G.h * 0.23, dx, dy, k);
+/** What drawGear draws for g: '1' to '9' (a whole number 1 to 9 or that string) or 'P' / 'R' / 'N'; anything else ''. */
+function glyphOf(g) {
+    if (typeof g === 'number') return Math.floor(g) === g && g >= 1 && g <= 9 ? String(g) : '';
+    return typeof g === 'string' && /^[1-9PRN]$/.test(g) ? g : '';
 }
 
-module.exports = { drawBracketStatic, drawGear, digits };
+/** The gear digit or selector letter (glyphOf; anything else draws nothing), at the bracket's placed gear (b.gear). */
+function drawGear(cv, b, gear, color, dx, dy, k) {
+    const c = glyphOf(gear);
+    if (!c) return;
+    const G = b.gear;
+    digits(cv, c, G.x, G.y, G.h, color, 1.3, G.h * 0.23, dx, dy, k);
+}
+
+module.exports = { drawBracketStatic, drawGear, glyphOf, digits };

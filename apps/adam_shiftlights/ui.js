@@ -69,12 +69,13 @@ function stepper(cv, t, controls, value, x, y, enabled, act) {
 }
 
 /** One settings row: label, one-line description under it, the control on the right. */
-function drawRow(cv, t, r, x, y, w, act) {
-    cv.roundRect(x, y, w, ROW_H, 14, withAlpha('#ffffff', 0.05));
-    txt(cv, r.label, x + 24, y + 28, 24, r.enabled ? t.text : t.dim);
-    txt(cv, r.desc, x + 24, y + 51, 18, t.dim);
-    control(cv, t, r, x + w - 18, y + ROW_H / 2, act);
-    if (r.kind === 'toggle' && r.enabled && cv.own) cv.target(x, y, w, ROW_H, act(r.controls[0].writes), r.controls[0].key, 14);
+function drawRow(cv, t, r, x, y, w, act, h) {
+    const rh = h || ROW_H, d = rh - ROW_H;      // a short row (the HUD page has seven) lifts its text by d
+    cv.roundRect(x, y, w, rh, 14, withAlpha('#ffffff', 0.05));
+    txt(cv, r.label, x + 24, y + 28 + Math.round(d / 2), 24, r.enabled ? t.text : t.dim);
+    txt(cv, r.desc, x + 24, y + 51 + d, 18, t.dim);
+    control(cv, t, r, x + w - 18, y + rh / 2, act);
+    if (r.kind === 'toggle' && r.enabled && cv.own) cv.target(x, y, w, rh, act(r.controls[0].writes), r.controls[0].key, 14);
 }
 
 /** The line under the tabs; a button at its right (e.g. "Turn HUD on"). */
@@ -120,7 +121,8 @@ function homePage(cv, t, v, act, own) {
 
 function displayPage(cv, t, v, act) {
     noteLine(cv, t, v, act);
-    v.rows.forEach((r, i) => drawRow(cv, t, r, X0, ROW_Y + i * PITCH, W, act));
+    const n = v.rows.length, h = n > 6 ? 54 : ROW_H, pitch = n > 6 ? 60 : PITCH;   // seven rows (HUD) must still end above the screen's bottom
+    v.rows.forEach((r, i) => drawRow(cv, t, r, X0, ROW_Y + i * pitch, W, act, h));
 }
 
 function behaviorPage(cv, t, v, act) {

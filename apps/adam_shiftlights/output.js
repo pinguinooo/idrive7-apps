@@ -57,7 +57,7 @@ function createOutput(o) {
         for (let y = 0; y < r.h; y++) Buffer.from(cv.d.buffer, cv.d.byteOffset + ((r.y + y) * cv.w + r.x) * 4, r.w * 4).copy(out, y * r.w * 4);
         return out;
     };
-    const validGear = (g) => (typeof g === 'number' && Math.floor(g) === g && g >= 1 && g <= 9 ? g : 0);
+    const validGear = hudart.glyphOf;   // '1'..'9', 'P', 'R', 'N' or ''
 
     function make(spec, a) {
         const r = spec.rect, level = L.levelOf(cfg, a.sel[spec.which]);

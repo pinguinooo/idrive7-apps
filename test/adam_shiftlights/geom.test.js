@@ -171,12 +171,13 @@ module.exports = [
                 assert.deepStrictEqual([c[i].rect.x - s.rect.x, c[i].rect.y - s.rect.y], [0, -30], h + ' y');
             });
         });
-        const warns = [], sp = G.layersFor(cfg, 'hud', sel('large', 'large', 100, 120, 120, 0), (w) => warns.push(w));
-        // 120 % moved 120 px right does not fit; 100 % moved 120 px does not either: the centre
-        assert.deepStrictEqual(warns, ['hud size 120 % does not fit the hud: using 100 %', 'hud move 120, 0 px does not fit the hud: using the centre']);
+        const warns = [], sp = G.layersFor(cfg, 'hud', sel('large', 'large', 100, 120, 300, 0), (w) => warns.push(w));
+        // 120 % moved 300 px right does not fit; 100 % moved 300 px does not either: the centre (the shift bar alone never falls back:
+        // it is pulled into the visible box)
+        assert.deepStrictEqual(warns, ['hud size 120 % does not fit the hud: using 100 %', 'hud move 300, 0 px does not fit the hud: using the centre']);
         const w1 = [];
-        G.layersFor(cfg, 'hud', sel('large', 'large', 100, 120, 100, 0), (w) => w1.push(w));
-        assert.deepStrictEqual(w1, ['hud size 120 % does not fit the hud: using 100 %']);   // 100 % moved 100 px fits
+        G.layersFor(cfg, 'hud', sel('large', 'large', 100, 120, -100, -60), (w) => w1.push(w));
+        assert.deepStrictEqual(w1, ['hud size 120 % does not fit the hud: using 100 %']);   // 100 % moved 100 px left and 60 up fits
         assert.deepStrictEqual(rectsOf(sp), rectsOf(hudSpecs('large')));
         sp.forEach((s) => assert.ok(G.inside(s.rect, 'hud')));
         const w2 = [], s2 = G.layersFor(cfg, 'hud', sel('large', 'bracket', 100, 120, 60, 0), (w) => w2.push(w));

@@ -161,11 +161,12 @@ module.exports = [
     }],
     ['readStyle: all 16 cluster x HUD pairs resolve each display to its own value', () => {
         L.CLUSTER_STYLES.forEach((c) => L.HUD_STYLES.forEach((h) => {
-            const v = { clusterStyle: c, hudStyle: h, clusterSize: 110, hudSize: 80, clusterBright: 60, hudBright: 40, clusterNight: true, hudNight: false, hudX: -30, hudY: 20, clusterX: 15, clusterY: -10 };
+            const v = { clusterStyle: c, hudStyle: h, clusterSize: 110, hudSize: 80, clusterBright: 60, hudBright: 40, clusterNight: true, hudNight: false, hudX: -30, hudY: 20, hudBarX: -15, clusterX: 15, clusterY: -10 };
             const get = (k) => v[k];
             const a = L.readStyle(cfg, get, 'cluster'), b = L.readStyle(cfg, get, 'hud');
             assert.deepStrictEqual([a.style, a.size, a.bright, a.night, a.warnings, a.x, a.y], [c, 110, 60, true, [], 15, -10], c + '/' + h);
-            assert.deepStrictEqual([b.style, b.size, b.bright, b.night, b.warnings, b.x, b.y], [h, 80, 40, false, [], -30, 20], c + '/' + h);
+            assert.deepStrictEqual([b.style, b.size, b.bright, b.night, b.warnings, b.x, b.y, b.barX], [h, 80, 40, false, [], -30, 20, -15], c + '/' + h);
+            assert.strictEqual(a.barX, undefined, 'the cluster has no shift bar move');
             // changing one display's setting never changes the other's
             L.CLUSTER_STYLES.forEach((c2) => assert.strictEqual(L.readStyle(cfg, (k) => (k === 'clusterStyle' ? c2 : v[k]), 'hud').style, h));
             L.HUD_STYLES.forEach((h2) => assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudStyle' ? h2 : v[k]), 'cluster').style, c));
@@ -177,7 +178,9 @@ module.exports = [
             const v = { clusterStyle: x, hudStyle: x, clusterSize: 999, hudSize: x, clusterBright: -5, hudBright: x, clusterNight: 'yes', hudNight: x === true ? 1 : x };
             ['cluster', 'hud'].forEach((w) => {
                 const r = L.readStyle(cfg, (k) => (/^(hud|cluster)[XY]$/.test(k) ? x : v[k]), w);
-                assert.deepStrictEqual([r.style, r.size, r.bright, r.night, r.x, r.y], ['large', 100, 100, false, 0, 0], w + ' ' + JSON.stringify(x));
+                // the HUD falls back to Adam's tuned start (0.4.1), the cluster to 100 % and no move
+                const D = w === 'hud' ? { size: 110, x: -80, y: 60, barX: 70 } : { size: 100, x: 0, y: 0 };
+                assert.deepStrictEqual([r.style, r.size, r.bright, r.night, r.x, r.y, r.barX], ['large', D.size, 100, false, D.x, D.y, w === 'hud' ? D.barX : undefined], w + ' ' + JSON.stringify(x));
                 assert.ok(r.warnings.length >= 3, JSON.stringify(r.warnings));
                 assert.ok(r.warnings.some((m) => m.indexOf(w + 'Style: ') === 0), JSON.stringify(r.warnings));
             });
@@ -187,7 +190,7 @@ module.exports = [
         assert.strictEqual(L.readStyle(cfg, () => 'row', 'hud').style, 'large');        // a cluster-only id on the HUD
         assert.strictEqual(L.readStyle(cfg, () => 'bar', 'cluster').style, 'large');    // and the other way round
         assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudStyle' ? 'off' : undefined), 'hud').style, 'large');   // an old 'off'
-        assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudX' ? 15 : undefined), 'hud').x, 0);   // not a step
+        assert.strictEqual(L.readStyle(cfg, (k) => (k === 'hudX' ? 15 : undefined), 'hud').x, -80);   // not a step: the default
         assert.deepStrictEqual(['clusterX', 'clusterY'].map((key) => L.readStyle(cfg, (k) => (k === key ? 7 : undefined), 'cluster')[key.slice(-1).toLowerCase()]), [0, 0]);
         assert.ok(L.readStyle(cfg, (k) => (k === 'clusterY' ? 300 : undefined), 'cluster').warnings.some((m) => /^clusterY: 300 is not one of/.test(m)));
     }],

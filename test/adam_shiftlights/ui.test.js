@@ -84,7 +84,7 @@ module.exports = [
     ['knob order: tabs, then each page\'s targets top to bottom, left to right ("-" before "+")', () => {
         const on = model({ hudOn: true, clusterOn: true });
         assert.deepStrictEqual(own(0, on).keys, ['home:hudOn', 'home:clusterOn'].concat(pm('home', 'bothMode', ['hud', 'cluster', 'map']), ['home:alloff']));
-        const disp = (p, styles) => pm(p, p + 'Style', styles).concat(st(p, p + 'Size'), st(p, p + 'Bright'), [p + ':' + p + 'Night'], st(p, p + 'X'), st(p, p + 'Y'));
+        const disp = (p, styles) => pm(p, p + 'Style', styles).concat(st(p, p + 'Size'), st(p, p + 'Bright'), [p + ':' + p + 'Night'], st(p, p + 'X'), st(p, p + 'Y'), p === 'hud' ? st(p, 'hudBarX') : []);
         assert.deepStrictEqual(own(1, on).keys, disp('hud', ['large', 'classic', 'bar', 'bracket']));
         assert.deepStrictEqual(own(2, on).keys, disp('cluster', ['large', 'classic', 'row', 'stock']));
         assert.deepStrictEqual(own(1, model({})).keys, ['hud:turnon'], 'HUD off: only the button that turns it on');
@@ -102,13 +102,13 @@ module.exports = [
         assert.deepStrictEqual(own(0, on).run('home:hudOn'), [['hudOn', false]]);
         assert.deepStrictEqual(own(0, on).run('home:alloff'), [['hudOn', false], ['clusterOn', false]]);
         assert.deepStrictEqual(own(0, on).run('home:bothMode:cluster'), [['bothMode', 'cluster']]);
-        assert.deepStrictEqual(own(1, on).run('hud:hudSize:+'), [['hudSize', 110]]);
+        assert.deepStrictEqual(own(1, on).run('hud:hudSize:-'), [['hudSize', 100]]);
         assert.deepStrictEqual(own(1, on).run('hud:hudStyle:bracket'), [['hudStyle', 'bracket']]);
         assert.deepStrictEqual(own(1, on).run('hud:hudNight'), [['hudNight', true]]);
         assert.deepStrictEqual(own(1, model({})).run('hud:turnon'), [['hudOn', true]]);
         assert.deepStrictEqual(own(2, on).run('cluster:clusterY:-'), [['clusterY', -5]]);
         assert.deepStrictEqual(own(3, on).run('behavior:leadMs:+'), [['leadMs', 80]]);
-        assert.deepStrictEqual(own(3, on).run('behavior:sportShift:-'), [['sportShift', 6500]]);
+        assert.deepStrictEqual(own(3, on).run('behavior:sportShift:-'), [['sportShift', 6700]]);
         assert.deepStrictEqual(own(3, on).run('behavior:rpmPoll'), [['rpmPoll', false]]);
         assert.deepStrictEqual(own(4, on).run('about:renderer:software'), [['renderer', 'software']]);
         // a stepper at its end is still a target (the focus stays put) and changes nothing
