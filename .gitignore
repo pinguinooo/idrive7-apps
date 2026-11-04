@@ -1,0 +1,8 @@
+oap-sdk/
+dist/
+node_modules/
+__pycache__/
+*.pyc
+*.mgu
+*.tgz
+.DS_Store

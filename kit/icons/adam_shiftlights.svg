@@ -1,0 +1,30 @@
+<!-- accent: #ff1a22 -->
+<defs>
+  <linearGradient id="sl-amber" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd27a"/><stop offset="0.45" stop-color="#ffa800"/><stop offset="1" stop-color="#d97f00"/></linearGradient>
+  <linearGradient id="sl-red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a8e"/><stop offset="0.45" stop-color="#ff1a22"/><stop offset="1" stop-color="#c8000a"/></linearGradient>
+  <filter id="sl-glow" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="4"/></filter>
+</defs>
+<g filter="url(#sl-glow)" opacity="0.5">
+  <polygon points="14,87 21,87 28,53 21,53" fill="url(#sl-amber)"/>
+  <polygon points="126,87 119,87 112,53 119,53" fill="url(#sl-amber)"/>
+  <polygon points="24,87 31,87 38,53 31,53" fill="url(#sl-amber)"/>
+  <polygon points="116,87 109,87 102,53 109,53" fill="url(#sl-amber)"/>
+  <polygon points="34,87 41,87 48,53 41,53" fill="url(#sl-amber)"/>
+  <polygon points="106,87 99,87 92,53 99,53" fill="url(#sl-amber)"/>
+  <polygon points="44,87 51,87 58,53 51,53" fill="url(#sl-red)"/>
+  <polygon points="96,87 89,87 82,53 89,53" fill="url(#sl-red)"/>
+  <polygon points="54,87 61,87 68,53 61,53" fill="url(#sl-red)"/>
+  <polygon points="86,87 79,87 72,53 79,53" fill="url(#sl-red)"/>
+</g>
+<g>
+  <polygon points="14,87 21,87 28,53 21,53" fill="url(#sl-amber)"/>
+  <polygon points="126,87 119,87 112,53 119,53" fill="url(#sl-amber)"/>
+  <polygon points="24,87 31,87 38,53 31,53" fill="url(#sl-amber)"/>
+  <polygon points="116,87 109,87 102,53 109,53" fill="url(#sl-amber)"/>
+  <polygon points="34,87 41,87 48,53 41,53" fill="url(#sl-amber)"/>
+  <polygon points="106,87 99,87 92,53 99,53" fill="url(#sl-amber)"/>
+  <polygon points="44,87 51,87 58,53 51,53" fill="url(#sl-red)"/>
+  <polygon points="96,87 89,87 82,53 89,53" fill="url(#sl-red)"/>
+  <polygon points="54,87 61,87 68,53 61,53" fill="url(#sl-red)"/>
+  <polygon points="86,87 79,87 72,53 79,53" fill="url(#sl-red)"/>
+</g>
