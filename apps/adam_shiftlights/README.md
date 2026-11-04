@@ -5,12 +5,14 @@
 RPM shift lights for BMW iDrive 7 (MGU) on the instrument cluster and the HUD, as an app for the
 [mgu-store](https://github.com/robertnisipeanu/mgu-store). OEM-style M slats light up from the outside in,
 amber then red, with their own thresholds per drive mode and a lower limit while the engine is cold.
-The centre-screen page shows a live preview and the settings.
+The centre screen holds the settings on five pages (Home, HUD, Cluster, Behavior, About). It draws only when
+something changes: there is no live preview, so nothing on that screen competes with the rpm updates.
 
 ## Status
 
 **Untested on a real car.** So far it has only run in the upstream idrive7-apps emulator, against a fake
-cluster-render service, and in Node 8 unit tests. Read the Safety section before you install it.
+cluster-render service, and in Node 8 unit tests. 0.4.0's settings pages are proven in the emulator only. Read the
+Safety section before you install it.
 
 ## Requirements
 
@@ -32,50 +34,57 @@ Updates follow the `main` branch.
 
 ## Settings
 
-| Setting | Values | Default |
-|---|---|---|
-| HUD | on / off | off |
-| Instrument cluster | on / off | off |
-| Which display when both are on | HUD, Instrument cluster, Experimental: HUD + cluster centre area | HUD |
-| Only in Sport+ | on / off | off |
-| Start with the car | on / off | on |
-| Shift lights lead (light up early by this much) | Off, 20 to 150 ms | 60 ms |
-| Fast RPM (ask the car when its updates are slow) | on / off | on |
-| HUD: style | Shift bar + rev bracket, large; Shift bar + rev bracket, small; Shift bar only; Rev bracket + gear only | large |
-| HUD: size | 70 to 120 % | 100 % |
-| HUD: move left / right | 100 px left to 100 px right, steps of 10 | Centre |
-| HUD: move up / down | 60 px up to 60 px down, steps of 10 | Centre |
-| HUD: brightness, Cluster: brightness | 20 to 100 % | 100 % |
-| HUD: night dim, Cluster: night dim | on / off | off |
-| Cluster: style | M slats, large; M slats, small; Centre row (12 segments); Stock look (one block per dial) | M slats, large |
-| Cluster: size | 70 to 120 % | 100 % |
-| Cluster: move left / right | 50 px left to 50 px right, steps of 5 | Default |
-| Cluster: move up / down | 40 px up to 40 px down, steps of 5 | Default |
-| Drive mode if the car does not send it | Comfort, Sport, Sport+ | Sport |
-| Comfort / Sport / Sport+: first light | Default, 2000 to 6500 rpm | Default |
-| Comfort / Sport / Sport+: shift (red) | Default, 2500 to 6900 rpm | Default |
-| Screen layout | Full screen, Standard | Full screen |
-| Renderer | GPU 60 fps, Software | GPU 60 fps |
-| Demo data | Auto, Always, Never | Auto |
+Header tabs across the top; turn the knob along the tabs, press to open one, then on down the page (or tap).
+Every page fits one screen. The pill in colour is the value in use; a greyed row says why on its page.
 
-"HUD" and "Instrument cluster" each turn one display on or off, and the app screen has a button for each.
-A new install starts with both off. Settings saved by 0.2.x move over on the first start: a display that was
-showing stays on.
+| Page | Setting | Values | Default |
+|---|---|---|---|
+| Home | HUD | on / off (big card) | off |
+| Home | Instrument cluster | on / off (big card) | off |
+| Home | When both are on | HUD, Cluster, Both (experimental centre area) | HUD |
+| Home | All off | turns both off (the kill switch) | |
+| HUD | Style | Large, Small (shift bar + rev bracket), Bar only, Bracket (rev bracket + gear) | Large |
+| HUD | Size | 70 to 120 % | 100 % |
+| HUD | Brightness | 20 to 100 % | 100 % |
+| HUD | Night dim | on / off | off |
+| HUD | Move left / right | 100 px left to 100 px right, steps of 10 | Centre |
+| HUD | Move up / down | 60 px up to 60 px down, steps of 10 | Centre |
+| Cluster | Style | Large, Small (M slats), Centre row (12 lights), Stock (one block per dial) | Large |
+| Cluster | Size, Brightness, Night dim | as on the HUD page | |
+| Cluster | Move left / right | 50 px left to 50 px right, steps of 5 | Default |
+| Cluster | Move up / down | 40 px up to 40 px down, steps of 5 | Default |
+| Behavior | Only in Sport+ | on / off | off |
+| Behavior | Start with the car | on / off | on |
+| Behavior | Light-up lead | Off, 20 to 150 ms | 60 ms |
+| Behavior | Fast RPM | on / off | on |
+| Behavior | Drive mode fallback | Comfort, Sport, Sport+ | Sport |
+| Behavior | Shift points: first light, per mode | Default, 2,000 to 6,500 rpm | Default |
+| Behavior | Shift points: shift (all red), per mode | Default, 2,500 to 6,900 rpm | Default |
+| About | Screen layout | Full screen, Standard | Full screen |
+| About | Renderer | GPU, Software | GPU |
+| About | Demo data | Auto, Always, Never | Auto |
+
+With the Software renderer, the Standard layout or no touch routing, the screen shows a read-only Home and the
+bar's three buttons: HUD on/off, Cluster on/off and Settings, which opens the HMI's own list of every setting
+(in the same order as the pages).
+
+A new install starts with both displays off. Settings saved by 0.2.x move over on the first start: a display
+that was showing stays on. 0.4.0 keeps every saved setting as it was.
 
 "Default" uses the built-in thresholds for that mode.
 
 ### HUD and cluster together
 
 The car shows the cluster panel and the HUD from one scene, so only one of them at a time. With both on,
-"Which display when both are on" picks the one you get: the HUD (default) or the instrument cluster. The app
-screen says which one is showing and that the other is on but not showing. The third choice, HUD plus the
+"When both are on" (Home) picks the one you get: the HUD (default) or the instrument cluster. Home says which
+one is showing and that the other is on but not showing. The third choice, HUD plus the
 lights in the cluster's centre area, is experimental: on a G01 in the M layout that area showed nothing.
 
 ### Drive mode and Only in Sport+
 
 The app reads the car's drive mode (Driving Experience Control). The per-mode thresholds follow it, and "Only
-in Sport+" shows the lights only while the car is in Sport+. When the car sends no drive mode, the setting
-"Drive mode if the car does not send it" is used, and the app screen says "(SETTING, NO SIGNAL)".
+in Sport+" shows the lights only while the car is in Sport+. When the car sends no drive mode, "Drive mode
+fallback" is used, and the Behavior page says "the fallback (the car sends none)".
 
 ### Start with the car
 
@@ -85,7 +94,7 @@ but sends nothing to the cluster or the HUD until you open its screen once.
 ### Cluster position
 
 Since 0.3.1 the cluster bar sits 25 px lower than in 0.3.0 (the M slats' top edge at y 134 of the 1920 x 720
-panel, was 109). "Cluster: move" shifts it from there in 5 px steps; a move that would put the bar off the
+panel, was 109). The Cluster page's Move settings shift it from there in 5 px steps; a move that would put the bar off the
 panel falls back to the default place. Keep it clear of the dial numerals either side.
 
 ### Lead and Fast RPM
@@ -93,7 +102,7 @@ panel falls back to the default place. Keep it clear of the dial numerals either
 The car sends the engine speed only when it changes, and not very often, so the lights trail the real rpm by up
 to one update. Two settings close that gap:
 
-- **Shift lights lead** lights each light that much earlier while the rpm climbs (from the slope of the last
+- **Light-up lead** lights each light that much earlier while the rpm climbs (from the slope of the last
   150 ms; nothing when the rpm is steady, falls, or climbs under 1,000 rpm/s). Lights go out a little later by
   the same amount, so they don't flicker. Off gives 0.3.0's behaviour.
 - **Fast RPM** asks the car for the rpm (its getter) when no update came for 40 ms: at most 25 times a second,
@@ -101,12 +110,24 @@ to one update. Two settings close that gap:
 
 ### HUD position
 
-The HUD art is centred on the stock speed. "HUD: move" shifts it if it sits off centre on your car; a bigger
+The HUD art is centred on the stock speed. The HUD page's Move settings shift it if it sits off centre on your car; a bigger
 size grows upward, away from the speed. The app draws no speed or unit: the stock HUD shows those.
+
+## Screens
+
+From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down). Not yet seen on the car's own screen.
+
+| Home | HUD | Cluster |
+|---|---|---|
+| ![Home](../../docs/ui/home.png) | ![HUD](../../docs/ui/hud.png) | ![Cluster](../../docs/ui/cluster.png) |
+| **Behavior** | **About** | **HUD off** |
+| ![Behavior](../../docs/ui/behavior.png) | ![About](../../docs/ui/about.png) | ![HUD off](../../docs/ui/hud-off.png) |
+| **Read-only Home** (no touch routing) | | |
+| ![Read-only Home](../../docs/ui/read-only-home.png) | | |
 
 ## Safety
 
-- Kill switches, fastest first: turn **HUD** and **Instrument cluster** off (or the app screen's buttons), a
+- Kill switches, fastest first: **All off** on Home (or turn **HUD** and **Instrument cluster** off), a
   file named `DISABLE` in the app's data folder (its path is in the log line `kill switch file:`), or Remove
   in the Store.
 - Never kill the app or MainApp by hand. The car counts a hand kill as a crash. Restart it only from the
@@ -121,11 +142,15 @@ Measured on claudius-vm under Node 8 with `test/adam_shiftlights/latency_trace.j
 car.js against a fake car and a fake cluster-render, 5 pulls at 3000 rpm/s; the getter is the best case):
 
 - The app's own delay from an rpm update to the cluster-render message is about 0.2 ms (p50) in every mode.
-  0.3.0's 30 fps software preview stalled it up to 25 ms; the 10 fps cap keeps it under 1 ms (p95).
+- 0.4.0 dropped the preview, and with it all drawing while you drive. With the app screen open (20 updates a
+  second, lead 60, Fast RPM on): 0.3.1's 10 fps software preview cost 15 ms a frame (max 57) and held the event
+  loop up to 56 ms (p99 30), so an rpm update could wait that long; 0.4.0: 1.8 ms (p99 1.3), the same as with the
+  screen closed. On the GPU path 0.3.1 ran its frame callback 838 times in the 13 s run (4 ms at most); 0.4.0
+  runs none. Own delay max: 0.8 ms (0.3.1, software) vs 0.3 ms (0.4.0).
 - What the driver sees is set by the car's update rate: with no lead, 47 ms (p50) behind the rpm at 10 updates
   a second, 22 ms at 20. Fast RPM with a fresh getter: 19 and 15 ms. Lead 60: about 40 ms early at the socket,
   which leaves room for the cluster's own flush and refresh (not measured here).
-- Re-run: `node --expose-gc test/adam_shiftlights/latency_trace.js --hz 10 --lead 60 --poll on --preview gpu`
+- Re-run: `node --expose-gc test/adam_shiftlights/latency_trace.js --hz 20 --lead 60 --poll on --preview software`
   (`--app <older checkout>/apps/adam_shiftlights` for a before run).
 
 ## For developers

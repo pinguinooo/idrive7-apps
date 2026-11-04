@@ -16,7 +16,7 @@
  */
 module.exports = Object.freeze({
     engine: {
-        idle: 750,              // rpm at idle (preview only)
+        idle: 750,              // rpm at idle (unused since 0.4.0 dropped the preview; kept so configs still check)
         limitWarm: 7000,        // the engine's allowed maximum, warm (rpm)
         limitCold: 4500,        // the allowed maximum with the oil fully cold (rpm)
         oilCold: 30,            // at or below this oil temperature (C) the limit is limitCold
@@ -99,5 +99,4 @@ module.exports = Object.freeze({
         pollMaxBackoffMs: 2000, // failures double the wait up to this (ms); one answer resets it to pollMs
         pollIdleMs: 1000,       // while polling is off or the car is not there, look again this often (ms)
     },
-    previewFps: 10,             // centre-screen preview; each frame is synchronous JS that delays rpm handling
 });

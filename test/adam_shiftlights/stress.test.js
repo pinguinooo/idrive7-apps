@@ -1,7 +1,7 @@
 'use strict';
 /* Noisy rpm against the real logic.step + logic.makeLead (config defaults): no flicker on a steady rpm near any
- * boundary, no light lost on a rising ramp, and (runTrace) a 50 Hz noisy feed with the software preview on that
- * never starves the loop. Pass bars from the planner's simulation (job 11041744 lead-sim.js). */
+ * boundary, no light lost on a rising ramp, and (runTrace) a 50 Hz noisy feed with the app screen open (0.4.0 draws
+ * its settings pages only on a change) that never starves the loop. Pass bars from the planner's simulation (job 11041744 lead-sim.js). */
 const assert = require('assert');
 const L = require('../../apps/adam_shiftlights/logic');
 const { runTrace } = require('./latency_trace');
@@ -45,11 +45,11 @@ module.exports = [
             else assert.strictEqual(drops, 0, hz + ' Hz lead ' + lead);
         }));
     }],
-    ['(c) 50 Hz noisy rpm with the software preview: every notification refreshed, loop lag bounded, no ERR, no trip, lead early', async () => {
+    ['(c) 50 Hz noisy rpm with the app screen open: every notification refreshed, loop lag bounded, no ERR, no trip, lead early', async () => {
         const r = await runTrace({ hz: 50, noise: 25, preview: 'software', pulls: 2, lead: 60 });
         assert.strictEqual(r.refreshes >= r.notifications, true, r.refreshes + ' refreshes for ' + r.notifications + ' notifications');
-        // event-loop lag max: Mac Node 26 ~60 ms with the 10 fps preview (a 1600x520 png per frame); 0.3.0's 30 fps
-        // preview measured in latency-before-after.md. Bar: 3 x the after value on claudius-vm Node 8 (see README)
+        // event-loop lag max: 0.3.1 measured ~60 ms on Mac Node 26 with its 10 fps preview (a 1600x520 png per frame);
+        // 0.4.0 has no per-frame drawing. Bar kept from 0.3.1 (README Latency)
         assert.ok(r.lag.max < 250, 'lag max ' + r.lag.max);
         assert.deepStrictEqual(r.errors, [], 'no ERR line (a caught error or the safety trip logs one)');
         assert.strictEqual(r.riseDrops, 0);

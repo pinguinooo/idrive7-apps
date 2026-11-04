@@ -1,8 +1,9 @@
 'use strict';
 /**
  * Shift Lights - RPM shift lights on the instrument cluster (under the M logo) and the HUD, drawn by the
- * cluster-render service (cluster_render_client.js); the centre screen shows a live preview. "HUD" and
- * "Instrument cluster" are two on/off settings; each shows its own style ("HUD: style", "Cluster: style"), live.
+ * cluster-render service (cluster_render_client.js). The centre screen holds the settings pages (ui.js: Home, HUD,
+ * Cluster, Behavior, About), drawn only when something changes: no preview, no render loop. "HUD" and
+ * "Instrument cluster" are two on/off settings; each shows its own style, live.
  * The drive mode comes from the car (FES drive experience) when it sends one, else from the setting.
  * Tunables: config.js. Pure maths: logic.js, geom.js. Every callback goes through safety.guard: nothing may throw
  * out of the main loop (the kit exits on an uncaught exception, and the car wipes then uninstalls an app
@@ -17,7 +18,7 @@ const { createOutput } = require('./output');
 const { createRpmPoll, pct } = require('./rpmpoll');
 const { ClusterRender } = require('./cluster_render_client');
 const { Canvas } = require('./kit/canvas');
-const view = require('./view');
+const { createUi } = require('./ui');
 
 const RATE_LOG_MS = 30000;
 const FES = 'de.bmw.infotainment.drivingexcitement.FES';
@@ -44,6 +45,21 @@ mgu.run({
             moves.forEach((w) => { try { settings.set(w[0], w[1]); } catch (e) { log.warn('settings migration ' + w[0] + ': ' + e); } });
             if (moves.length) log.info('settings migrated to v' + L.SETTINGS_V + ': ' + JSON.stringify(moves));
 
+            // the settings pages: drawn on a change only (a setting, a tab, the layout, a status event), coalesced
+            // into one guarded draw; never from refresh() or the rpm path. The kit resends the last frame by itself.
+            const pages = createUi();
+            let drawQueued = false;
+            const draw = guard('draw', () => {
+                drawQueued = false;
+                if (!ui.isVisible('MAIN')) return;
+                const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);
+                pages.draw(cv, t, { get, schema: settings.schema || (ctx.spec && ctx.spec.settings) || [], cfg, carMode, offReason: offReason(), version: (ctx.spec && ctx.spec.version) || '' }, act);
+                return ui.image('MAIN_GFX', cv);
+            });
+            function changed() { if (!drawQueued) { drawQueued = true; setTimeout(draw, 0); } }
+            /** What a page button does: its settings writes (settings.onChange then redraws). */
+            const act = (writes) => guard('ui ' + writes.map((w) => w[0]).join(' '), () => { writes.forEach((w) => settings.set(w[0], w[1])); });
+
             let carMode = null;     // the car's drive mode (logic.driveModeOf), null until it sends one
             // "Fast RPM": Car's own rpm handler, counted on the subscription and fed by the getter when the car's
             // updates are slow, so the polled rpm goes through Car (data(), gear guess, onSample) like any other
@@ -66,16 +82,21 @@ mgu.run({
                         carMode = m;
                         log.info('car drive mode ' + JSON.stringify(v && v.actualValueModeDrivingExperience) + ' -> ' + (m || 'none: using the setting'));
                         refreshNow();
+                        changed();
                     }),
                 },
             });
             let d = {}, mt = null, th = null, states = { cluster: null, hud: null }, killed = safety.pollKill(fs, killPath);
             let samples = 0, logged = {}, lastMtKey = '', sel = null, lastStyles = { cluster: '', hud: '' };
-            let lead = L.makeLead(cfg.rpm), sampleT = null, litChanges = 0, refreshMs = [], lastDraw = 0;
+            let lead = L.makeLead(cfg.rpm), sampleT = null, litChanges = 0, refreshMs = [];
             const OFF = { lit: 0, red: false, flashing: false, flashT0: null }, warned = Object.create(null);
             // "Start with the car" off: the platform starts the app anyway, so nothing is sent until MAIN was shown
             let opened = ui.isVisible('MAIN');
-            ui.onVisible(guard('visible', (name, v) => { if (name === 'MAIN' && v && !opened) { opened = true; refreshNow(); } }));
+            ui.onVisible(guard('visible', (name, v) => {
+                if (name !== 'MAIN' || !v) return;
+                if (!opened) { opened = true; refreshNow(); }
+                changed();
+            }));
 
             /** Both displays' style settings, checked (a bad saved value falls back, logged once per value). */
             function readSel() {
@@ -129,14 +150,14 @@ mgu.run({
             }
             const refreshNow = guard('refresh', () => refresh(Date.now()));
 
-            safety.onTrip(() => { output.apply({ display: 'off', active: false, sel, states }); });
+            safety.onTrip(() => { output.apply({ display: 'off', active: false, sel, states }); changed(); });
             car.onSample(guard('sample', (data, t) => {
                 d = data; samples++; sampleT = typeof t === 'number' ? t : null;
                 const t0 = process.hrtime();
                 refresh(Date.now());
                 const dt = process.hrtime(t0);
                 if (refreshMs.length < 2000) refreshMs.push(dt[0] * 1e3 + dt[1] / 1e6);
-            }), guard('source', () => { states = { cluster: OFF, hud: OFF }; lead = L.makeLead(cfg.rpm); sampleT = null; }));
+            }), guard('source', () => { states = { cluster: OFF, hud: OFF }; lead = L.makeLead(cfg.rpm); sampleT = null; changed(); }));
             const ms = (v) => (v === null ? '-' : v.toFixed(v < 10 ? 1 : 0));
             setInterval(guard('rate', () => {
                 const r = poll.stats();
@@ -155,31 +176,25 @@ mgu.run({
                     was[key] = value === true;
                 }
                 refreshNow();
+                changed();
             }));
             setInterval(guard('kill', () => {
                 const k = safety.pollKill(fs, killPath);
-                if (k !== killed) { killed = k; log.warn(k ? 'kill file found: output off' : 'kill file gone: output allowed'); refreshNow(); }
+                if (k !== killed) { killed = k; log.warn(k ? 'kill file found: output off' : 'kill file gone: output allowed'); refreshNow(); changed(); }
             }), cfg.safety.killPollMs);
             ui.onClick('BTN_HUD', guard('hud on/off', () => settings.cycle('hudOn')));
             ui.onClick('BTN_CLUSTER', guard('cluster on/off', () => settings.cycle('clusterOn')));
 
-            // the preview is capped at previewFps: every frame is synchronous JS that an rpm update would wait behind
-            // (the GPU path calls this up to 60 times a second whatever the fps asked for)
-            ctx.loop('MAIN', cfg.previewFps, guard('draw', async () => {
-                const t0 = Date.now();
-                if (t0 - lastDraw < 1000 / cfg.previewFps - 5) return;     // 5 ms slack: the software timer is already paced
-                lastDraw = t0;
-                const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);
-                view.draw(cv, t, {
-                    cfg, now: Date.now(), rpm: d.rpm, oil: d.oil, gear: d.gear, demo: !!d.demo, mt: mt || L.modeThresholds(cfg, get, eff().mode),
-                    th: th || L.thresholds(cfg, cfg.modes[cfg.driveMode], undefined), states: { cluster: states.cluster || OFF, hud: states.hud || OFF },
-                    sel: sel || readSel(), displays: L.readDisplays(get), eff: eff(), onlySportPlus: get('onlySportPlus') === true,
-                    offReason: offReason(), link: output.status(),
-                });
-                await ui.image('MAIN_GFX', cv);
-            }));
+            // where the kit runs the screen the pages do the bar's jobs, so its buttons go; elsewhere they stay and
+            // BTN_ALL opens the HMI's settings list (every setting)
+            if (ctx.hideButton) ['BTN_HUD', 'BTN_CLUSTER', 'BTN_ALL'].forEach((b) => ctx.hideButton(b));
+            ui.onClick('BTN_ALL', guard('settings button', () => ui.open && ui.open('SETTINGS')));
+            if (ctx.onTab) ctx.onTab(guard('tab', (i) => { pages.tab(i); changed(); }));
+            if (ctx.onLayout) ctx.onLayout(guard('layout', changed));
+            if (ui.onFocus) ui.onFocus(guard('focus', (name, on) => { if (name === 'MAIN' && on) changed(); }));
             Promise.all(watched).then(guard('rpm poll start', () => poll.start()), (e) => log.warn('rpm poll not started: ' + e));
             refreshNow();
+            changed();
             const lr = readLead();
             log.info('started: show ' + L.readDisplays(get).display + ', mode ' + JSON.stringify(eff()) + ', cluster ' + (sel || readSel()).cluster.style + ', hud ' + (sel || readSel()).hud.style +
                 ', lead ' + lr.leadMs + ' ms, rpm poll ' + (lr.poll ? 'on' : 'off'));

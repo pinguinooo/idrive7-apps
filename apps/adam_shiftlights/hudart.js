@@ -1,8 +1,8 @@
 'use strict';
 /**
  * hudart.js - the HUD bracket's drawing (docs/mockups/hud-m-style.html: bracket, gearBlock, sq) with the kit
- * Canvas's quad, line, fillRect and text only (the GPU Recorder has the same), so the same code draws the static image layer sent to the
- * HUD (output.js) and the centre screen's preview (view.js). Node 8.
+ * Canvas's quad, line, fillRect and text only (the GPU Recorder has the same): the static image layer sent to the HUD
+ * (output.js). Node 8.
  *
  * b = geom.bracket(...) (scene px, already placed and sized). Every function maps a scene point (x, y) to
  * (dx + x * k, dy + y * k). No speed, unit or line: the stock HUD shows the speed under our art.
@@ -79,21 +79,4 @@ function drawGear(cv, b, gear, color, dx, dy, k) {
     digits(cv, String(gear), G.x, G.y, G.h, color, 1.3, G.h * 0.23, dx, dy, k);
 }
 
-/** Preview only: the cream (or red) fill up to rpm, one cell per 1000 rpm. */
-function drawBracketFill(cv, b, rpm, color, dx, dy, k) {
-    const gap = b.B.cellGap / 43 * 1000;
-    for (let c = 0; c < b.B.scaleMax / 1000; c++) {
-        const a = c * 1000 + (c ? gap / 2 : 0), e = Math.min(rpm, (c + 1) * 1000 - gap / 2);
-        if (e > a) band(cv, b, b.sOf(a), b.sOf(e), b.o0, b.o1, color, dx, dy, k);
-    }
-}
-
-/** Preview only: the classic style's shift cells between th.start and th.shift, lit ones in their colour. */
-function drawCells(cv, b, th, lit, cells, colors, dx, dy, k) {
-    const n = cells.palette.length, w = (th.shift - th.start) / n, g = w * cells.gap;
-    for (let j = 0; j < n && j < lit; j++) {
-        band(cv, b, b.sOf(th.start + j * w + g / 2), b.sOf(th.start + (j + 1) * w - g / 2), b.cells[0], b.cells[1], colors[cells.palette[j]], dx, dy, k);
-    }
-}
-
-module.exports = { drawBracketStatic, drawGear, drawBracketFill, drawCells, digits };
+module.exports = { drawBracketStatic, drawGear, digits };

@@ -12,6 +12,8 @@
  * B = service receipt - when the ramp crossed each newly lit light's boundary (rising only; negative = early):
  *     what the driver sees, sampling and lead included. --app takes an older checkout (0.3.0 has no lead or poll).
  * The getter answers the ramp's current value after --getter-ms: the best case ("the car's getter is fresh").
+ * --preview software|gpu: the app screen is open. It drives the ctx.loop of a 0.3.x checkout (its live preview);
+ * 0.4.0 registers no loop and draws its settings pages only on a change, so there it only makes the screen visible.
  */
 const fs = require('fs');
 const os = require('os');

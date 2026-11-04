@@ -96,14 +96,14 @@ module.exports = [
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
         const def = (k) => item(k).default;
         assert.strictEqual(def('driveMode'), config.driveMode);
-        assert.strictEqual(item('driveMode').label, 'Drive mode if the car does not send it');
+        assert.strictEqual(item('driveMode').label, 'Drive mode fallback');
         assert.deepStrictEqual(item('driveMode').options.map((o) => o[0]), L.MODES);
         assert.deepStrictEqual(['hudOn', 'clusterOn', 'onlySportPlus', 'autoStart'].map((k) => [item(k).type, def(k)]), [['bool', false], ['bool', false], ['bool', false], ['bool', true]]);
         assert.deepStrictEqual([item('hudOn').label, item('clusterOn').label, item('onlySportPlus').label], ['HUD', 'Instrument cluster', 'Only in Sport+']);
         // the car shows one display at a time: the HUD wins by default, the cluster is a choice, the map area is experimental
         assert.deepStrictEqual([item('bothMode').options.map((o) => o[0]), def('bothMode')], [['hud', 'cluster', 'map'], 'hud']);
         assert.deepStrictEqual(item('bothMode').options.map((o) => o[1]).slice(0, 2), ['HUD', 'Instrument cluster']);
-        assert.ok(/^Experimental: /.test(item('bothMode').options[2][1]) && /one at a time/.test(item('bothMode').label));
+        assert.deepStrictEqual([item('bothMode').label, item('bothMode').options[2][1]], ['Both on: show', 'Both (experimental centre area)']);
         assert.strictEqual(item('enabled'), undefined);
         assert.strictEqual(item('display'), undefined);
         [['hudX', config.nudge.x, 'px left', 'px right', 'Centre'], ['hudY', config.nudge.y, 'px up', 'px down', 'Centre'],
@@ -113,24 +113,28 @@ module.exports = [
             assert.strictEqual(Object.keys(it.labels).length, x[1].length, x[0]);
             x[1].forEach((v) => { if (v) assert.strictEqual(it.labels[String(v)], Math.abs(v) + ' ' + (v < 0 ? x[2] : x[3]), x[0] + ' ' + v); });
         });
-        assert.deepStrictEqual(spec.screens[0].buttons.map((b) => b[0]), ['BTN_HUD', 'BTN_CLUSTER', 'BTN_SETTINGS']);
+        // BTN_ALL, not BTN_SETTINGS: the kit would add a sixth "Settings" header tab for BTN_SETTINGS (display.js hasSettings)
+        assert.deepStrictEqual(spec.screens[0].buttons, [['BTN_HUD', 'HUD on/off'], ['BTN_CLUSTER', 'Cluster on/off'], ['BTN_ALL', 'Settings']]);
         L.MODES.forEach((m) => ['Start', 'Shift'].forEach((k) => assert.strictEqual(def(m + k), 0, m + k)));
         assert.strictEqual(def('demo'), 'auto');
     }],
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
-        assert.strictEqual(spec.version, '0.3.1');
+        assert.strictEqual(spec.version, '0.4.0');
         assert.strictEqual(spec.mguAppStartType, 'autostart');
-        assert.deepStrictEqual(spec.settings.slice(0, 20).map((s) => s.key),
-            ['hudOn', 'clusterOn', 'bothMode', 'onlySportPlus', 'autoStart', 'leadMs', 'rpmPoll', 'hudStyle', 'hudSize', 'hudX', 'hudY', 'hudBright', 'hudNight',
-                'clusterStyle', 'clusterSize', 'clusterX', 'clusterY', 'clusterBright', 'clusterNight', 'driveMode']);
+        // in page order (Home, HUD, Cluster, Behavior, About): the HMI's settings list reads the same way
+        assert.deepStrictEqual(spec.settings.map((s) => s.key),
+            ['hudOn', 'clusterOn', 'bothMode', 'hudStyle', 'hudSize', 'hudBright', 'hudNight', 'hudX', 'hudY',
+                'clusterStyle', 'clusterSize', 'clusterBright', 'clusterNight', 'clusterX', 'clusterY',
+                'onlySportPlus', 'autoStart', 'leadMs', 'rpmPoll', 'driveMode', 'comfortStart', 'comfortShift', 'sportStart', 'sportShift', 'sportplusStart', 'sportplusShift',
+                'layout', 'renderer', 'demo']);
         assert.strictEqual(item('clusterStyle').default, config.styles.cluster);
         assert.strictEqual(item('hudStyle').default, config.styles.hud);
         assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[0]), L.CLUSTER_STYLES);
         assert.deepStrictEqual(item('hudStyle').options.map((o) => o[0]), L.HUD_STYLES);
-        assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[1]), ['M slats, large', 'M slats, small', 'Centre row (12 segments)', 'Stock look (one block per dial)']);
-        assert.deepStrictEqual(item('hudStyle').options.map((o) => o[1]), ['Shift bar + rev bracket, large', 'Shift bar + rev bracket, small', 'Shift bar only', 'Rev bracket + gear only']);
+        assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[1]), ['Large M slats', 'Small M slats', 'Centre row (12 lights)', 'Stock look (one block per dial)']);
+        assert.deepStrictEqual(item('hudStyle').options.map((o) => o[1]), ['Large: shift bar + rev bracket', 'Small: shift bar + rev bracket', 'Shift bar only', 'Rev bracket + gear only']);
         // plain names: no version jargon or "classic" in what Adam reads
         spec.settings.forEach((s) => [s.label].concat((s.options || []).map((o) => o[1])).forEach((t) => assert.ok(!/\bv\d|classic/i.test(t), t)));
         ['cluster', 'hud'].forEach((w) => {
@@ -147,7 +151,7 @@ module.exports = [
         assert.strictEqual(fes.statusFESVehicleDynamicSwitchHMI, 's');
         assert.ok(typeof fes._optional === 'string' && fes._optional.length > 10);
     }],
-    ['app.json lead and Fast RPM settings match config.js; bad rpm and previewFps values fall back', () => {
+    ['app.json lead and Fast RPM settings match config.js; bad rpm values fall back; no preview setting left', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
         assert.deepStrictEqual([item('leadMs').type, item('leadMs').steps, item('leadMs').default, item('leadMs').unit, item('leadMs').labels['0']],
@@ -162,14 +166,26 @@ module.exports = [
             assert.deepStrictEqual(r.cfg.rpm, L.DEFAULTS.rpm);
         });
         hasError(bad((c) => { c.clusterNudge = { x: [5, 10], y: [0] }; }), /^clusterNudge: x and y must be whole numbers/);
-        [60, 0, 2.5, '10'].forEach((v) => {
-            const r = bad((c) => { c.previewFps = v; });
-            hasError(r, /^previewFps: must be a whole number 1 to 30/);
-            assert.strictEqual(r.cfg.previewFps, 10);
-        });
+        assert.strictEqual(config.previewFps, undefined);
+        assert.strictEqual(L.DEFAULTS.previewFps, undefined);
     }],
     ['the HUD draws no speed, unit or line (the stock HUD shows the speed): none in config.js or DEFAULTS', () => {
         [config.hudStyles.bracket, L.DEFAULTS.hudStyles.bracket].forEach((B) => ['unit', 'unitAt', 'line', 'origin', 'below'].forEach((k) => assert.strictEqual(B[k], undefined, k)));
         assert.ok(!/km\/h|kph|mph/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'hudart.js'), 'utf8')));
+    }],
+    ['persisted shape unchanged since 0.3.1: every key, type, default, steps, option ids and value labels (old saves keep working)', () => {
+        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
+        const was = JSON.parse(fs.readFileSync(path.join(__dirname, 'settings_shape_0.3.1.json'), 'utf8'));
+        const now = spec.settings.slice().sort((a, b) => (a.key < b.key ? -1 : 1)).map((x) => {
+            const e = { key: x.key, type: x.type, default: x.default };
+            if (x.steps) e.steps = x.steps;
+            if (x.options) e.optionIds = x.options.map((o) => o[0]);
+            if (x.labels) e.labelKeys = Object.keys(x.labels).sort();
+            if (x.unit) e.unit = x.unit;
+            if (x.markDefault !== undefined) e.markDefault = x.markDefault;
+            return e;
+        });
+        assert.deepStrictEqual(now, was);
+        assert.strictEqual(L.SETTINGS_V, 3, 'no settings migration added');
     }],
 ];

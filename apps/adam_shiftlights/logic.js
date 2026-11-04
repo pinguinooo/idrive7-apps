@@ -48,7 +48,6 @@ const DEFAULTS = {
     },
     safety: { errorLimit: 5, errorWindowMs: 10000, killFile: 'DISABLE', killPollMs: 1000 },
     rpm: { leadMs: 60, slopeWindowMs: 150, slopeMinSpanMs: 60, minSlope: 1, maxSlope: 20, pollMs: 40, pollTimeoutMs: 200, pollMaxBackoffMs: 2000, pollIdleMs: 1000 },
-    previewFps: 10,
 };
 const TARGETS = G.TARGETS;
 const DISPLAYS = ['off', 'cluster', 'hud', 'both'];   // what geom.layersFor shows (from the two on/off settings)
@@ -206,7 +205,6 @@ function validateConfig(input) {
         if (!(r.pollMaxBackoffMs >= r.pollMs)) return 'pollMaxBackoffMs must be at least pollMs';
         return null;
     });
-    take('previewFps', (v) => (!isInt(v, 1, 30) ? 'must be a whole number 1 to 30' : null));
     return { cfg: out, errors };
 }
 
@@ -435,5 +433,5 @@ const holdForSportPlus = (onlySportPlus, eff) => onlySportPlus === true && !(eff
 module.exports = {
     DEFAULTS, TARGETS, DISPLAYS, BOTH_MODES, MODES, CLUSTER_STYLES, HUD_STYLES, SETTINGS_V, validateConfig, modeThresholds, thresholds,
     rawState, step, flashOn, fieldColor, readStyle, lightsOf, levelOf, fillLit, readDisplays, migrateSettings, driveModeOf,
-    effectiveMode, holdForSportPlus, LEAD_STEPS, makeLead, readLead,
+    effectiveMode, holdForSportPlus, LEAD_STEPS, makeLead, readLead, MIN_SPAN,
 };
