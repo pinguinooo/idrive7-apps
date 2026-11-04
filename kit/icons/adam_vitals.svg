@@ -1,0 +1,30 @@
+<!-- accent: #2f86ff -->
+<defs>
+  <filter id="ev-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="3"/></filter>
+</defs>
+<g filter="url(#ev-glow)" opacity="0.5">
+  <path d="M35.18,103.04 A48,48 0 0 1 24.75,86.02" fill="none" stroke="#1f6fff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M23.98,83.63 A48,48 0 0 1 22.41,63.73" fill="none" stroke="#2f86ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M22.80,61.25 A48,48 0 0 1 30.44,42.81" fill="none" stroke="#46a0ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M31.92,40.78 A48,48 0 0 1 47.10,27.82" fill="none" stroke="#6ab8ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M49.34,26.68 A48,48 0 0 1 68.74,22.02" fill="none" stroke="#9fd0ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M71.26,22.02 A48,48 0 0 1 90.66,26.68" fill="none" stroke="#d9ecff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M92.90,27.82 A48,48 0 0 1 108.08,40.78" fill="none" stroke="#ffd27a" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M109.56,42.81 A48,48 0 0 1 117.20,61.25" fill="none" stroke="#ffa800" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M117.59,63.73 A48,48 0 0 1 116.02,83.63" fill="none" stroke="#ff5a2a" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M115.25,86.02 A48,48 0 0 1 104.82,103.04" fill="none" stroke="#ff1a22" stroke-width="11" stroke-linecap="butt"/>
+</g>
+<g>
+  <path d="M35.18,103.04 A48,48 0 0 1 24.75,86.02" fill="none" stroke="#1f6fff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M23.98,83.63 A48,48 0 0 1 22.41,63.73" fill="none" stroke="#2f86ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M22.80,61.25 A48,48 0 0 1 30.44,42.81" fill="none" stroke="#46a0ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M31.92,40.78 A48,48 0 0 1 47.10,27.82" fill="none" stroke="#6ab8ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M49.34,26.68 A48,48 0 0 1 68.74,22.02" fill="none" stroke="#9fd0ff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M71.26,22.02 A48,48 0 0 1 90.66,26.68" fill="none" stroke="#d9ecff" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M92.90,27.82 A48,48 0 0 1 108.08,40.78" fill="none" stroke="#ffd27a" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M109.56,42.81 A48,48 0 0 1 117.20,61.25" fill="none" stroke="#ffa800" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M117.59,63.73 A48,48 0 0 1 116.02,83.63" fill="none" stroke="#ff5a2a" stroke-width="11" stroke-linecap="butt"/>
+  <path d="M115.25,86.02 A48,48 0 0 1 104.82,103.04" fill="none" stroke="#ff1a22" stroke-width="11" stroke-linecap="butt"/>
+</g>
+<line x1="70" y1="70" x2="92.94" y2="37.23" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/><circle cx="70" cy="70" r="7" fill="#ffffff"/>
+<rect x="65" y="88" width="10" height="26" rx="5" fill="#e9eef5"/><circle cx="70" cy="118" r="9" fill="#e9eef5"/><rect x="68" y="98" width="4" height="18" rx="2" fill="#ff1a22"/><circle cx="70" cy="118" r="6" fill="#ff1a22"/>

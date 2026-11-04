@@ -9,6 +9,7 @@ needs no change to `mgu-repo.json`.
 | App | What it does | Docs |
 |---|---|---|
 | <img src="apps/adam_shiftlights/icon.png" width="28" alt=""> Shift Lights (`adam_shiftlights`) | RPM shift lights on the instrument cluster and the HUD, per-drive-mode thresholds, cold-engine limit | [apps/adam_shiftlights](apps/adam_shiftlights/README.md) |
+| <img src="apps/adam_vitals/icon.png" width="28" alt=""> Engine Vitals (`adam_vitals`) | Boost, power, torque, gear, oil and coolant with a warm-up takeover when cold and a turbo cool-down tab; Thermals, Fuel & ignition, Chassis from M Vitals | [apps/adam_vitals](apps/adam_vitals/README.md) |
 
 ## Status
 
