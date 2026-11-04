@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M Track Emulator</title>
+<style>
+  :root { --bg: #0b0c0f; --panel: #15171c; --line: #2a2d35; --text: #e8eaee; --dim: #8d939e; --red: #f1141d; --ok: #3ecf6a; --warn: #f0b400; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 1500px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; } h1 small { color: var(--dim); font-weight: 400; margin-left: 8px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  canvas#panel { width: 100%; aspect-ratio: 1920 / 720; display: block; border-radius: 6px; background: #000; }
+  iframe { width: 100%; aspect-ratio: 1920 / 900; border: 0; border-radius: 6px; background: #000; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { background: #22252d; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font: inherit; cursor: pointer; }
+  button:hover { border-color: #4a4f5a; } button[aria-pressed="true"] { background: #a8101a; border-color: var(--red); }
+  label { color: var(--dim); display: flex; gap: 8px; align-items: center; } input[type=range] { width: 220px; }
+  #status { font-weight: 600; } .on { color: var(--ok); } .off { color: var(--dim); }
+  .note { color: var(--dim); font-size: 13px; }
+  @media (max-width: 700px) { input[type=range] { width: 140px; } }
+</style></head>
+<body><main>
+  <h1>M Track Cluster: emulator <small>the panel as cluster-render would draw it, from the app's real messages</small></h1>
+  <div class="card">
+    <canvas id="panel" width="1920" height="720" aria-label="The instrument cluster panel, 1920 x 720"></canvas>
+    <div class="row" style="margin-top:10px"><span id="status" class="off">starting...</span><span class="note" id="detail"></span></div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <button data-a="idle">Idle (P, 0 mph)</button><button data-a="pull">Pull to 7,000</button>
+      <span class="note">Drive mode</span><button data-mode="comfort">Comfort</button><button data-mode="sport">Sport</button><button data-mode="sportplus" aria-pressed="true">Sport+</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span class="note">Guards</span><button data-t="speedloss">Speed loss</button><button data-t="popup">Check Control popup</button><button data-t="bmw">BMW holds panel</button><button data-t="kill">Kill file</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label>rpm <input id="rpm" type="range" min="0" max="7200" step="50" value="800"><span id="rpmv">800</span></label>
+      <label>speed (km/h fed) <input id="speed" type="range" min="0" max="250" step="1" value="0"><span id="speedv">0</span></label>
+    </div>
+    <p class="note">Settings (cover on/off, when to show, panels, units, brightness) are on the centre screen below, as in the car. The emulator proves the app's logic, guards, messages, shaders and art; only the car proves that a G01 shows the panel scene, its pixels, brightness and latency.</p>
+  </div>
+  <div class="card"><iframe id="emu" title="The centre screen (idrive7-apps emulator)"></iframe></div>
+</main>
+<script src="/crdraw.js"></script>
+<script>
+'use strict';
+const cv = document.getElementById('panel');
+let cr = null, have = {}, busy = false;
+try { cr = CRDraw.create(cv); } catch (e) { document.getElementById('status').textContent = 'WebGL is not available in this browser'; }
+const post = (a, v) => fetch('/act', { method: 'POST', body: JSON.stringify({ a, v }) });
+document.querySelectorAll('[data-a]').forEach((b) => b.onclick = () => post(b.dataset.a));
+document.querySelectorAll('[data-mode]').forEach((b) => b.onclick = () => { post('mode', b.dataset.mode); document.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); });
+document.querySelectorAll('[data-t]').forEach((b) => b.onclick = () => post(b.dataset.t));
+const slider = (id, a) => { const el = document.getElementById(id), out = document.getElementById(id + 'v'); el.oninput = () => { out.textContent = el.value; post(a, Number(el.value)); }; };
+slider('rpm', 'rpm'); slider('speed', 'speed');
+async function frame() {
+  if (busy || !cr) return;
+  busy = true;
+  try {
+    const s = await (await fetch('/state')).json();
+    if (!document.getElementById('emu').src) document.getElementById('emu').src = 'http://' + location.hostname + ':' + s.emuPort + '/?panel=right';
+    for (const [k, a] of Object.entries(s.assets)) {
+      if (have[k] === a.v) continue;
+      const buf = new Uint8Array(await (await fetch('/asset?k=' + encodeURIComponent(k))).arrayBuffer());
+      cr.putAsset(k, a.v, a, buf); have[k] = a.v;
+    }
+    cr.draw(s.list, 1920, 720);
+    const st = document.getElementById('status'), shown = s.list.length > 0;
+    st.textContent = shown ? 'Cover shown (' + s.list.length + ' layers)' : 'Cover off: BMW\'s own cluster shows';
+    st.className = shown ? 'on' : 'off';
+    document.querySelectorAll('[data-t]').forEach((b) => b.setAttribute('aria-pressed', String(!!s.state[{ speedloss: 'speedLost', popup: 'popup', bmw: 'bmw', kill: 'kill' }[b.dataset.t]])));
+    document.getElementById('detail').textContent = 'fed: ' + s.sig.rpm + ' rpm, ' + s.sig.speed + ' km/h, gear ' + s.sig.gear;
+  } catch (e) { document.getElementById('status').textContent = 'waiting for the emulator...'; }
+  busy = false;
+}
+setInterval(frame, 66);
+</script>
+</body></html>

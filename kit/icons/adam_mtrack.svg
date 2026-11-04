@@ -1,0 +1,15 @@
+<!-- accent: #f1141d -->
+<defs>
+  <linearGradient id="mt-band" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5a5660"/><stop offset="1" stop-color="#9a969e"/></linearGradient>
+  <linearGradient id="mt-glow" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#d6121e" stop-opacity="0.85"/><stop offset="1" stop-color="#d6121e" stop-opacity="0"/></linearGradient>
+  <clipPath id="mt-l"><path d="M44,112 C30,92 22,76 24,64 C26,50 38,36 50,24 L58,28 C48,40 40,52 39,64 C38,76 46,92 58,112 Z"/></clipPath>
+  <clipPath id="mt-r"><path d="M96,112 C110,92 118,76 116,64 C114,50 102,36 90,24 L82,28 C92,40 100,52 101,64 C102,76 94,92 82,112 Z"/></clipPath>
+</defs>
+<g clip-path="url(#mt-l)"><rect x="0" y="0" width="70" height="140" fill="url(#mt-band)" opacity="0.7"/><rect x="0" y="50" width="70" height="20" fill="url(#mt-glow)"/><rect x="0" y="70" width="70" height="42" fill="#e6e6ec" opacity="0.35"/><rect x="0" y="67" width="70" height="5" fill="#f1141d"/></g>
+<g clip-path="url(#mt-r)"><rect x="70" y="0" width="70" height="140" fill="url(#mt-band)" opacity="0.7"/><rect x="70" y="50" width="70" height="20" fill="url(#mt-glow)"/><rect x="70" y="70" width="70" height="42" fill="#e6e6ec" opacity="0.35"/><rect x="70" y="67" width="70" height="5" fill="#f1141d"/></g>
+<path d="M44,112 C30,92 22,76 24,64 C26,50 38,36 50,24" fill="none" stroke="#eef1f4" stroke-width="3.2" stroke-linecap="round"/>
+<path d="M96,112 C110,92 118,76 116,64 C114,50 102,36 90,24" fill="none" stroke="#eef1f4" stroke-width="3.2" stroke-linecap="round"/>
+<g transform="translate(70,44)">
+  <polygon points="-17,6 -12,6 -8,-6 -13,-6" fill="#4cb3ea"/><polygon points="-9,6 -4,6 0,-6 -5,-6" fill="#2a3f9f"/><polygon points="-1,6 4,6 8,-6 3,-6" fill="#e3231b"/>
+</g>
+<text x="70" y="96" text-anchor="middle" font-family="Arial, Liberation Sans, sans-serif" font-weight="700" font-size="30" fill="#f6f8fa">D</text>

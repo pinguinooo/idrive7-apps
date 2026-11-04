@@ -1,0 +1,245 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>M Track art</title></head>
+<body>
+<!--
+  Dev-time only (not shipped): draws M Track Cluster's static art, item by item, with the approved mockup's own drawing
+  code (iDrive-Apps docs/mockups/mtrack-cluster.html: base, plate, bar, sq, badge, corner, gearBlock), trimmed to the
+  static parts, with the tach scale 0-7 from apps/adam_mtrack/geom.js (loaded below, so the art and the live fill
+  agree). tools/mtrack-art/make-art.mjs renders each item on a transparent canvas and writes apps/adam_mtrack/art/art.json.
+-->
+<script>var module = { exports: {} };</script>
+<script src="../../apps/adam_mtrack/geom.js"></script>
+<script>var GEOM = module.exports; module = { exports: {} };</script>
+<script src="../../apps/adam_mtrack/config.js"></script>
+<script>
+var MCFG = module.exports;
+(function () {      // a function scope: geom.js's top-level names stay global, these shadow them
+'use strict';
+const T = MCFG.tach, BARS = GEOM.BARS, C = GEOM.CENTRE;
+const SANS = '"BMW Type Next", Arial, "Liberation Sans", Helvetica, sans-serif';
+const COL = { cap: '#f1141d', redField: '#c81e2a', yellowField: '#eca53c', line: '#eef1f4' };
+const BASE = { edge: [[960, 112], [1120, 118], [1280, 126], [1400, 140], [1520, 163], [1620, 196], [1700, 240], [1748, 300], [1752, 360], [1752, 712]], centre: '#15161b', side: '#1f2023' };
+const PLATE = [[1262, 207], [1468, 211], [1520, 218], [1556, 232], [1590, 252], [1618, 272], [1645, 302], [1676, 342], [1700, 380], [1712, 405],
+  [1708, 445], [1690, 485], [1668, 525], [1640, 565], [1614, 592], [1590, 600], [1310, 600]];
+const FUEL_ARC = [[182, 488], [175, 518], [176, 552], [189, 588], [214, 617], [250, 636], [298, 645], [330, 646]];
+const FUEL_LABELS = [[223, 500], [262, 562], [298, 606]];
+const OIL_SCALE = { us: [120, 210, 300], metric: [50, 100, 150] };
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const mirror = GEOM.mirror, spline = GEOM.spline, at = GEOM.at, xAtY = GEOM.xAtY, arcAtY = GEOM.arcAtY;
+let ctx = null;
+
+/* ---------- the mockup's helpers ---------- */
+const off = (p, o) => [p.x + p.nx * o, p.y + p.ny * o];
+function strip(tr, side, f0, f1, o0, o1, steps = 24) {
+  const a = [], b = [];
+  for (let k = 0; k <= steps; k++) { const p = at(tr, f0 + (f1 - f0) * k / steps, side); a.push(off(p, o0)); b.push(off(p, o1)); }
+  return a.concat(b.reverse());
+}
+const GLYPHS = {
+  0: '0 0,1 0,1 1.6,0 1.6,z', 1: '.05 .34,.5 0,.5 1.6', 2: '0 0,1 0,1 .8,0 .8,0 1.6,1 1.6', 3: '0 0,1 0,1 1.6,0 1.6|.3 .8,1 .8',
+  4: '.72 1.6,.72 0,0 1.04,1 1.04', 5: '1 0,0 0,0 .78,1 .78,1 1.6,0 1.6', 6: '1 0,0 0,0 1.6,1 1.6,1 .78,0 .78',
+  7: '0 0,1 0,1 .2,.36 1.6', 8: '0 0,1 0,1 1.6,0 1.6,z|0 .8,1 .8', 9: '1 .82,0 .82,0 0,1 0,1 1.6,0 1.6',
+  P: '0 1.6,0 0,1 0,1 .86,0 .86', M: '0 1.6,0 0,.5 .64,1 0,1 1.6', D: '0 0,.6 0,1 .4,1 1.2,.6 1.6,0 1.6,z',
+  N: '0 1.6,0 0,1 1.6,1 0', R: '0 1.6,0 0,1 0,1 .86,0 .86|.4 .86,1 1.6', S: '1 0,0 0,0 .78,1 .78,1 1.6,0 1.6', '/': '.15 1.6,.85 0', '-': '0 .8,1 .8',
+};
+const GLYPH = {};
+Object.keys(GLYPHS).forEach((k) => { GLYPH[k] = GLYPHS[k].split('|').map((s) => s.split(',').map((p) => (p === 'z' ? p : p.split(' ').map(Number)))); });
+function sqMetrics(h, o) {
+  const sw = o.sw || h * 0.18, hn = o.box ? h - sw : h, u = hn / 1.6;
+  const wd = o.box ? (o.w || h) - sw : u * (o.wide || 1), gap = (o.gap === undefined ? 0.45 : o.gap) * u;
+  return { sw, hn, u, wd, gap, adv: (c) => (c === '1' ? 0.55 : c === '/' ? 0.7 : 1) * wd };
+}
+function sq(str, x, y, h, color, o = {}) {
+  const m = sqMetrics(h, o), sw = m.sw, hn = m.hn, u = m.u, wd = m.wd, gap = m.gap, adv = m.adv;
+  const total = [...str].reduce((s, c) => s + adv(c) + gap, -gap);
+  let cx = o.align === 'left' ? x + sw / 2 : o.align === 'right' ? x - total - sw / 2 : x - total / 2;
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = sw; ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
+  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = h * 0.2; }
+  for (const c of str) {
+    for (const stroke of GLYPH[c] || []) {
+      ctx.beginPath();
+      stroke.forEach((p, i) => { if (p === 'z') ctx.closePath(); else ctx[i ? 'lineTo' : 'moveTo'](cx + p[0] * wd, y - hn / 2 + p[1] * u); });
+      ctx.stroke();
+    }
+    cx += adv(c) + gap;
+  }
+  ctx.restore();
+  return total + sw;
+}
+function poly(pts, close = true) { ctx.beginPath(); pts.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo'](p[0], p[1])); if (close) ctx.closePath(); }
+function line(pts, width, color, cap = 'round') { poly(pts, false); ctx.lineWidth = width; ctx.strokeStyle = color; ctx.lineJoin = 'round'; ctx.lineCap = cap; ctx.stroke(); }
+function fill(pts, color, blur, glowColor) { ctx.save(); if (blur) { ctx.shadowColor = glowColor || (typeof color === 'string' ? color : '#ff4010'); ctx.shadowBlur = blur; } poly(pts); ctx.fillStyle = color; ctx.fill(); ctx.restore(); }
+const rect = (x, y, w, h, color, blur) => fill([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], color, blur);
+function text(s, x, y, size, color, align = 'left', weight = 500) {
+  ctx.font = `${weight} ${size}px ${SANS}`; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+}
+
+/* ---------- the bars, 0-7 ---------- */
+const SIDES = [-1, 1].map((side) => {
+  const m = (pts) => (side > 0 ? pts : mirror(pts));
+  const outer = spline(m(BARS.outer)), inner = spline(m(BARS.inner));
+  return { side, outer, inner, top: spline(m(BARS.top), 6), tail: spline(m(BARS.tail), 6), foot: m(BARS.foot),
+    s0: arcAtY(outer, BARS.tick0Y), s7: arcAtY(outer, BARS.tickTopY) };
+});
+const bar = (side) => SIDES[side > 0 ? 1 : 0];
+const bandPoly = (b) => b.outer.pts.concat(b.top.pts.slice(1), b.inner.pts.slice().reverse());
+const sc = (b, r) => (b.s0 + (b.s7 - b.s0) * GEOM.fracOf(r, T)) / b.outer.len;
+
+function base() {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 1920, 720);
+  const pts = BASE.edge.concat([[1752, 720], [168, 720]], mirror(BASE.edge).reverse());
+  const g = ctx.createRadialGradient(960, 400, 120, 960, 420, 900);
+  g.addColorStop(0, BASE.centre); g.addColorStop(0.55, BASE.centre); g.addColorStop(1, BASE.side);
+  fill(pts, g);
+  const v = ctx.createLinearGradient(0, 110, 0, 260);
+  v.addColorStop(0, 'rgba(0,0,0,0.45)'); v.addColorStop(1, 'rgba(0,0,0,0)');
+  fill(pts, v);
+}
+function plate(side) {
+  const pts = PLATE.concat(BARS.outer.map(([x, y]) => [x - 20, y])), P = side > 0 ? pts : mirror(pts);
+  const g = ctx.createLinearGradient(0, 210, 0, 600);
+  g.addColorStop(0, 'rgba(72,74,80,0.55)'); g.addColorStop(1, 'rgba(92,94,98,0.62)');
+  fill(P, g);
+}
+function barUnder(side) {           // the translucent band and its darker top (under the live fill)
+  const b = bar(side), band = bandPoly(b);
+  const xo = xAtY(b.outer, 420), xi = xAtY(b.inner, 420), g = ctx.createLinearGradient(xo, 0, xi, 0);
+  g.addColorStop(0, 'rgba(116,104,112,0.64)'); g.addColorStop(0.5, 'rgba(146,140,144,0.62)'); g.addColorStop(1, 'rgba(168,164,172,0.62)');
+  fill(band, g);
+  ctx.save(); poly(band); ctx.clip();
+  const top = ctx.createLinearGradient(0, 180, 0, 330); top.addColorStop(0, 'rgba(0,0,0,0.32)'); top.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = top; ctx.fillRect(0, 170, 1920, 170);
+  ctx.restore();
+}
+function barOver(side) {            // everything the mockup draws after the fill: fields, lines, ticks, numerals 0..7
+  const b = bar(side), s = b.side;
+  const o0 = BARS.line + BARS.gap + BARS.line2 + 1, o1 = o0 + 8;
+  [[T.amberFrom, T.redFrom, COL.yellowField, 'dash'], [T.redFrom, T.max, COL.redField, 'solid']].forEach(([a, c, col, kind]) => {
+    if (kind === 'dash') { const n = 2, w = (sc(b, c) - sc(b, a)) / n; for (let k = 0; k < n; k++) fill(strip(b.outer, s, sc(b, a) + k * w + w * 0.15, sc(b, a) + (k + 1) * w - w * 0.15, o0, o1, 4), col); }
+    else fill(strip(b.outer, s, sc(b, a), sc(b, c), o0, o1, 10), col);
+  });
+  line(b.inner.pts, 1.6, 'rgba(232,236,242,0.55)');
+  const edge = b.outer.pts.concat(b.top.pts.slice(1));
+  const inset = (pts, o) => pts.map((p, i) => { const q = pts[Math.min(i + 1, pts.length - 1)], r0 = pts[Math.max(i - 1, 0)], dx = q[0] - r0[0], dy = q[1] - r0[1], l = Math.hypot(dx, dy) || 1; return [p[0] - s * dy / l * o * -1, p[1] + s * dx / l * o * -1]; });
+  ctx.save(); ctx.shadowColor = 'rgba(255,255,255,0.55)'; ctx.shadowBlur = 6;
+  line(inset(edge, BARS.line / 2), BARS.line, COL.line); ctx.restore();
+  line(inset(b.outer.pts, BARS.line + BARS.gap / 2), BARS.gap, 'rgba(12,12,16,0.85)');
+  line(inset(b.outer.pts, BARS.line + BARS.gap + BARS.line2 / 2), BARS.line2, 'rgba(236,240,244,0.85)');
+  const tl = b.tail.pts;
+  for (let k = 1; k < tl.length; k++) line([tl[k - 1], tl[k]], 4 - 2.6 * k / tl.length, `rgba(236,240,244,${(0.8 * (1 - k / tl.length)).toFixed(3)})`);
+  const bo = b.outer.pts[0], bi = b.inner.pts[0];
+  line([[bo[0] + s * 1, bo[1] - 10], [bo[0] - s * 2, bo[1]], [bi[0], bi[1]]], 2.6, 'rgba(236,240,244,0.7)');
+  const f = b.foot, fg = ctx.createLinearGradient(f[0][0], f[0][1], f[2][0], f[2][1]);
+  fg.addColorStop(0, 'rgba(170,170,180,0.3)'); fg.addColorStop(1, 'rgba(170,170,180,0)');
+  ctx.save(); poly(f, false); ctx.lineWidth = 12; ctx.strokeStyle = fg; ctx.lineCap = 'butt'; ctx.stroke(); ctx.restore();
+  GEOM.ticks(T).forEach((t) => {
+    const xo2 = s > 0 ? t.x : 1920 - t.x, y = t.y;
+    line([[xo2 + s * 2, y], [xo2 - s * t.len, y]], t.major ? 3.4 : 2.6, COL.line, 'butt');
+    fill([[xo2 + s * 5, y], [xo2 - s * 1, y - 4], [xo2 - s * 1, y + 4]], COL.line);
+  });
+  GEOM.numerals(T).forEach((n) => sq(String(n.k), s > 0 ? n.x : 1920 - n.x, n.y, BARS.numH, '#f4f6f8', { box: true, w: BARS.numW, sw: BARS.numSW, glow: 'rgba(255,255,255,0.35)' }));
+}
+function bandMask(side) { fill(bandPoly(bar(side)), '#ffffff'); }
+
+/* ---------- centre (static), badge, corners ---------- */
+function stackIcon(x, y, c) { [24, 30, 36].forEach((w, i) => fill([[x, y + i * 9], [x + w, y + i * 9], [x + w + 4, y + i * 9 + 5], [x, y + i * 9 + 5]], c)); }
+function centreStatic() {
+  const X = C.cx, [mainHalf, c0, c1] = C.line;
+  stackIcon(C.stackX, C.stackY, 'rgba(230,234,238,0.85)');
+  line([[X - mainHalf, C.lineY], [X + mainHalf, C.lineY]], 2.2, 'rgba(225,230,236,0.8)');
+  for (const sd of [-1, 1]) fill([[X + sd * c0, C.lineY - 2.5], [X + sd * (c1 - 6), C.lineY - 2.5], [X + sd * c1, C.lineY + 2.5], [X + sd * c0, C.lineY + 2.5]], '#f2f5f8', 6, 'rgba(255,255,255,0.6)');
+}
+function badge(x, y) {
+  [['#4cb3ea', -54], ['#2a3f9f', -37], ['#e3231b', -20]].forEach(([c, dx]) => fill([[x + dx, y + 12], [x + dx + 11, y + 12], [x + dx + 19, y - 12], [x + dx + 8, y - 12]], c));
+  sq('M', x + 2, y, 24, '#f4f6f8', { align: 'left', box: true, w: 40, sw: 5.5 });
+}
+function corner(pts, labels, ends, side, at3) {      // the mockup's corner() without its needle (drawn live)
+  const tr = spline(pts);
+  fill(strip(tr, side, 0, 1, 2, 26), 'rgba(150,152,160,0.34)');
+  line(tr.pts, 4, 'rgba(238,241,244,0.95)');
+  line(tr.pts.map((_, i) => off(at(tr, tr.cum[i] / tr.len, side), 6.5)), 1.6, 'rgba(238,241,244,0.7)');
+  for (let k = 0; k <= 4; k++) { const p = at(tr, k / 4, side); line([off(p, 0), off(p, 11)], 2.2, 'rgba(238,241,244,0.9)', 'butt'); }
+  if (ends[0]) fill(strip(tr, side, 0, 0.13, 2, 12), ends[0]);
+  if (ends[1]) fill(strip(tr, side, 0.87, 1, 2, 12), ends[1]);
+  labels.forEach((s, i) => sq(s, at3[i][0], at3[i][1], 21, '#f2f5f8', { box: true, w: 17, sw: 4.2 }));
+}
+function cornerL() {
+  corner(FUEL_ARC.slice().reverse(), ['0', '1/2', '1'], ['rgba(232,30,36,0.95)', null], -1, FUEL_LABELS.slice().reverse());
+  fill([[120, 600], [134, 600], [134, 620], [120, 620]], '#dfe4ea'); fill([[138, 606], [146, 610], [138, 614]], '#dfe4ea');
+  fill([[238, 661], [252, 661], [252, 685], [238, 685]], '#dfe4ea');     // the range's pump icon (mockup bottomRow)
+}
+function cornerR(units) {
+  const L = OIL_SCALE[units];
+  corner(mirror(FUEL_ARC).reverse(), L.map(String), ['rgba(40,120,255,0.95)', 'rgba(232,30,36,0.95)'], 1,
+    mirror(FUEL_LABELS).reverse().map(([x, y], i) => [x - [22, 16, 10][i], y]));
+  text(units === 'us' ? '°F' : '°C', 1806, 606, 20, '#e9edf1', 'center', 500);
+}
+
+/* ---------- the glyph atlas: white on transparent, one cell a glyph ---------- */
+const STYLES = {
+  gear: { chars: '0123456789PRNDMS-', h: C.gearH, o: { box: true, w: C.gearW, sw: C.gearSW, glow: 'rgba(255,255,255,0.3)' } },
+  small: { chars: '12345678M', h: 38, o: { box: true, w: 30, sw: 7 } },
+  speed: { chars: '0123456789-', h: C.speedH, o: { box: true, w: C.speedW, sw: C.speedSW, glow: 'rgba(255,255,255,0.25)' } },
+};
+const LABELS = { mph: [22, 500, 'left'], 'km/h': [22, 500, 'left'] };
+const TAGS = ['SPORT+', 'SPORT', 'COMFORT', 'ECO PRO'];
+function atlasLayout() {             // cells packed in rows, 1024 wide
+  const W = 1024, cells = [], meta = { w: W, h: 0, styles: {}, labels: {}, tags: {} };
+  let x = 0, y = 0, rowH = 0;
+  const place = (w, h) => { if (x + w > W) { x = 0; y += rowH; rowH = 0; } const r = { x, y, w, h }; x += w; rowH = Math.max(rowH, h); return r; };
+  Object.keys(STYLES).forEach((name) => {
+    const S = STYLES[name], m = sqMetrics(S.h, S.o), pad = Math.ceil(S.h * 0.2) + 2;
+    const st = meta.styles[name] = { h: S.h, sw: m.sw, wd: m.wd, gap: m.gap, pad, glyphs: {} };
+    for (const c of S.chars) {
+      const cw = Math.ceil(m.adv(c) + m.sw + 2 * pad), ch = Math.ceil(S.h + 2 * pad);
+      const r = place(cw, ch);
+      st.glyphs[c] = { x: r.x, y: r.y, w: cw, h: ch, ox: pad + m.sw / 2, adv: m.adv(c) };
+      cells.push(() => sq(c, r.x + pad, r.y + ch / 2, S.h, '#ffffff', Object.assign({ align: 'left' }, S.o)));
+    }
+  });
+  x = 0; y += rowH; rowH = 0;
+  const measure = (s, size, weight) => { const c = document.createElement('canvas').getContext('2d'); c.font = `${weight} ${size}px ${SANS}`; return Math.ceil(c.measureText(s).width); };
+  Object.keys(LABELS).forEach((s) => {
+    const [size, weight] = LABELS[s], w = measure(s, size, weight) + 8, h = size + 12, r = place(w, h);
+    meta.labels[s] = { x: r.x, y: r.y, w, h, ox: 4 };
+    cells.push(() => text(s, r.x + 4, r.y + h / 2, size, '#ffffff', 'left', weight));
+  });
+  TAGS.forEach((s) => {
+    const w = measure(s, 20, 700) + 8, h = 32, r = place(w, h);
+    meta.tags[s] = { x: r.x, y: r.y, w, h };
+    cells.push(() => text(s, r.x + w / 2, r.y + h / 2, 20, '#ffffff', 'center', 700));
+  });
+  meta.h = y + rowH;
+  return { meta, draw: () => cells.forEach((f) => f()) };
+}
+
+/* ---------- the items: name, format, rect (panel px), draw ---------- */
+const R = GEOM.RECTS, ATLAS = atlasLayout();
+const ITEMS = [
+  { name: 'lum', format: 'r8', from: 'luma', rect: R.base, sampling: 'nearest', draw: () => { base(); plate(-1); plate(1); centreStatic(); barUnder(-1); barUnder(1); } },
+  { name: 'band', format: 'r8', from: 'alpha', rect: R.band, sampling: 'nearest', draw: () => bandMask(1) },
+  { name: 'overR', format: 'rgba8', rect: R.overR, sampling: 'nearest', draw: () => barOver(1) },
+  { name: 'overL', format: 'rgba8', rect: R.overL, sampling: 'nearest', draw: () => barOver(-1) },
+  { name: 'atlas', format: 'r8', from: 'alpha', rect: { x: 0, y: 0, w: ATLAS.meta.w, h: ATLAS.meta.h }, sampling: 'nearest', draw: ATLAS.draw },
+  { name: 'badge', format: 'rgba8', rect: R.badge, sampling: 'nearest', draw: () => badge(962.5, 250) },
+  { name: 'cornerL', format: 'rgba8', rect: R.cornerL, sampling: 'nearest', draw: cornerL },
+  { name: 'cornerR_us', format: 'rgba8', rect: R.cornerR, sampling: 'nearest', draw: () => cornerR('us') },
+  { name: 'cornerR_metric', format: 'rgba8', rect: R.cornerR, sampling: 'nearest', draw: () => cornerR('metric') },
+];
+
+/** Draws item i on a transparent canvas of its rect; returns its RGBA (straight alpha) as base64. */
+window.renderItem = function (i) {
+  const it = ITEMS[i], r = it.rect, cv = document.createElement('canvas');
+  cv.width = r.w; cv.height = r.h;
+  ctx = cv.getContext('2d');
+  ctx.translate(-r.x, -r.y);
+  it.draw();
+  const px = ctx.getImageData(0, 0, r.w, r.h).data;
+  let s = '';
+  for (let k = 0; k < px.length; k += 0x8000) s += String.fromCharCode.apply(null, px.subarray(k, k + 0x8000));
+  return btoa(s);
+};
+window.ART = { items: ITEMS.map((it) => ({ name: it.name, format: it.format, from: it.from || 'rgba', rect: { x: it.rect.x, y: it.rect.y, w: it.rect.w, h: it.rect.h }, sampling: it.sampling })), atlas: ATLAS.meta };
+})();
+</script>
+</body></html>
