@@ -10,8 +10,9 @@ something changes: there is no live preview, so nothing on that screen competes 
 
 ## Status
 
-**Untested on a real car.** So far it has only run in the upstream idrive7-apps emulator, against a fake
-cluster-render service, and in Node 8 unit tests. 0.4.0's settings pages are proven in the emulator only. Read the
+Proven on a 2024 X3 M40i (G01 LCI) in a car test: the HUD shift lights and "Only in Sport+" work. Still only proven in
+the upstream idrive7-apps emulator (a fake cluster-render service) and in Node 8 unit tests: the settings pages on the car's
+screen (0.4.x), the cluster styles, night dim and the shift bar's left / right move. Read the
 Safety section before you install it.
 
 ## Requirements
@@ -128,7 +129,7 @@ size grows upward, away from the speed. The app draws no speed or unit: the stoc
 
 ## Screens
 
-From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down). Not yet seen on the car's own screen.
+From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down). Not yet seen on the car's own screen (these are 0.4.0).
 
 | Home | HUD | Cluster |
 |---|---|---|
