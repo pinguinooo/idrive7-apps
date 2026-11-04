@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('assert');
-const L = require('../apps/adam_shiftlights/logic');
-const config = require('../apps/adam_shiftlights/config');
+const L = require('../../apps/adam_shiftlights/logic');
+const config = require('../../apps/adam_shiftlights/config');
 const cfg = L.validateConfig(config).cfg;
 
 const N = 6;

@@ -1,0 +1,27 @@
+{
+  "id": "adam_template",
+  "title": "Template",
+  "description": "Skeleton app: copy this folder, rename it, edit this file",
+  "version": "0.1.0",
+  "vendor": "custom",
+  "loggingId": "OAT0",
+  "iconGlyph": "gauge",
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Template",
+      "buttons": [
+        ["BTN_SETTINGS", "Settings"]
+      ]
+    }
+  ],
+  "settings": [
+    {"key": "enabled", "label": "Enabled", "type": "bool", "default": true}
+  ]
+}

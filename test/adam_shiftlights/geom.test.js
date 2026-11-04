@@ -1,8 +1,8 @@
 'use strict';
 const assert = require('assert');
-const G = require('../apps/adam_shiftlights/geom');
-const L = require('../apps/adam_shiftlights/logic');
-const cfg = L.validateConfig(require('../apps/adam_shiftlights/config')).cfg;
+const G = require('../../apps/adam_shiftlights/geom');
+const L = require('../../apps/adam_shiftlights/logic');
+const cfg = L.validateConfig(require('../../apps/adam_shiftlights/config')).cfg;
 
 const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, what + ': ' + a + ' vs ' + b);
 const box = (g) => [g.bar.x0, g.bar.y0, g.bar.x1 - g.bar.x0, g.bar.y1 - g.bar.y0];

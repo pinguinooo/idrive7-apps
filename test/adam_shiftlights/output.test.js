@@ -4,14 +4,14 @@
 const assert = require('assert');
 const os = require('os');
 const path = require('path');
-const { ClusterRender } = require('../apps/adam_shiftlights/cluster_render_client');
-const { createOutput } = require('../apps/adam_shiftlights/output');
-const { createSafety } = require('../apps/adam_shiftlights/safety');
+const { ClusterRender } = require('../../apps/adam_shiftlights/cluster_render_client');
+const { createOutput } = require('../../apps/adam_shiftlights/output');
+const { createSafety } = require('../../apps/adam_shiftlights/safety');
 const { createFake } = require('./fake_cluster_render');
-const L = require('../apps/adam_shiftlights/logic');
-const G = require('../apps/adam_shiftlights/geom');
-const { Canvas } = require('../kit/runtime/canvas.js');
-const cfg = L.validateConfig(require('../apps/adam_shiftlights/config')).cfg;
+const L = require('../../apps/adam_shiftlights/logic');
+const G = require('../../apps/adam_shiftlights/geom');
+const { Canvas } = require('../../kit/runtime/canvas.js');
+const cfg = L.validateConfig(require('../../apps/adam_shiftlights/config')).cfg;
 
 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
 async function until(fn, ms, what) {

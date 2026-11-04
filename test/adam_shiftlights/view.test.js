@@ -6,20 +6,20 @@
 const assert = require('assert');
 const path = require('path');
 const Module = require('module');
-const KIT = path.join(__dirname, '..', 'kit', 'runtime');
-const APP = path.join(__dirname, '..', 'apps', 'adam_shiftlights');
+const KIT = path.join(__dirname, '..', '..', 'kit', 'runtime');
+const APP = path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights');
 const realResolve = Module._resolveFilename;
 Module._resolveFilename = function (req, parent) {
     if (/^\.\/kit\//.test(req) && parent && parent.filename && path.dirname(parent.filename) === APP) return realResolve.call(this, path.join(KIT, req.slice(6)), parent);
     return realResolve.apply(this, arguments);
 };
-const view = require('../apps/adam_shiftlights/view');
+const view = require('../../apps/adam_shiftlights/view');
 Module._resolveFilename = realResolve;
 const { Recorder, OP } = require(path.join(KIT, 'record.js'));
 const { Canvas } = require(path.join(KIT, 'canvas.js'));
 const themes = require(path.join(KIT, 'themes.js'));
-const L = require('../apps/adam_shiftlights/logic');
-const cfg = L.validateConfig(require('../apps/adam_shiftlights/config')).cfg;
+const L = require('../../apps/adam_shiftlights/logic');
+const cfg = L.validateConfig(require('../../apps/adam_shiftlights/config')).cfg;
 
 const th = L.thresholds(cfg, cfg.modes.sportplus, 95);
 const sel = (c, h) => ({ cluster: { style: c, size: 120, bright: 60, night: false }, hud: { style: h, size: 80, bright: 100, night: true } });

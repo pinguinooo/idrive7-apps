@@ -2,8 +2,8 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const L = require('../apps/adam_shiftlights/logic');
-const config = require('../apps/adam_shiftlights/config');
+const L = require('../../apps/adam_shiftlights/logic');
+const config = require('../../apps/adam_shiftlights/config');
 
 const copy = (x) => JSON.parse(JSON.stringify(x));
 /** config.js with one change; returns validateConfig's result */
@@ -86,7 +86,7 @@ module.exports = [
         assert.strictEqual(L.modeThresholds(cfg, get({}), 'eco').mode, 'sport');
     }],
     ['app.json defaults match config.js (no drift)', () => {
-        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
+        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const def = (k) => spec.settings.filter((s) => s.key === k)[0].default;
         assert.strictEqual(def('display'), config.display);
         assert.strictEqual(def('driveMode'), config.driveMode);
@@ -97,7 +97,7 @@ module.exports = [
         assert.strictEqual(def('demo'), 'auto');
     }],
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
-        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
+        const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
         assert.strictEqual(spec.version, '0.2.0');
         assert.deepStrictEqual(spec.settings.slice(0, 10).map((s) => s.key),

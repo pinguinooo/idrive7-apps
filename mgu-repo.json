@@ -3,6 +3,7 @@
   "apps": {
     "path": "apps/*",
     "manifest": "app.json",
+    "exclude": ["_template"],
     "icon": "icon.png",
     "mguHmi": ["ID7"],
     "requires": { "idrive7-renderd": "2.1.7", "mgu-inputgate": "1.0.0" },
