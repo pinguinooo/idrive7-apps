@@ -10,7 +10,7 @@ needs no change to `mgu-repo.json`.
 |---|---|---|
 | <img src="apps/adam_shiftlights/icon.png" width="28" alt=""> Shift Lights (`adam_shiftlights`) | RPM shift lights on the instrument cluster and the HUD, per-drive-mode thresholds, cold-engine limit | [apps/adam_shiftlights](apps/adam_shiftlights/README.md) |
 | <img src="apps/adam_vitals/icon.png" width="28" alt=""> Engine Vitals (`adam_vitals`) | Boost, power, torque, gear, oil, coolant and transmission temperatures with a warm-up takeover until they reach operating temperature (220 / 220 / 160 °F) and a turbo cool-down tab; Thermals, Fuel & ignition, Chassis from M Vitals | [apps/adam_vitals](apps/adam_vitals/README.md) |
-| <img src="apps/adam_mtrack/icon.png" width="28" alt=""> M Track Cluster (`adam_mtrack`) | An M Track style cover over the instrument cluster in Sport+: bar tachs to 7,000 rpm, gear over mph, side panels, corner gauges, shift slats. Off by default; drops at once on any guard; a Safety tab with every guard, its state and the signals it reads; an emulator view to try it without the car | [apps/adam_mtrack](apps/adam_mtrack/README.md) |
+| <img src="apps/adam_mtrack/icon.png" width="28" alt=""> M Track Cluster (`adam_mtrack`) | An M Track style cover over the instrument cluster in Sport+: bar tachs to 7,000 rpm, gear over mph, side panels, corner gauges, shift slats. Off by default; drops at once on any guard; a Safety tab with every guard, its state, the signals it reads and what the cluster renderer says, and a parked test pattern; an emulator view to try it without the car | [apps/adam_mtrack](apps/adam_mtrack/README.md) |
 
 ## Status
 
@@ -51,6 +51,7 @@ syntax check and the tests find it by listing `apps/`. Steps, rules and testing:
 | `apps/<id>/` | one app: `app.json`, `main.js`, `icon.png`, its modules and its README. `apps/_template` is the skeleton the Store ignores |
 | `test/` | `run.js` (the runner), `apps.test.js` (checks every app folder), `test/<id>/` (one app's own tests) |
 | `tools/check.sh` | the self-check: Node 8 syntax of the kit and every app, then all tests |
+| `tools/car-logs.sh` | read-only evidence from the car (cluster-render's status and log, the apps' logs and settings) into a folder and a .tar.gz; changes nothing on the car |
 | `kit/` | the build kit from upstream idrive7-apps, with one added line in `kit/tools/build.py` (an app.json `"mguAppStartType"` goes to the package's `package.json`) |
 | `mgu-repo.json` | what the Store reads: `apps/*` is discovered, `exclude` lists folders it skips, `requires` the tools every app needs |
 | `docs/` | how to add an app |

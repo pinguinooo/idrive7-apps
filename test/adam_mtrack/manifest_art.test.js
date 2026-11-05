@@ -26,8 +26,8 @@ module.exports = [
         assert.ok(!('requireCheckControl' in cfg), 'the old config switch is gone (BMW popups replaces it)');
         assert.ok(st.steps.indexOf(S.speedStaleMs) >= 0);
     }],
-    ['app.json: id, title, version 0.1.1, installs with the cover off, Sport+ only, US units', () => {
-        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.1', 'OAD3']);
+    ['app.json: id, title, version 0.1.2, installs with the cover off, Sport+ only, US units', () => {
+        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.2', 'OAD3']);
         assert.strictEqual(item('coverOn').default, false);
         assert.strictEqual(item('whenToShow').default, 'sportplus');
         assert.strictEqual(item('units').default, 'us');

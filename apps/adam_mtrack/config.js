@@ -55,7 +55,21 @@ module.exports = Object.freeze({
     speedFactor: 1.0,           // shown speed = true speed x this; calibrate against the OEM reading on car day [U]
     tankLitres: 65,             // G01 tank for the fuel gauge (no signal for it) [U]
     nightDim: 0.35,             // "Night dim" on: brightness x this [U] (no lights-on signal is read)
-    uploadBudgetBytes: 4500000, // asset bytes uploaded at arm, at most (art/art.json + the four panel boxes)
+    uploadBudgetBytes: 4500000, // asset bytes uploaded at arm, at most (art/art.json + the four panel boxes): under one
+                                // second of cluster-render's shared 5500 KB/s ceiling (cluster-render.conf upload_kb_per_s)
+    renderer: {                 // cluster-render's own behaviour (idrive-apps cluster-render.conf, README "Arbitration")
+        lingerMs: 3000,         // panel_linger_ms: a panel no layer wants is released (unmapped) this long after
+        verifyMs: 6000,         // a drop or close whose panel is not idle again by now is logged "release NOT confirmed"
+        heldBackoffMs: 10000,   // after BMW's content took the panel, the cover asks again only this much later (no map /
+                                // unmap churn on slot 0x203 while BMW keeps it)
+    },
+    test: {                     // the test pattern on the Safety page (ladder.js)
+        stepMs: 10000,          // each step removes itself after this long
+        statusAfterMs: 2500,    // the renderer's status is asked for this long into a step (shown on the page)
+        parkedKmh: 3,           // a step runs only below this speed (or in P), and stops when the car goes faster
+        connectMs: 5000,        // a step whose client gets no answer from cluster-render this long is given up
+    },
+    diagLogKb: 256,             // mtrack-diag.log (what was sent to cluster-render and what came back), then .1
     zBase: 900,                 // the cover's base layer z (overlay class, exclusive); its other layers sit above
     panelHz: 2,                 // side panels and corners redraw at most this often
     statsLogMs: 30000,          // the speed alive / poll log line

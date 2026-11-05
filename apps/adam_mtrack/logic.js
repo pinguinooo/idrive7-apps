@@ -37,8 +37,8 @@ const REASONS = {
     nocc: 'No BMW popup signal, and BMW popups is set to Require',
     ccwait: 'Checking for the BMW popup signal',
     cc: 'BMW popup: the cover gives way',
+    busy: 'Another app is using the cluster: turn off Shift Lights cluster/HUD',
     held: 'BMW holds the cluster panel (a popup or the speech dialog)',
-    hud: 'Waiting: the HUD (Shift Lights) holds the cluster scene',
     nospeed: 'No fresh speed signal: the cover stays off',
     error: 'Error: the cover gives way for a moment',
     nomode: 'No drive-mode signal, and Drop if missing is on',
@@ -95,11 +95,14 @@ function blocker(s, now, cfg) {
     if (s.demo) return 'demo';
     if (s.art !== true) return 'noart';
     if (s.link !== 'ready') return 'renderer';
+    if (s.busy) return 'busy';                                                  // the shared scene is another app's
     if (pg === 'require' && cc !== 'present') return 'nocc';
     if (pg === 'auto' && cc === 'waiting') return 'ccwait';
     if (pg !== 'ignore' && s.ccActive) return 'cc';
     if (pg !== 'ignore' && num(s.ccNewAt) && now - s.ccNewAt >= 0 && now - s.ccNewAt < S.showHoldMs) return 'cc';
-    if (s.target === 'waiting' || s.target === 'parked') return s.holder === 'foreign' ? 'hud' : 'held';
+    if (s.target === 'waiting' || s.target === 'parked') return s.holder === 'foreign' ? 'busy' : 'held';
+    const back = cfg.renderer.heldBackoffMs;                                    // after BMW took it: wait before asking again
+    if (num(s.heldUntil) && now < s.heldUntil && s.heldUntil - now <= back) return 'held';
     if (speedStatus(s.speedAt, now, s.staleMs, cfg) !== 'present') return 'nospeed';
     if (num(s.lastErrorAt) && now - s.lastErrorAt >= 0 && now - s.lastErrorAt < S.showHoldMs) return 'error';
     const known = Object.prototype.hasOwnProperty.call(RANK, s.mode);
@@ -111,7 +114,8 @@ function blocker(s, now, cfg) {
 /**
  * s = { coverOn, killed, tripped, demo, art (the art loaded), link ('ready' once cluster-render answered),
  * cc ('present' | 'waiting' | 'missing': the Check Control list), ccActive, ccNewAt, target, holder (the panel
- * target's last event), speedAt (wall ms of the last valid speed), lastErrorAt, mode (null: no drive mode), when,
+ * target's last event), busy (renderer.busyOf: why the shared scene is another app's, or ''), heldUntil (wall ms: BMW
+ * took the panel, ask again after it), speedAt (wall ms of the last valid speed), lastErrorAt, mode (null: no drive mode), when,
  * popupGuard, modeMissingDrop, staleMs (the Safety settings) }. since: when every condition last started holding
  * (null: not holding). A clock that jumps backwards restarts the hold (KB-ANY-203).
  */

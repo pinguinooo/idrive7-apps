@@ -257,7 +257,16 @@ try {
     console.log('step 10 BMW holds the panel');
     await dropStep('10 BMW holds the panel (waiting, stock)', () => ctl({ target: 'panel', state: 'waiting', holder: 'stock' }), 250);
     await shot('mtrack-drop-bmw-popup');
-    await backStep('10 BMW gives it back', () => ctl({ target: 'panel', state: 'shown' }));
+    {   // 0.1.2: after BMW took the panel the cover asks again only after cfg.renderer.heldBackoffMs (no map / unmap churn)
+        const t0 = Date.now(), B = cfg.renderer.heldBackoffMs;
+        await ctl({ target: 'panel', state: 'shown' });
+        await wait(2500);
+        check(live().length === 0, '10 BMW gives it back: not asked for again within 2.5 s (the ' + B / 1000 + ' s backoff)');
+        const ok = await untilLive((n) => n >= LAYERS, B + 4000, '10 back after the backoff');
+        const m = live()[0], ms = m ? m.t - t0 : null;
+        results['10 back after BMW'] = ms;
+        check(ok && ms >= B - 500 && ms <= B + 2500, '10 BMW gives it back: back ' + ms + ' ms later (after the ' + B / 1000 + ' s backoff and the 1 s hold)');
+    }
 
     console.log('step 11 kill file');
     const kill = path.join(DATA_DIR, cfg.safety.killFile);

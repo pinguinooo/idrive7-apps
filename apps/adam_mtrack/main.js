@@ -24,6 +24,9 @@ const W = require('./widgets');
 const CAT = require('./catalogue');
 const { createSafety } = require('./safety');
 const { createOutput } = require('./output');
+const { createLadder } = require('./ladder');
+const { createDiag } = require('./diaglog');
+const RD = require('./renderer');
 const { createPoll } = require('./poll');
 const { ClusterRender } = require('./cluster_render_client');
 const { Canvas } = require('./kit/canvas');
@@ -51,6 +54,10 @@ mgu.run({
             const guard = safety.guard;
             const killPath = safety.killFile(ctx.dataDir);
             log.info('kill switch file: ' + killPath);
+            // what was sent to cluster-render and what came back, every release check and test step (tools/car-logs.sh)
+            const diag = createDiag(ctx.dataDir, cfg.diagLogKb);
+            log.info('diagnostic log: ' + diag.file);
+            diag('start: M Track ' + ((ctx.spec && ctx.spec.version) || '?') + ', node ' + process.version + ', kill file ' + killPath);
             const get = (k) => settings.get(k);
             const schema = settings.schema || (ctx.spec && ctx.spec.settings) || [];
             const moves = L.migrateSettings(get, schema);
@@ -100,10 +107,15 @@ mgu.run({
             // emulator hooks (emufeed.js, never on a car): the handlers each interface was watched with, a speed block
             const hooks = { handlers: Object.create(null), blockSpeed: false };
 
+            const crSocket = process.env.MTRACK_CR_SOCKET || undefined;
             const output = createOutput({
-                ClusterRender, socketPath: process.env.MTRACK_CR_SOCKET || undefined, log, cfg, guard, art: art || {},
+                ClusterRender, socketPath: crSocket, log, cfg, guard, art: art || {}, diag,
                 fault: (msg) => guard('cluster-render', () => { throw new Error(msg); })(),
             });
+            // a closed connection's release, checked by a watcher that never makes a layer (renderer.verifyRelease)
+            const verify = (why, done) => RD.verifyRelease({ ClusterRender, socketPath: crSocket, log, diag, guard, cfg }, why, done);
+            let ladder = null, release = null;
+            function checkRelease(why) { release = { pending: true, why }; verify(why, (v) => { release = v; changed(); }); }
 
             // speed: alive = a valid value (not 65535) within speedStaleMs, notified or polled with the getter
             const speedIn = (x) => {
@@ -112,7 +124,9 @@ mgu.run({
                 if (k !== null) { speedAt = Date.now(); speedKmh = k; }
                 return true;
             };
-            const speedPoll = createPoll({ field: 'statusCarSpeed2', name: 'speed', cfg: cfg.speedPoll, log, enabled: () => output.status().armed });
+            // the getter is polled while the cover is armed, a test step runs or the Safety tab is open (parked() needs it)
+            const speedPoll = createPoll({ field: 'statusCarSpeed2', name: 'speed', cfg: cfg.speedPoll, log,
+                enabled: () => output.status().armed || !!(ladder && ladder.running()) || (pages.page() === 3 && ui.isVisible('MAIN')) });
             const rpmPoll = createPoll({ field: 'statusEngineSpeed2', name: 'rpm', cfg: cfg.rpmPoll, log, enabled: () => output.status().shown && !d.demo });
             const watched = [];
             const signals = ctx.signals && Object.assign({}, ctx.signals, {
@@ -206,16 +220,22 @@ mgu.run({
 
             /* ---------- the cover ---------- */
             let since = null, dec = { want: false, reason: 'off' }, slat = null, lastPanels = -Infinity, lastStats = Date.now();
-            let sigKey = '', ccWas = '';
+            let sigKey = '', ccWas = '', heldUntil = null, busyWas = '';
             const recentError = (now) => { const e = safety.lastErrorAt(); return isNum(e) && now - e >= 0 && now - e < cfg.safety.showHoldMs; };
+            /** Parked enough for a test step: in P, or the last valid speed under cfg.test.parkedKmh. */
+            const parked = () => d.stage === 'P' || (isNum(speedKmh) && speedKmh < cfg.test.parkedKmh);
+            /** The newest release check: the watcher's after a close, or the cover connection's own after a drop. */
+            const latestRelease = (st) => (release && (release.pending || !st.release || release.at >= st.release.at) ? release : st.release) || null;
             /** Every signal and guard state the Safety page shows (coarse: no counters, so it redraws only on a change). */
             function sigNow(now) {
                 const st = output.status();
                 return {
                     speed: L.speedStatus(speedAt, now, v.speedStaleMs, cfg), mode: carMode, modeRaw, fes: ifaceState(FES),
                     cc: ifaceState(CCM), ccUp: cc.active.size, ki2: ifaceState(KI2), rpm: ifaceState(CDS),
-                    link: st.link, target: st.target, holder: st.holder, shown: st.shown, art: artOk,
+                    link: st.link, target: st.target, holder: st.holder, reason: st.reason, shown: st.shown, art: artOk,
                     killed, tripped: safety.tripped(), errorRecent: recentError(now), demo: !!d.demo,
+                    hud: st.targets.hud ? st.targets.hud.state : null, rendering: st.rendering, cap: st.cap, lastError: st.lastError,
+                    busy: st.busy, others: st.others, warm: st.warm, release: latestRelease(st), test: ladder ? ladder.status() : null,
                 };
             }
             const model = () => ({ get, schema, cfg, carMode, reason: dec.reason, avail, version: (ctx.spec && ctx.spec.version) || '', sig: sigNow(Date.now()) });
@@ -230,10 +250,13 @@ mgu.run({
             function rearm() {
                 const want = v.coverOn === true && !killed && !safety.tripped() && artOk;
                 if (want) {
-                    if (output.arm(units().temp === 'C' ? 'metric' : 'us')) boxes(true);
+                    if (ladder && ladder.running()) ladder.stop('Cover the cluster turned on');
+                    if (output.arm(units().temp === 'C' ? 'metric' : 'us')) drawBoxes(output, true);
                 } else if (output.status().armed) {
-                    output.disarm(v.coverOn !== true ? 'cover off' : killed ? 'kill file' : safety.tripped() ? 'stopped after errors' : 'no art');
+                    const why = v.coverOn !== true ? 'cover off' : killed ? 'kill file' : safety.tripped() ? 'stopped after errors' : 'no art';
+                    output.disarm(why);
                     since = null;
+                    checkRelease(why);
                 }
             }
             function gearOf() {
@@ -264,20 +287,21 @@ mgu.run({
             }
             const boxCv = {}, boxKey = {};
             let cornerBase = null;
-            function boxes(force) {
-                if (!output.status().armed) return;
-                const u = units(), lay = L.layoutOf(v), x = liveVals();
+            /** The four live boxes into out (the cover's output, or a test step's: always whole, never cached). */
+            function drawBoxes(out, force) {
+                if (!out.status().armed) return;
+                const u = units(), lay = L.layoutOf(v), x = liveVals(), own = out === output;
                 if (!cornerBase) cornerBase = { cornerL: null, cornerR_us: null, cornerR_metric: null };
                 const baseOf = (n) => {
                     if (!cornerBase[n]) { const it = art.items.filter((i) => i.name === n)[0]; cornerBase[n] = require('zlib').inflateRawSync(Buffer.from(it.data, 'base64')); }
                     return cornerBase[n];
                 };
                 const put = (n, key, draw) => {
-                    if (!force && boxKey[n] === key) return;
-                    boxKey[n] = key;
+                    if (own && !force && boxKey[n] === key) return;
+                    if (own) boxKey[n] = key;
                     const r = G.RECTS[n], cv = boxCv[n] || (boxCv[n] = new Canvas(r.w, r.h));
                     draw(cv, r);
-                    output.box(n, Buffer.from(cv.d.buffer, cv.d.byteOffset, cv.d.length));
+                    out.box(n, Buffer.from(cv.d.buffer, cv.d.byteOffset, cv.d.length));
                 };
                 put('panelL', W.panelKey(lay.left, x, u, avail, cfg), (cv, r) => W.drawPanel(cv, r, -1, lay.left, x, u, avail, cfg));
                 put('panelR', W.panelKey(lay.right, x, u, avail, cfg), (cv, r) => W.drawPanel(cv, r, 1, lay.right, x, u, avail, cfg));
@@ -292,15 +316,22 @@ mgu.run({
                     ccActive: cc.active.size > 0, ccNewAt: cc.newAt, target: st.target, holder: st.holder, speedAt,
                     lastErrorAt: safety.lastErrorAt(), mode: carMode, when: v.whenToShow,
                     popupGuard: v.popupGuard, modeMissingDrop: v.modeMissingDrop, staleMs: v.speedStaleMs,
+                    busy: st.busy, heldUntil,
                 };
                 const r = L.decide(s, now, since, cfg);
                 since = r.since;
                 const before = dec.reason;
                 dec = r;
-                if (!r.want && st.shown) output.drop(r.reason);
-                else if (r.want && !st.shown) { output.show(frame()); log.info('cover: shown'); }
+                if (!r.want && st.shown) {
+                    output.drop(r.reason);
+                    if (r.reason === 'held') { heldUntil = now + cfg.renderer.heldBackoffMs; log.info('cover: BMW took the panel (' + (st.reason || st.holder || st.target) + '): asking again in ' + cfg.renderer.heldBackoffMs / 1000 + ' s'); }
+                } else if (r.want && !st.shown) { output.show(frame()); log.info('cover: shown'); }
                 else if (r.want) output.update(frame());
                 output.tick(Date.now());   // after show() stamped its start: an older `now` would read as a clock jump
+                if (st.busy !== busyWas) {
+                    busyWas = st.busy;
+                    if (st.busy) { log.warn('cover: another app is using the cluster (' + st.busy + '): the cover waits'); output.requestStatus('another app: ' + st.busy); }
+                }
                 const key = JSON.stringify(sigNow(now));
                 if (r.reason !== before || key !== sigKey) { sigKey = key; changed(); }
                 if (r.reason !== before) whyLog(r.reason, now);
@@ -308,10 +339,16 @@ mgu.run({
             }
             const tick = guard('cover', () => {
                 const k = safety.pollKill(fs, killPath);
-                if (k !== killed) { killed = k; log.warn(k ? 'kill file found: cover off' : 'kill file gone: cover allowed'); rearm(); changed(); }
+                if (k !== killed) {
+                    killed = k;
+                    log.warn(k ? 'kill file found: cover off' : 'kill file gone: cover allowed');
+                    if (k && ladder) ladder.stop('kill file');
+                    rearm(); changed();
+                }
                 coverTick();
                 const now = Date.now();
-                if (now < lastPanels || now - lastPanels >= 1000 / cfg.panelHz) { lastPanels = now; boxes(false); }
+                if (ladder) ladder.tick(now, { parked: parked() });
+                if (now < lastPanels || now - lastPanels >= 1000 / cfg.panelHz) { lastPanels = now; drawBoxes(output, false); }
                 if (now < lastStats || now - lastStats >= cfg.statsLogMs) {
                     const sp = speedPoll.stats();
                     log.info('speed alive ' + (isNum(speedAt) ? (now - speedAt) + ' ms ago' : 'never') + ', notified/s ' + sp.notified.toFixed(1) + ', speed poll ' + sp.polled.toFixed(1) + '/s, poll failures ' + sp.fails + ', cover ' + dec.reason + ', popups ' + ifaceState(CCM) + ', drive mode ' + (carMode || 'missing'));
@@ -319,7 +356,11 @@ mgu.run({
                 }
             });
             safety.onError(() => { if (output.status().shown) output.drop('error'); since = null; });
-            safety.onTrip(() => { output.disarm('stopped after errors'); since = null; changed(); });
+            safety.onTrip(() => {
+                if (ladder) ladder.stop('stopped after errors');
+                if (output.disarm('stopped after errors')) checkRelease('stopped after errors');
+                since = null; changed();
+            });
 
             /* ---------- samples ---------- */
             const OFF_PEAK = { right: 0, brake: 0, left: 0, accel: 0 };
@@ -345,7 +386,25 @@ mgu.run({
                 return ui.image('MAIN_GFX', cv);
             });
             function changed() { if (!drawQueued) { drawQueued = true; setTimeout(draw, 0); } }
-            const act = (writes) => guard('ui ' + writes.map((w) => w[0]).join(' '), () => { writes.forEach((w) => settings.set(w[0], w[1])); });
+            /** A page control: its settings writes, or an action (the test pattern's steps and STOP). */
+            const act = (writes, action) => guard('ui ' + (action || writes.map((w) => w[0]).join(' ')), () => {
+                if (action) doAction(action);
+                writes.forEach((w) => settings.set(w[0], w[1]));
+            });
+            ladder = createLadder({
+                cfg, log, diag, verify, changed, frame: () => frame(), drawBoxes: (out) => drawBoxes(out, true),
+                units: () => (units().temp === 'C' ? 'metric' : 'us'),
+                makeOutput: (opts) => createOutput(Object.assign({ ClusterRender, socketPath: crSocket, log, cfg, guard, art: art || {}, diag, fault: (msg) => log.warn('test: ' + msg) }, opts)),
+            });
+            function doAction(a) {
+                const m = /^test:([1-5]|stop)$/.exec(a);
+                if (!m) return;
+                if (m[1] === 'stop') ladder.stop('stop button');
+                else if (!artOk && Number(m[1]) >= 4) log.warn('test: step ' + m[1] + ' needs the art file');
+                else ladder.start(Number(m[1]), { armed: output.status().armed, parked: parked() });
+                changed();
+            }
+            hooks.action = doAction;           // emulator only (emufeed.js)
 
             let wasOn = v.coverOn === true;
             settings.onChange(guard('settings', (key, value) => {
@@ -357,7 +416,7 @@ mgu.run({
                 }
                 rearm();                                   // cover off: disarmed here, not on the next tick
                 if (key === 'coverSlats' && before.coverSlats !== v.coverSlats && output.status().shown) { output.drop('slats setting'); output.show(frame()); }
-                boxes(false);
+                drawBoxes(output, false);
                 coverTick();
                 changed();
             }));
@@ -370,7 +429,10 @@ mgu.run({
             if (ui.onFocus) ui.onFocus(guard('focus', (name, on) => { if (name === 'MAIN' && on) changed(); }));
 
             // exit: drop and close at once (best effort; a crash closes the socket and the service drops the layers)
-            process.on('exit', () => { try { output.disarm('exit'); } catch (e) { /* exiting */ } });
+            process.on('exit', () => {
+                try { if (ladder) ladder.stop('exit', true); } catch (e) { /* exiting */ }
+                try { output.disarm('exit'); } catch (e) { /* exiting */ }
+            });
             if (process.env.MTRACK_EMU_FEED) require('./emufeed').start(process.env.MTRACK_EMU_FEED, hooks, log, guard);
 
             Promise.all(watched).then(guard('polls start', () => {

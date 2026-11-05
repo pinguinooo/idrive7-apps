@@ -46,7 +46,7 @@ function control(cv, t, r, xr, cy, act) {
     if (r.kind === 'pills') {
         const ws = pillWidths(cv, r.controls.map((c) => c.text)), gap = 10;
         let x = xr - ws.reduce((a, b) => a + b + gap, -gap);
-        r.controls.forEach((c, i) => { G.button(cv, t, x, y, ws[i], CTL_H, c.text, act(c.writes), { key: c.key, primary: c.on, busy: !r.enabled }); x += ws[i] + gap; });
+        r.controls.forEach((c, i) => { G.button(cv, t, x, y, ws[i], CTL_H, c.text, act(c.writes, c.action), { key: c.key, primary: c.on, busy: !r.enabled }); x += ws[i] + gap; });
         return;
     }
     stepper(cv, t, r.controls, r.value, xr - STEP_W, y, r.enabled, act, r.greyed);
@@ -97,15 +97,25 @@ function aboutPage(cv, t, v) {
     col(v.blocks, X0, 820);
     col(v.right, X0 + 840, W - 840);
 }
-/** Safety: the setting rows, then two blocks (the signals now; the always-on guards) with a line each, coloured by tone. */
+/** s cut to maxW at size with an ellipsis: a long renderer reply never leaves its block. */
+function fit(cv, s, size, maxW) {
+    let x = String(s);
+    if (cv.textWidth(x, size) <= maxW) return x;
+    while (x.length > 4 && cv.textWidth(x + '...', size) > maxW) x = x.slice(0, -1);
+    return x + '...';
+}
+/**
+ * Safety: the setting rows and the test pattern row, then two blocks (the signals now with what cluster-render says;
+ * the always-on guards, or the test step's result) of up to 5 lines, coloured by tone.
+ */
 function safetyPage(cv, t, v, act) {
     rowsPage(cv, t, v, act);
     const y = ROW_Y + v.rows.length * PITCH, h = 514 - y, bw = (W - 20) / 2;
     v.blocks.forEach((b, i) => {
         const x = X0 + i * (bw + 20);
         cv.roundRect(x, y, bw, h, 14, withAlpha('#ffffff', 0.05));
-        txt(cv, b.title, x + 24, y + 30, 22, t.text, { font: 'bold' });
-        b.lines.forEach((l, k) => txt(cv, l.text, x + 24, y + 56 + k * 22, 18, toneOf(t, l.tone)));
+        txt(cv, b.title, x + 24, y + 26, 20, t.text, { font: 'bold' });
+        b.lines.forEach((l, k) => txt(cv, fit(cv, l.text, 17, bw - 36), x + 24, y + 48 + k * 20, 17, toneOf(t, l.tone)));
     });
 }
 

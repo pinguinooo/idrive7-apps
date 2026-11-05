@@ -57,7 +57,8 @@ module.exports = [
             [{ link: 'connecting' }, 'renderer'], [{ link: 'none' }, 'renderer'], [{ cc: 'missing', popupGuard: 'require' }, 'nocc'],
             [{ cc: 'waiting' }, 'ccwait'], [{ ccActive: true }, 'cc'],
             [{ ccNewAt: NOW - 999 }, 'cc'], [{ target: 'waiting', holder: 'stock' }, 'held'], [{ target: 'parked', holder: 'stock' }, 'held'],
-            [{ target: 'waiting', holder: 'foreign' }, 'hud'], [{ speedAt: NOW - 1001 }, 'nospeed'], [{ speedAt: null }, 'nospeed'],
+            [{ target: 'waiting', holder: 'foreign' }, 'busy'], [{ busy: 'the HUD is shown' }, 'busy'], [{ busy: 'x', ccActive: true }, 'busy'],
+            [{ heldUntil: NOW + 5000 }, 'held'], [{ speedAt: NOW - 1001 }, 'nospeed'], [{ speedAt: null }, 'nospeed'],
             [{ speedAt: NOW + 50 }, 'nospeed'], [{ lastErrorAt: NOW - 999 }, 'error'], [{ mode: 'comfort' }, 'mode'],
             [{ mode: null, modeMissingDrop: true }, 'nomode'],
         ];
@@ -110,7 +111,8 @@ module.exports = [
     ['every always-on guard blocks under every Safety value a settings file can hold (valid or garbage)', () => {
         const LOCKED = [
             [{ killed: true }, 'kill'], [{ tripped: true }, 'tripped'], [{ demo: true }, 'demo'], [{ art: false }, 'noart'], [{ link: 'none' }, 'renderer'],
-            [{ target: 'waiting', holder: 'stock' }, 'held'], [{ target: 'parked', holder: 'foreign' }, 'hud'], [{ speedAt: NOW - 3001 }, 'nospeed'],
+            [{ target: 'waiting', holder: 'stock' }, 'held'], [{ target: 'parked', holder: 'foreign' }, 'busy'], [{ busy: 'the HUD is waiting' }, 'busy'],
+            [{ heldUntil: NOW + 1 }, 'held'], [{ speedAt: NOW - 3001 }, 'nospeed'],
             [{ speedAt: null }, 'nospeed'], [{ speedAt: NOW + 5 }, 'nospeed'], [{ lastErrorAt: NOW - 10 }, 'error'],
         ];
         let n = 0;
@@ -236,5 +238,16 @@ module.exports = [
         assert.strictEqual(L.levelOf(cfg, { bright: 40, nightDim: false }), 0.4);
         assert.strictEqual(L.levelOf(cfg, { bright: 100, nightDim: true }), cfg.nightDim);
         assert.strictEqual(L.levelOf(cfg, { bright: 'x' }), 1);
+    }],
+    ['after BMW took the panel the cover waits heldBackoffMs; a heldUntil past, or further away than the backoff (a clock jump), does not hold it', () => {
+        const B = cfg.renderer.heldBackoffMs;
+        assert.strictEqual(reasonOf(Object.assign(OK(), { heldUntil: NOW + B })), 'held');
+        assert.strictEqual(reasonOf(Object.assign(OK(), { heldUntil: NOW + 1 })), 'held');
+        assert.strictEqual(reasonOf(Object.assign(OK(), { heldUntil: NOW })), '');
+        assert.strictEqual(reasonOf(Object.assign(OK(), { heldUntil: NOW - 1 })), '');
+        assert.strictEqual(reasonOf(Object.assign(OK(), { heldUntil: NOW + B + 1 })), '', 'a wall clock that jumped back never holds it longer than the backoff');
+        assert.strictEqual(reasonOf(Object.assign(OK(), { heldUntil: null })), '');
+        assert.strictEqual(reasonOf(Object.assign(OK(), { busy: '' })), '', 'no other app: shows');
+        assert.strictEqual(reasonOf(Object.assign(OK(), { busy: 'the HUD is shown', heldUntil: NOW + 5 })), 'busy', 'another app outranks the backoff');
     }],
 ];

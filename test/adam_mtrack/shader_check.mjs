@@ -17,7 +17,7 @@ const failures = [];
 const check = (ok, what) => { console.log((ok ? 'ok   ' : 'FAIL ') + what); if (!ok) failures.push(what); };
 
 const R = G.RECTS, sb = G.slatBar(cfg.row);
-const PROGRAMS = { FS_BASE: S.FS_BASE, FS_TEX: S.FS_TEX, FS_SLATS: S.FS_SLATS, glyphs: S.glyphFs(R.glyphs.w, R.glyphs.h, 1024, 472) };
+const PROGRAMS = { FS_BASE: S.FS_BASE, FS_TEX: S.FS_TEX, FS_SLATS: S.FS_SLATS, FS_SOLID: S.FS_SOLID, glyphs: S.glyphFs(R.glyphs.w, R.glyphs.h, 1024, 472) };
 const browser = await launch();
 try {
     const page = await browser.newPage();

@@ -12,6 +12,7 @@ const os = require('os');
 const path = require('path');
 const Module = require('module');
 const { createFake } = require('./fake_cluster_render');
+const { ClusterRender } = require('../../apps/adam_mtrack/cluster_render_client');
 
 const KIT = path.join(__dirname, '..', '..', 'kit', 'runtime');
 const APP = path.join(__dirname, '..', '..', 'apps', 'adam_mtrack');
@@ -46,13 +47,15 @@ let seq = 0;
 /**
  * main.js on a fresh fake ctx. r.feed(iface, field, value) is a car notification; r.speed(kmh|null) keeps a speed coming.
  * opts: unavailable [ifaces] (the watch settles, the provider never answers), delay { iface: ms } (the watch settles
- * that late; -1 never), raw (settingsOf raw), noArt (the art pack fails to open).
+ * that late; -1 never), raw (settingsOf raw), noArt (the art pack fails to open), lingerMs (the fake's panel linger,
+ * 300 ms here), own (the kit runs the screen: r.page(i) opens a tab, r.screen() is its text, r.press(key) presses a control).
  */
 async function start(saved, opts) {
     const o = opts || {};
     const sock = path.join(os.tmpdir(), 'mt-main-' + process.pid + '-' + (++seq) + '.sock');
     const msgs = [], lines = [], subs = {};
-    const fake = createFake(sock, (m) => msgs.push(m));
+    const fake = createFake(sock, (m) => msgs.push(m), null, { lingerMs: o.lingerMs !== undefined ? o.lingerMs : 300 });
+    let lastCv = null, tabFn = null;
     const settings = settingsOf(saved, o.raw);
     const log = { info: (m) => lines.push(m), warn: (m) => lines.push('WARN ' + m), error: (m) => lines.push('ERR ' + m) };
     const signals = {
@@ -67,9 +70,16 @@ async function start(saved, opts) {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mt-main-data-'));
     const ctx = {
         settings, log, dataDir, spec: SPEC, signals,
-        ui: { isVisible: () => false, onVisible: () => {}, onClick: () => {}, image: () => Promise.resolve(), open: () => Promise.resolve() },
-        loop: () => {}, theme: () => themes.theme('m_tricolour'),
-        canvas: (w, h) => new Recorder(w, h, { textScale: 1 }).reset(),
+        ui: { isVisible: () => !!o.own, onVisible: () => {}, onClick: () => {}, image: (n, cv) => { lastCv = cv; return Promise.resolve(); }, open: () => Promise.resolve() },
+        loop: () => {}, theme: () => themes.theme('m_tricolour'), onTab: (fn) => { tabFn = fn; },
+        canvas: (w, h) => {
+            const r = new Recorder(w, h, { textScale: 1 }).reset();
+            if (!o.own) return r;
+            r.own = true; r.chrome = { tabs: null }; r.drawn = [];
+            const text = r.text.bind(r);
+            r.text = function (str) { r.drawn.push(String(str)); return text.apply(null, arguments); };
+            return r;
+        },
     };
     const realResolve = Module._resolveFilename;
     Module._resolveFilename = function (req, parent) {
@@ -95,13 +105,17 @@ async function start(saved, opts) {
     let kmh = null;
     const timer = setInterval(() => { if (kmh !== null) feed(I.V2, 'statusCarSpeed2', { speedVehicleCentreOfGravity: Math.round(kmh / 0.015625) }); }, 50);
     const r = {
-        settings, lines, msgs, fake, dataDir, feed,
+        settings, lines, msgs, fake, dataDir, feed, sock,
         speed: (x) => { kmh = x; },
         mode: (raw) => feed(I.FES, 'statusFESVehicleDynamicSwitchHMI', { actualValueModeDrivingExperience: raw }),
         rpm: (x) => feed(I.CDS, 'statusEngineSpeed2', { actualValueRPMEngineCrankshaft: x * 4 }),
         layerOps: () => msgs.filter((m) => m.op === 'layer'),
         live: () => msgs.filter((m) => m.op === 'layer' && !msgs.some((d) => d.op === 'drop' && d.ref === m.ref && d.conn === m.conn)),
         drops: () => msgs.filter((m) => m.op === 'drop'),
+        app: (conn) => { const h = msgs.filter((m) => m.conn === conn && m.op === 'hello')[0]; return h ? h.app : ''; },
+        page: async (i) => { tabFn(i); await wait(30); },
+        screen: () => (lastCv && lastCv.drawn ? lastCv.drawn.join('\n') : ''),
+        press: (key) => { const t = lastCv && lastCv.targets.filter((x) => x.key === key)[0]; if (!t) throw new Error('no control ' + key); t.run(); },
         done: () => new Promise((res) => { clearInterval(timer); kmh = null; settings.set('coverOn', false); setTimeout(() => fake.close(res), 30); }),
     };
     return r;
@@ -115,6 +129,15 @@ async function shownApp(saved) {
     r.shownAt = r.live()[0].t; r.t0 = t0;
     return r;
 }
+/** Another app's client (Shift Lights) with one effect layer on target. */
+function otherApp(r, target) {
+    const c = new ClusterRender('adam_shiftlights', r.sock);
+    c.on('ready', () => c.effect({ target, klass: 'overlay', x: 700, y: 200, w: 520, h: 80, fs: 'void main() {}' }));
+    c.connect();
+    return c;
+}
+/** The cover's own live layers (not another app's, not a test step's). */
+const mine = (r) => r.live().filter((m) => r.app(m.conn) === 'adam_mtrack');
 /** Every live layer is dropped within ms of cause() (fake-service timestamps). */
 async function dropsWithin(r, cause, ms, what) {
     const refs = r.live().map((m) => m.ref);
@@ -371,6 +394,126 @@ module.exports = [
         const r = await shownApp({});
         process.emit('exit', 0);
         await until(() => r.msgs.some((m) => m.ev === 'close'), 1000, 'close on exit');
+        await r.done();
+    }],
+    ['another app on the shared scene (Shift Lights\' HUD): no cover layer, Home and Safety say so and name it; the cover shows once the HUD lets go', async () => {
+        const r = await start({ coverOn: true }, { own: true });
+        const other = otherApp(r, 'hud');
+        await until(() => r.fake.state('hud').state === 'shown', 2000, 'the HUD shown');
+        r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
+        await wait(1600);
+        assert.strictEqual(mine(r).length, 0, 'a cover layer while the HUD holds the scene');
+        assert.ok(r.lines.some((l) => /^why off: Another app is using the cluster: turn off Shift Lights cluster\/HUD$/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => l === 'WARN cover: another app is using the cluster (the HUD is shown): the cover waits'), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^cluster-render status \(another app: the HUD is shown\): .*adam_shiftlights effect on hud shown/.test(l)), r.lines.join('\n'));
+        await r.page(0);
+        assert.ok(/Why the cover is off right now: Another app is using the cluster: turn off Shift Lights cluster\/HUD/.test(r.screen()), r.screen());
+        await r.page(3);
+        assert.ok(/Cluster renderer: another app is using the cluster \(adam_shiftlights on hud\)/.test(r.screen()), r.screen());
+        other.close();
+        await until(() => mine(r).length >= 8, 4000, 'the cover once the HUD let go');
+        await r.done();
+    }],
+    ['another app\'s layer on the panel (Shift Lights\' cluster slats): the cover refuses too, and shows once it goes', async () => {
+        const r = await start({ coverOn: true });
+        const other = otherApp(r, 'panel');
+        await until(() => r.fake.state('panel').state === 'shown', 2000, 'their panel');
+        r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
+        await wait(1600);
+        assert.strictEqual(mine(r).length, 0);
+        assert.ok(r.lines.some((l) => l === 'WARN cover: another app is using the cluster (the panel is shown for another app): the cover waits'), r.lines.join('\n'));
+        other.close();
+        await until(() => mine(r).length >= 8, 4000, 'shown after they left');
+        await r.done();
+    }],
+    ['Cover off: dropped and closed at once, then a watcher that only says hello and asks the status confirms the panel idle', async () => {
+        const r = await shownApp({});
+        await dropsWithin(r, () => r.settings.set('coverOn', false), 60, 'cover off');
+        await until(() => r.lines.some((l) => /^release confirmed \(cover off\): panel idle .* s after, the renderer status lists none of our layers$/.test(l)), 3000, 'the release confirmed');
+        const watch = r.msgs.filter((m) => m.op === 'hello' && m.app === 'adam_mtrack-watch').map((m) => m.conn);
+        assert.strictEqual(watch.length, 1);
+        assert.ok(r.msgs.filter((m) => m.conn === watch[0] && m.op).every((m) => m.op === 'hello' || m.op === 'status'), 'the watcher makes nothing');
+        await r.done();
+    }],
+    ['a guard drop (Sport+ to Sport) keeps the connection; the panel going idle is confirmed on it with the status', async () => {
+        const r = await shownApp({});
+        const conn = mine(r)[0].conn;
+        await dropsWithin(r, () => r.mode('SPORT_DYNAMIC'), 150, 'Sport');
+        const t = Date.now();
+        await until(() => r.lines.some((l) => /^release confirmed \(mode\): panel idle/.test(l)), 3000, 'confirmed');
+        assert.ok(r.msgs.some((m) => m.conn === conn && m.op === 'status' && m.t >= t - 500), 'asked on the cover connection');
+        assert.ok(!r.msgs.some((m) => m.conn === conn && m.ev === 'close'), 'the connection stays');
+        await r.done();
+    }],
+    ['Cover off while another app keeps the panel: "release NOT confirmed" names it (our layers gone)', async () => {
+        const r = await shownApp({});
+        const other = otherApp(r, 'panel');
+        await wait(300);
+        r.settings.set('coverOn', false);
+        await until(() => r.lines.some((l) => /^WARN release NOT confirmed \(cover off\): our layers gone, panel shown, adam_shiftlights on panel after 6\.\d s$/.test(l)), 9000, 'NOT confirmed');
+        other.close();
+        await r.done();
+    }],
+    ['a renderer error event: the cover drops (an error) and the error reaches the Safety page and the diag log', async () => {
+        const r = await start({ coverOn: true }, { own: true });
+        r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
+        await until(() => mine(r).length >= 8, 4000, 'the cover');
+        const base = mine(r)[0];
+        await dropsWithin(r, () => r.fake.error('layer', base.ref, 'fs: refused by the test'), 150, 'an error event');
+        assert.ok(r.lines.some((l) => /^ERR error in cluster-render: Error: cluster-render refused layer \d+: fs: refused by the test/.test(l)), r.lines.join('\n'));
+        await r.page(3);
+        assert.ok(/Cluster renderer: .*error: fs: refused by the test/.test(r.screen()), r.screen());
+        const d = fs.readFileSync(path.join(r.dataDir, 'mtrack-diag.log'), 'utf8');
+        assert.ok(/< \{"ev":"error","op":"layer","ref":\d+,"reason":"fs: refused by the test"\}/.test(d), d.slice(-2000));
+        await r.done();
+    }],
+    ['BMW holds the panel: dropped, and asked for again only after the 10 s backoff (no map / unmap churn on slot 0x203)', async () => {
+        const r = await shownApp({});
+        await dropsWithin(r, () => r.fake.target('panel', 'waiting', 'stock'), 150, 'BMW holds the panel');
+        const t = Date.now();
+        r.fake.target('panel', 'shown');
+        await wait(2500);
+        assert.strictEqual(r.live().length, 0, 'back within 2.5 s');
+        assert.ok(r.lines.some((l) => /^cover: BMW took the panel \(.+\): asking again in 10 s$/.test(l)), r.lines.join('\n'));
+        await until(() => r.live().length >= 8, 12000, 'back after the backoff');
+        assert.ok(Date.now() - t >= 9500, 'back after ' + (Date.now() - t) + ' ms');
+        await r.done();
+    }],
+    ['the diag log: what was sent (hello, asset bytes, layers with shader lengths, binds, drops) and what came back (targets, layers, the status)', async () => {
+        const r = await shownApp({});
+        r.mode(1);
+        await until(() => r.live().length === 0, 1000, 'drop');
+        await until(() => r.lines.some((l) => /^release confirmed \(mode\)/.test(l)), 3000, 'release');
+        const d = fs.readFileSync(path.join(r.dataDir, 'mtrack-diag.log'), 'utf8');
+        [/start: M Track 0\.1\.2, node v/, /> \{"op":"hello","app":"adam_mtrack","proto":1\}/, /> pixels lum \(asset \d+, r8 1920x720\): 1382400 B/,
+            /> \{"op":"layer","ref":\d+,"target":"panel","kind":"effect","class":"overlay","z":900,.*"exclusive":1,"fs":"\d+ chars"\}/, /> \{"op":"bind",/,
+            /< \{"ev":"hello"/, /< \{"ev":"target","target":"panel","state":"shown"/, /< \{"ev":"layer","ref":\d+,"state":"shown"/,
+            /< status: upload: cap .* \| target panel: /, /> \{"op":"drop","ref":\d+\}/, /release confirmed \(mode\): panel idle/].forEach((re) => assert.ok(re.test(d), re + '\n' + d.slice(0, 2500)));
+        assert.ok(!/"op":"uniform"/.test(d) && !/"name":"u_alive"/.test(d), 'uniforms and alive restarts are counted, not logged one by one');
+        await r.done();
+    }],
+    ['test pattern from the Safety page pill: refused while the cover is on (says so); step 1 with the cover off and parked: two bars on adam_mtrack-test, removed after 10 s, release confirmed', async () => {
+        const r = await start({ coverOn: true }, { own: true });
+        r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
+        await r.page(3);
+        r.press('safety:test:1');
+        await wait(100);
+        assert.ok(r.lines.indexOf('test: step 1 BAR refused: turn Cover the cluster off first') >= 0, r.lines.join('\n'));
+        r.settings.set('coverOn', false);
+        await r.page(3);
+        assert.ok(/Step 1 BAR refused: turn Cover the cluster off first/.test(r.screen()), r.screen());
+        r.press('safety:test:1');
+        const t0 = Date.now();
+        await until(() => r.msgs.some((m) => m.op === 'layer' && r.app(m.conn) === 'adam_mtrack-test'), 3000, 'the test layers');
+        const layers = r.msgs.filter((m) => m.op === 'layer' && r.app(m.conn) === 'adam_mtrack-test'), conn = layers[0].conn;
+        assert.strictEqual(layers.length, 2);
+        await r.page(3);
+        assert.ok(/Step 1 BAR showing: \d+ s left\. Watch the cluster/.test(r.screen()) && /Test pattern: what cluster-render said/.test(r.screen()), r.screen());
+        await until(() => r.msgs.some((m) => m.ev === 'close' && m.conn === conn), 12000, 'removed after 10 s');
+        assert.ok(Date.now() - t0 >= 9800, 'removed after ' + (Date.now() - t0) + ' ms');
+        await until(() => r.lines.some((l) => /^release confirmed \(test step 1\): panel idle/.test(l)), 3000, 'released');
+        await r.page(3);
+        assert.ok(/Step 1 BAR done: released/.test(r.screen()) && /Released: panel idle/.test(r.screen()), r.screen());
         await r.done();
     }],
     ['rpm moves the fill line (u_fill) and the slats light near the shift point', async () => {

@@ -5,6 +5,7 @@
 # sweep, stops everything on any exit. EMU_DIR: an upstream idrive7-apps clone with apps/adam_mtrack linked in (it
 # builds the app with its own kit). OUT: screenshots, the pull clip, raw logs (never this repo). Nothing talks to a car.
 #   EMU_DIR=~/work/mtrack/idrive7-apps OUT=~/work/mtrack/out bash test/adam_mtrack/emu-run.sh
+#   SCRIPT=emu_ladder.mjs ...: the Safety page's test pattern instead of the sweep
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -40,4 +41,4 @@ for _ in $(seq 1 150); do
   sleep 0.2
 done
 curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" || { echo "emulator did not start:" >&2; cat "$OUT/raw/emu.log" >&2; exit 1; }
-PORT=$PORT CR_LOG=$CR_LOG FEED=$FEED CTL=$SOCK.ctl DATA_DIR=$DATA_DIR OUT=$OUT "$NODE" test/adam_mtrack/emu_sweep.mjs
+PORT=$PORT CR_LOG=$CR_LOG FEED=$FEED CTL=$SOCK.ctl DATA_DIR=$DATA_DIR OUT=$OUT "$NODE" "test/adam_mtrack/${SCRIPT:-emu_sweep.mjs}"

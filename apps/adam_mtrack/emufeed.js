@@ -10,6 +10,8 @@
  *         calls the handlers main.js watched that interface with, as a car notification would
  *     { "block": "speed", "on": true | false }
  *         swallows (or lets through again) every speed notification and poll result: the speed goes stale
+ *     { "action": "test:1" }   ("test:1" to "test:5", "test:stop")
+ *         presses a Safety-page test pattern control, as main.js's act does
  *
  * Every callback goes through guard; a bad line is logged and skipped. Reconnects every second when the socket goes.
  */
@@ -21,6 +23,7 @@ function start(sockPath, hooks, log, guard) {
         if (!line.trim()) return;
         const m = JSON.parse(line);
         if (m.block === 'speed') { hooks.blockSpeed = m.on === true; log.info('emu feed: speed ' + (hooks.blockSpeed ? 'blocked' : 'flowing')); return; }
+        if (typeof m.action === 'string') { log.info('emu feed: action ' + m.action); if (hooks.action) hooks.action(m.action); return; }
         const hs = hooks.handlers[m.iface] || [];
         let n = 0;
         hs.forEach((h) => { if (typeof h[m.field] === 'function') { h[m.field](m.value); n++; } });

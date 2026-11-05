@@ -174,6 +174,15 @@ const FS_SLATS = [
     '}',
     'void main() { vec4 c = shade(); gl_FragColor = vec4(c.rgb, c.a * u_alive); }',].join('\n');
 
+/** Test pattern (ladder.js steps 1 and 2): one colour; u_alive 1, or the dead-man animation for step 1's blue bar. */
+const FS_SOLID = [
+    'precision mediump float;',
+    'varying vec2 v_uv;',
+    'uniform vec4 u_color;',
+    'uniform float u_alive;',
+    'void main() { gl_FragColor = vec4(u_color.rgb, u_color.a * u_alive); }',
+].join('\n');
+
 const rgb = (hex) => [1, 3, 5].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) / 255 * 10000) / 10000);
 const r2 = (v) => Math.round(v * 100) / 100;
 const unlitAlpha = (st) => (st.idle ? -st.dim : st.dim);
@@ -193,4 +202,4 @@ function slatUniforms(g, colors, level) {
     ];
 }
 
-module.exports = { FS_BASE, FS_TEX, FS_SLATS, glyphFs, slatUniforms, rgb, unlitAlpha, QUADS };
+module.exports = { FS_BASE, FS_TEX, FS_SLATS, FS_SOLID, glyphFs, slatUniforms, rgb, unlitAlpha, QUADS };

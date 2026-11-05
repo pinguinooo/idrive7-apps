@@ -12,6 +12,7 @@
  */
 const L = require('./logic');
 const C = require('./catalogue');
+const { STEPS } = require('./ladder');
 
 const PAGES = ['Home', 'Panels', 'Look', 'Safety', 'About'];
 const IDS = ['home', 'panels', 'look', 'safety', 'about'];
@@ -91,12 +92,19 @@ function modeWord(s, m) {
     return IFACE_WORD[s.fes] || 'missing';
 }
 const ccWord = (s) => (s.cc === 'present' ? 'present, ' + (s.ccUp > 0 ? s.ccUp + ' up' : 'none up') : IFACE_WORD[s.cc] || 'unknown');
+const IFACE_SHORT = { present: 'present', waiting: 'waiting', missing: 'missing', unoffered: 'not offered' };
+const clip = (x, n) => (x.length > n ? x.slice(0, n - 3) + '...' : x);
+/** Another app holds the cluster scene: which one, from the renderer's status when it named one. */
+const busyWord = (s) => 'another app is using the cluster (' + (s.others && s.others.length ? s.others.join(', ') : s.busy) + ')';
+/** What cluster-render says: the panel (state, holder, rendering), the HUD, the last error event. */
 function rendererWord(s, v) {
     if (s.art === false) return 'not connected: the art file is missing';
     if (s.link === 'connecting') return 'connecting';
     if (s.link !== 'ready') return v.coverOn === true ? 'not connected' : 'off (connects when the cover is on)';
-    if (s.target === 'waiting' || s.target === 'parked') return s.holder === 'foreign' ? 'connected, Shift Lights\' HUD holds the scene' : 'connected, BMW holds the panel';
-    return 'connected, panel free';
+    if (s.busy) return clip(busyWord(s), 64);
+    if (s.target === 'waiting' || s.target === 'parked') return 'BMW holds the panel' + (s.reason ? ' (' + clip(s.reason, 36) + ')' : s.holder && s.holder !== 'none' ? ' (' + s.holder + ')' : '');
+    const panel = s.target && s.target !== 'idle' ? 'panel ' + s.target + (s.rendering && s.rendering !== 'none' ? ' (' + s.rendering + ')' : '') : 'panel free';
+    return 'connected, ' + panel + (s.hud && s.hud !== 'idle' ? ', HUD ' + s.hud : '') + (s.lastError ? '; error: ' + clip(String(s.lastError.reason), 28) : '');
 }
 /** One line of the signals the guards read (Home, and the log once the car's watches settle). */
 function sigSummary(m) {
@@ -121,8 +129,8 @@ function whyOf(m) {
         nocc: 'BMW popups (Require): the popup signal is ' + (s.cc === 'waiting' ? 'not answered yet' : IFACE_WORD[s.cc] || 'missing'),
         ccwait: 'BMW popups: waiting for the popup signal (up to ' + secs(S.signalWaitMs) + ' after start)',
         cc: 'BMW popups: ' + (s.ccUp > 0 ? 'a Check Control message is up' : 'a new Check Control message') + ' (popup signal present)',
-        held: 'BMW panel: BMW holds the cluster panel (a popup or the speech dialog)',
-        hud: 'BMW panel: Shift Lights\' HUD holds the cluster scene. Turn the HUD off',
+        busy: 'Another app is using the cluster: turn off Shift Lights cluster/HUD',
+        held: 'BMW panel: BMW holds the cluster panel (a popup or the speech dialog), asks again in ' + secs(m.cfg.renderer.heldBackoffMs),
         nospeed: 'Speed timeout: speed signal ' + speedWord(s, v, m.cfg),
         error: 'Error guard: an error a moment ago, back after ' + secs(S.showHoldMs),
         nomode: 'Drop if no drive mode (on): the drive-mode signal is ' + modeWord(s, m),
@@ -182,9 +190,20 @@ function look(m) {
     };
 }
 
+/** The test pattern row (ladder.js): a pill per step and STOP; its line says what runs, or what the last step got. */
+function testRow(m) {
+    const t = sigOf(m).test, secsStep = secs(m.cfg.test.stepMs);
+    const controls = Object.keys(STEPS).map((n) => ({ key: 'safety:test:' + n, text: n + ' ' + STEPS[n].name, on: !!(t && t.running && t.n === Number(n)), writes: [], action: 'test:' + n }))
+        .concat([{ key: 'safety:test:stop', text: 'STOP', on: false, writes: [], action: 'test:stop' }]);
+    const warn = t && (t.state === 'refused' || t.released === false);
+    return row('test', 'pills', 'Test pattern (parked)', t ? t.line : 'Parked, cover off: each step shows ' + secsStep + ', then removes itself', controls,
+        { value: t && t.running ? 'Step ' + t.n : 'Off', tone: warn ? 'warn' : t && t.running ? 'on' : undefined });
+}
+
 /**
- * Safety: the three Safety settings (BMW popups, drop if no drive mode, the speed timeout), why the cover is off, every
- * signal the guards read and every always-on guard with its state and why it has no switch.
+ * Safety: the three Safety settings (BMW popups, drop if no drive mode, the speed timeout) and the test pattern, why
+ * the cover is off, every signal the guards read with what cluster-render says, and every always-on guard with its
+ * state and why it has no switch; while a test step runs or after one, the right block is that step's result.
  */
 function safety(m) {
     const v = settingsOf(m), bad = L.readSettings(m.get, m.schema).bad, s = sigOf(m), cfg = m.cfg, S = cfg.safety, r = m.reason || 'off';
@@ -192,6 +211,16 @@ function safety(m) {
     const isBad = (k) => bad.indexOf(k) >= 0;
     const tone = (ids, t) => (ids.indexOf(r) >= 0 ? t || 'warn' : 'dim');
     const errors = s.tripped ? 'STOPPED' : s.errorRecent ? 'one just now' : 'none';
+    const rel = s.release && !s.release.pending && s.release.short ? s.release : null;
+    const guards = { title: 'Always on (no switch), and why', lines: [
+        { text: 'Speed timeout: on, ' + secs(stale) + '. A frozen speed over the real one is dangerous', tone: tone(['nospeed']) },
+        { text: 'Kill switch (' + S.killFile + ' file): ' + (s.killed ? 'FOUND, cover off' : 'clear') + '. Works with no screen', tone: tone(['kill'], 'crit') },
+        { text: 'Errors: ' + errors + '. ' + S.errorLimit + ' in ' + secs(S.errorWindowMs) + ' stop the cover until off and on', tone: tone(['error', 'tripped'], s.tripped ? 'crit' : 'warn') },
+        { text: 'Heartbeat: ' + (s.shown ? 'running' : 'idle') + ', blanks 1.2 s after a hang. Exit or crash: dropped', tone: 'dim' },
+        rel ? { text: 'Last release (' + rel.why + '): ' + rel.short.replace(/^Released: /, ''), tone: rel.ok || rel.unreachable ? 'dim' : 'warn' }
+            : { text: 'Clock jump: guarded. Demo data, BMW taking the panel, art check: always win', tone: 'dim' },
+    ] };
+    const test = s.test ? { title: 'Test pattern: what cluster-render said', lines: s.test.lines.map((x, i) => ({ text: x, tone: i === 0 && s.test.running ? 'on' : i === 4 && s.test.released === false ? 'warn' : 'dim' })) } : null;
     return {
         id: 'safety',
         note: w.text, noteTone: w.tone,
@@ -209,26 +238,17 @@ function safety(m) {
                         : 'Always on: no fresh speed for this long drops the cover. A frozen speed is dangerous',
                 stepper(m, 'safety', 'speedStaleMs', v.speedStaleMs, itemOf(m, 'speedStaleMs').steps || []),
                 { value: secs(v.speedStaleMs), tone: isBad('speedStaleMs') || risky ? 'warn' : undefined }),
+            testRow(m),
         ],
         blocks: [
             { title: 'Signals now', lines: [
                 { text: 'Speed (Vehicle2): ' + speedWord(s, v, cfg), tone: tone(['nospeed']) },
                 { text: 'Drive mode (FES): ' + modeWord(s, m), tone: tone(['mode', 'nomode']) },
-                { text: 'Popup list (CheckControlMaster): ' + ccWord(s), tone: tone(['nocc', 'ccwait', 'cc']) },
-                { text: 'New-popup event (KombiInterface_2): ' + (IFACE_WORD[s.ki2] || 'unknown'), tone: 'dim' },
-                { text: 'Engine rpm (CDS): ' + (IFACE_WORD[s.rpm] || 'unknown'), tone: 'dim' },
-                { text: 'Car data: ' + (s.demo ? 'demo, not live' : 'live'), tone: tone(['demo']) },
-                { text: 'Cluster renderer: ' + rendererWord(s, v), tone: tone(['renderer', 'held', 'hud', 'noart']) },
+                { text: 'Popup list (CheckControlMaster): ' + ccWord(s) + '; new-popup event: ' + (IFACE_SHORT[s.ki2] || 'unknown'), tone: tone(['nocc', 'ccwait', 'cc']) },
+                { text: 'Engine rpm (CDS): ' + (IFACE_SHORT[s.rpm] || 'unknown') + '; car data: ' + (s.demo ? 'demo, not live' : 'live'), tone: tone(['demo']) },
+                { text: 'Cluster renderer: ' + rendererWord(s, v), tone: tone(['renderer', 'held', 'busy', 'noart']) },
             ] },
-            { title: 'Always on (no switch), and why', lines: [
-                { text: 'Speed timeout: on, ' + secs(stale) + '. A frozen speed over the real one is dangerous', tone: tone(['nospeed']) },
-                { text: 'Kill switch (' + S.killFile + ' file): ' + (s.killed ? 'FOUND, cover off' : 'clear') + '. Works with no screen', tone: tone(['kill'], 'crit') },
-                { text: 'Errors: ' + errors + '. ' + S.errorLimit + ' in ' + secs(S.errorWindowMs) + ' stop the cover until off and on', tone: tone(['error', 'tripped'], s.tripped ? 'crit' : 'warn') },
-                { text: 'Heartbeat: ' + (s.shown ? 'running' : 'idle') + '. A hung app\'s cover blanks within 1.2 s', tone: 'dim' },
-                { text: 'Exit or crash: ready. The renderer drops the cover at once', tone: 'dim' },
-                { text: 'Clock jump: guarded. A jump never revives an old speed', tone: 'dim' },
-                { text: 'Demo data, BMW taking the panel and the art check always win', tone: 'dim' },
-            ] },
+            test || guards,
         ],
     };
 }
@@ -246,13 +266,14 @@ function about(m) {
                 'The renderer clock for the dead-man switch; the speed getter',
                 'Drive mode values, boost scale, range unit, clock time zone',
                 'Which signals the car sends (the Safety tab lists them)',
+                'Safety > Test pattern, parked: which step shows on the car',
             ] },
             { title: 'Not in ' + (m.version || 'this version'), lines: [hidden.slice(0, 4).join(', '), hidden.slice(4).join(', ')] },
         ],
         right: [
             { title: 'Remove safely', lines: ['Store > M Track Cluster > Remove.', 'Never kill or restart it by hand: three crashes', 'in about 30 s wipe every app.'] },
             { title: 'Kill switch', lines: ['Home > Cover the cluster off, or a file named', m.cfg.safety.killFile + ' in the app\'s data folder (Safety tab).'] },
-            { title: 'With Shift Lights', lines: ['The cover hides Shift Lights\' cluster slats while it', 'shows and draws its own. Turn Shift Lights\' HUD off:', 'the HUD and the cluster panel share one scene.'] },
+            { title: 'With Shift Lights', lines: ['Turn Shift Lights\' HUD and cluster off for the cover:', 'the HUD and the cluster panel share one scene, and', 'the cover waits while another app holds it.'] },
         ],
     };
 }

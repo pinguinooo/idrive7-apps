@@ -55,9 +55,19 @@ const STATES = [{}, { coverOn: true }, { leftPanel: 'coolant', leftLower: 'boost
 const REASONS = Object.keys(require('../../apps/adam_mtrack/logic').REASONS);
 /** main.js sigNow on a healthy car, and one where every signal reads its longest words. */
 const SIG_OK = { speed: 'present', mode: 'sportplus', modeRaw: '2', fes: 'present', cc: 'present', ccUp: 0, ki2: 'present', rpm: 'present', link: 'ready',
-    target: 'shown', holder: '', shown: true, art: true, killed: false, tripped: false, errorRecent: false, demo: false };
+    target: 'shown', holder: '', rendering: 'verified', shown: true, art: true, killed: false, tripped: false, errorRecent: false, demo: false };
 const SIG_LONG = { speed: 'missing', mode: null, modeRaw: 'SPORT_INDIVIDUAL_XY', fes: 'unoffered', cc: 'unoffered', ccUp: 0, ki2: 'unoffered', rpm: 'unoffered',
-    link: 'ready', target: 'waiting', holder: 'foreign', shown: false, art: true, killed: true, tripped: true, errorRecent: true, demo: true };
+    link: 'ready', target: 'waiting', holder: 'foreign', reason: 'parked behind foreign content in slot 0x203 for a long time', shown: false, art: true, killed: true,
+    tripped: true, errorRecent: true, demo: true, busy: 'another app\'s content holds slot 0x203', others: ['adam_shiftlights on hud', 'adam_shiftlights on panel', 'robertn_waze on panel'],
+    lastError: { op: 'layer', ref: 12, reason: 'the fragment shader did not compile: ERROR: 0:12: syntax error near the end' },
+    release: { ok: false, ms: 6012, why: 'cover off', short: 'NOT released: panel shown, adam_shiftlights on hud, adam_shiftlights on panel (6.0 s)' } };
+/** The test pattern (ladder.status()) running, refused, and done with a release NOT confirmed, in its longest words. */
+const TEST_RUN = { n: 5, name: 'COVER', running: true, state: 'showing', line: 'Step 5 COVER showing: 10 s left. Watch the cluster', released: null,
+    lines: ['Step 5 COVER: showing, 10 s left: the whole cover (8 layers, 4.3 MB)', 'Panel: waiting (scene id in use by another target); HUD: shown, verified',
+        'Layers: 4 stalled (asset not written yet), 2 waiting (target waiting), 2 shown; uploaded 4.3 MB', 'Renderer: error layer: the fragment shader did not compile: ERROR: 0:12: syntax error; cap 5500 KB/s; HUD scene was published',
+        'Release: checked after the step'] };
+const TEST_REFUSED = { n: 3, name: 'IMAGE', running: false, state: 'refused', line: 'Step 3 IMAGE refused: another app is using the cluster', released: null, lines: TEST_RUN.lines };
+const TEST_BAD = { n: 1, name: 'BAR', running: false, state: 'done', line: 'Step 1 BAR done: release NOT confirmed', released: false, lines: TEST_RUN.lines };
 /** Every text drawn on page i with its left and right edge (the Recorder's own text widths). */
 function texts(i, m) {
     const ui = createUi(); ui.tab(i);
@@ -108,18 +118,42 @@ module.exports = [
         assert.deepStrictEqual(P.PAGES, ['Home', 'Panels', 'Look', 'Safety', 'About']);
         const v = P.view(3, model({}, { sig: SIG_OK }));
         assert.strictEqual(v.id, 'safety');
-        assert.deepStrictEqual(v.rows.map((r) => r.id), ['popupGuard', 'modeMissingDrop', 'speedStaleMs']);
-        assert.deepStrictEqual(P.controlsOf(v).map((c) => c.key.split(':')[1]).filter((k, i, a) => a.indexOf(k) === i), ['popupGuard', 'modeMissingDrop', 'speedStaleMs']);
+        assert.deepStrictEqual(v.rows.map((r) => r.id), ['popupGuard', 'modeMissingDrop', 'speedStaleMs', 'test']);
+        assert.deepStrictEqual(P.controlsOf(v).map((c) => c.key.split(':')[1]).filter((k, i, a) => a.indexOf(k) === i), ['popupGuard', 'modeMissingDrop', 'speedStaleMs', 'test']);
         assert.deepStrictEqual(v.rows[0].controls.map((c) => [c.text, c.on]), [['Use if sent', true], ['Require', false], ['Ignore', false]], 'default Use if sent');
         assert.deepStrictEqual(v.rows[0].controls.map((c) => c.writes), [[], [['popupGuard', 'require']], [['popupGuard', 'ignore']]]);
         assert.deepStrictEqual([v.rows[1].controls[0].on, v.rows[1].controls[0].writes], [false, [['modeMissingDrop', true]]]);
-        assert.deepStrictEqual(v.rows.map((r) => r.desc.length > 20 && /Protects|Always on/.test(r.desc)), [true, true, true], 'each says what it protects');
+        assert.deepStrictEqual(v.rows.slice(0, 3).map((r) => r.desc.length > 20 && /Protects|Always on/.test(r.desc)), [true, true, true], 'each says what it protects');
         assert.ok(/Off: /.test(v.rows[1].desc), 'and what happens when off');
         const locked = v.blocks[1].lines.map((l) => l.text).join('\n');
         ['Speed timeout: on, 1 s', 'Kill switch (DISABLE file): clear', 'Errors: none', 'Heartbeat: running', 'Exit or crash', 'Clock jump', 'Demo data'].forEach((w) => assert.ok(locked.indexOf(w) >= 0, w));
         assert.ok(/no switch/.test(v.blocks[1].title));
         const lo = P.view(3, model({ speedStaleMs: 500 })).rows[2].controls, hi = P.view(3, model({ speedStaleMs: 3000 })).rows[2].controls;
         assert.deepStrictEqual([lo[0].writes, lo[1].writes, hi[0].writes, hi[1].writes], [[], [['speedStaleMs', 1000]], [['speedStaleMs', 2500]], []], 'the timeout steps only inside 0.5 to 3 s');
+    }],
+    ['Safety: the test pattern row: a pill per step and STOP, each an action that writes no setting; the running step lit; its result replaces the guards block; a press passes the action', () => {
+        const v = P.view(3, model({}, { sig: SIG_OK })), row = v.rows.filter((x) => x.id === 'test')[0];
+        assert.deepStrictEqual(row.controls.map((c) => [c.text, c.action, c.writes.length, c.on]),
+            [['1 BAR', 'test:1', 0, false], ['2 TINT', 'test:2', 0, false], ['3 IMAGE', 'test:3', 0, false], ['4 TACHS', 'test:4', 0, false], ['5 COVER', 'test:5', 0, false], ['STOP', 'test:stop', 0, false]]);
+        assert.strictEqual(row.desc, 'Parked, cover off: each step shows 10 s, then removes itself');
+        assert.strictEqual(v.blocks[1].title, 'Always on (no switch), and why');
+        const run = P.view(3, model({}, { sig: Object.assign({}, SIG_OK, { test: TEST_RUN }) })), r2 = run.rows.filter((x) => x.id === 'test')[0];
+        assert.deepStrictEqual(r2.controls.filter((c) => c.on).map((c) => c.text), ['5 COVER']);
+        assert.deepStrictEqual([r2.desc, r2.value, r2.tone], [TEST_RUN.line, 'Step 5', 'on']);
+        assert.strictEqual(run.blocks[1].title, 'Test pattern: what cluster-render said');
+        assert.deepStrictEqual(run.blocks[1].lines.map((l) => l.text), TEST_RUN.lines);
+        const bad = P.view(3, model({}, { sig: Object.assign({}, SIG_OK, { test: TEST_BAD }) }));
+        assert.deepStrictEqual([bad.rows[3].tone, bad.blocks[1].lines[4].tone], ['warn', 'warn'], 'a release NOT confirmed stands out');
+        assert.strictEqual(P.view(3, model({}, { sig: Object.assign({}, SIG_OK, { test: TEST_REFUSED }) })).rows[3].tone, 'warn');
+        const got = [], ui = createUi();
+        ui.tab(3);
+        const r = new Recorder(1600, 520, { textScale: 1 }).reset();
+        r.own = true; r.chrome = { tabs: null };
+        ui.draw(r, t, model({}, { sig: SIG_OK }), (writes, action) => { got.push([writes.length, action]); return () => {}; });
+        ['test:1', 'test:2', 'test:3', 'test:4', 'test:5', 'test:stop'].forEach((a) => assert.ok(got.some((g) => g[1] === a && g[0] === 0), a));
+        assert.ok(['safety:test:1', 'safety:test:5', 'safety:test:stop'].every((k) => r.targets.some((x) => x.key === k)), 'each pill can be pressed');
+        const rel = P.view(3, model({}, { sig: Object.assign({}, SIG_OK, { release: { ok: true, why: 'cover off', short: 'Released: panel idle 3.1 s after, status lists none of ours' } }) }));
+        assert.deepStrictEqual([rel.blocks[1].lines[4].text, rel.blocks[1].lines[4].tone], ['Last release (cover off): panel idle 3.1 s after, status lists none of ours', 'dim']);
     }],
     ['Safety: risky choices are flagged (Ignore, a timeout over 1 s); a bad saved value shows the strict choice and says so', () => {
         const ig = P.view(3, model({ popupGuard: 'ignore' })).rows[0];
@@ -145,8 +179,8 @@ module.exports = [
             ['ccwait', { cc: 'waiting' }, /BMW popups: waiting for the popup signal \(up to 10 s after start\)/],
             ['cc', { ccUp: 1 }, /BMW popups: a Check Control message is up \(popup signal present\)/],
             ['cc', { ccUp: 0 }, /BMW popups: a new Check Control message \(popup signal present\)/],
-            ['held', { target: 'waiting', holder: 'stock' }, /BMW panel: BMW holds the cluster panel/],
-            ['hud', { target: 'waiting', holder: 'foreign' }, /Shift Lights' HUD holds the cluster scene/],
+            ['held', { target: 'waiting', holder: 'stock' }, /BMW panel: BMW holds the cluster panel \(a popup or the speech dialog\), asks again in 10 s/],
+            ['busy', { busy: 'the HUD is shown', others: ['adam_shiftlights on hud'] }, /^Why the cover is off right now: Another app is using the cluster: turn off Shift Lights cluster\/HUD$/],
             ['nospeed', { speed: 'missing' }, /Speed timeout: speed signal missing \(none received yet\)/],
             ['nospeed', { speed: 'stale' }, /Speed timeout: speed signal stale \(none for 1 s\)/],
             ['error', { errorRecent: true }, /Error guard: an error a moment ago/],
@@ -168,18 +202,26 @@ module.exports = [
     ['Safety signals: every signal the guards read, present and idle told apart from missing, stale shown as stale', () => {
         const lines = (sig) => P.view(3, model({}, { sig, carMode: sig.mode })).blocks[0].lines.map((l) => l.text);
         const a = lines(Object.assign({}, SIG_OK, { speed: 'stale', cc: 'missing', ki2: 'present', mode: null, modeRaw: undefined, fes: 'unoffered' }));
-        ['Speed (Vehicle2): stale (none for 1 s)', 'Popup list (CheckControlMaster): missing (no answer)', 'New-popup event (KombiInterface_2): present',
-            'Drive mode (FES): missing (not offered on this unit)', 'Engine rpm (CDS): present', 'Car data: live', 'Cluster renderer: connected, panel free']
+        ['Speed (Vehicle2): stale (none for 1 s)', 'Popup list (CheckControlMaster): missing (no answer); new-popup event: present',
+            'Drive mode (FES): missing (not offered on this unit)', 'Engine rpm (CDS): present; car data: live', 'Cluster renderer: connected, panel shown (verified)']
             .forEach((x) => assert.ok(a.indexOf(x) >= 0, x + ' in ' + JSON.stringify(a)));
-        assert.ok(lines(Object.assign({}, SIG_OK, { cc: 'present', ccUp: 0 })).indexOf('Popup list (CheckControlMaster): present, none up') >= 0, 'present and idle');
-        assert.ok(lines(Object.assign({}, SIG_OK, { cc: 'present', ccUp: 2 })).indexOf('Popup list (CheckControlMaster): present, 2 up') >= 0);
+        const has = (ls, x) => ls.some((l) => l.indexOf(x) === 0);
+        assert.ok(has(lines(Object.assign({}, SIG_OK, { cc: 'present', ccUp: 0 })), 'Popup list (CheckControlMaster): present, none up;'), 'present and idle');
+        assert.ok(has(lines(Object.assign({}, SIG_OK, { cc: 'present', ccUp: 2 })), 'Popup list (CheckControlMaster): present, 2 up;'));
+        // what cluster-render says: another app on the shared scene (named from its status), BMW holding the panel, an error event
+        assert.ok(has(lines(Object.assign({}, SIG_OK, { busy: 'the HUD is shown', others: ['adam_shiftlights on hud'] })), 'Cluster renderer: another app is using the cluster (adam_shiftlights on hud)'));
+        assert.ok(has(lines(Object.assign({}, SIG_OK, { busy: 'the HUD is waiting', others: [] })), 'Cluster renderer: another app is using the cluster (the HUD is waiting)'));
+        assert.ok(has(lines(Object.assign({}, SIG_OK, { target: 'parked', holder: 'stock', reason: 'parked behind stock' })), 'Cluster renderer: BMW holds the panel (parked behind stock)'));
+        assert.ok(has(lines(Object.assign({}, SIG_OK, { lastError: { op: 'layer', ref: 3, reason: 'fs: compile failed' } })), 'Cluster renderer: connected, panel shown (verified); error: fs: compile failed'));
+        assert.ok(has(lines(Object.assign({}, SIG_OK, { target: 'idle', hud: 'shown' })), 'Cluster renderer: connected, panel free, HUD shown'));
         assert.ok(lines(Object.assign({}, SIG_OK, { speed: 'missing' })).indexOf('Speed (Vehicle2): missing (none received yet)') >= 0);
         const tone = (reason, i) => P.view(3, model({}, { reason, sig: SIG_OK })).blocks[0].lines[i].tone;
         assert.deepStrictEqual([tone('nospeed', 0), tone('mode', 1), tone('ccwait', 2), tone('showing', 2)], ['warn', 'warn', 'warn', 'dim'], 'the blocking signal stands out');
     }],
     ['every page fits: no text off the canvas or out of its Safety block; row texts clear of their controls; Home\'s status texts apart', () => {
         const PILL_OPT = { font: 'bold', spacing: 1.5 };
-        STATES.concat([{ coverOn: true, whenToShow: 'sport', popupGuard: 'require' }]).forEach((st) => ['mode', 'tripped', 'nomode', 'nocc', 'ccwait', 'cc', 'hud', 'renderer'].forEach((reason) => [SIG_OK, SIG_LONG].forEach((sig) => {
+        const SIGS = [SIG_OK, SIG_LONG].concat([TEST_RUN, TEST_REFUSED, TEST_BAD].map((test) => Object.assign({}, SIG_LONG, { test })));
+        STATES.concat([{ coverOn: true, whenToShow: 'sport', popupGuard: 'require' }]).forEach((st) => ['mode', 'tripped', 'nomode', 'nocc', 'ccwait', 'cc', 'busy', 'held', 'renderer'].forEach((reason) => SIGS.forEach((sig) => {
             const m = model(st, { reason, sig, carMode: sig.mode });
             for (let i = 0; i < P.PAGES.length; i++) {
                 const { out, r } = texts(i, m), v = P.view(i, m);
@@ -192,8 +234,9 @@ module.exports = [
                     assert.ok(d && d.x1 < 1542 - ctl - 10, P.IDS[i] + ' ' + row.id + ' desc runs into its controls: ' + row.desc);
                 });
                 if (v.id === 'safety') {
-                    out.filter((x) => x.y > 302).forEach((x) => assert.ok(x.x0 < 800 ? x.x1 <= 40 + 750 - 12 : x.x1 <= 1560 - 12, 'out of its block: ' + x.s));
-                    assert.ok(v.blocks.every((b) => b.lines.length <= 7), 'at most 7 lines a block');
+                    out.filter((x) => x.y > 372).forEach((x) => assert.ok(x.x0 < 800 ? x.x1 <= 40 + 750 - 12 : x.x1 <= 1560 - 12, 'out of its block: ' + x.s));
+                    out.filter((x) => x.y > 372).forEach((x) => assert.ok(x.y + 4 <= 514, 'below the page: ' + x.s));
+                    assert.ok(v.blocks.every((b) => b.lines.length <= 5), 'at most 5 lines a block');
                 }
                 if (v.id === 'home') {
                     const sig2 = out.filter((x) => x.s === v.status.signals)[0], hint = out.filter((x) => /Safety tab$/.test(x.s))[0];
