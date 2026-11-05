@@ -13,8 +13,9 @@
  *   warmOf(st)          the HUD's released scene still published: the panel's request then swaps the scene id, which
  *                       the service's README says once left a scene reported mapped and never drawn
  *   verdictOf(st)       after a drop or close: { ok, ours, panel, others } from a status reply
- *   tap(client, diag, onEvent)  every op the client sends goes to the diag log (uniforms and alive restarts counted
- *                       every 10 s), every event it gets too; onEvent(ev) sees each raw event first
+ *   tap(client, diag, onEvent)  every op the client sends goes to the diag log (uniforms, alive re-arms and stops
+ *                       counted every 10 s), every event it gets too (a status the same as the last one counted);
+ *                       onEvent(ev) sees each raw event first
  *   verifyRelease(o, why, done)  a watcher client that never makes a layer or asset: waits for the panel to go idle
  *                       (or o.cfg.renderer.verifyMs), asks for the status, logs the verdict and calls done(verdict)
  */
@@ -23,10 +24,12 @@ const WANTED = ['acquiring', 'parked', 'shown', 'waiting', 'unavailable'];   // 
 const wanted = (t) => !!t && WANTED.indexOf(t.state) >= 0;
 
 function parseStatus(text) {
-    const out = { cap: null, targets: {}, layers: [] };
+    const out = { cap: null, targets: {}, layers: [], assets: [] };
     String(text || '').split('\n').forEach((line) => {
         let m = /^upload: cap (\d+) KB\/s/.exec(line);
         if (m) { out.cap = Number(m[1]); return; }
+        m = /^asset (\d+) (r8|rgba8) (\d+)x(\d+) of (\S+) on (\w+): (\d+) writes, \d+ KB, (\d+) failed/.exec(line);
+        if (m) { out.assets.push({ id: Number(m[1]), format: m[2], w: Number(m[3]), h: Number(m[4]), app: m[5], target: m[6], writes: Number(m[7]), failed: Number(m[8]) }); return; }
         m = /^target (\w+): slot \S+ scene \S+ \d+x\d+: (\w+)(?: \((\w+)\))?(.*)$/.exec(line);
         if (m) {
             const rest = m[4], semi = rest.indexOf('; ');
@@ -34,8 +37,8 @@ function parseStatus(text) {
             out.targets[m[1]] = { state: m[2], holder: m[3] || '', reason, rendering, published: rendering === 'scene published' };
             return;
         }
-        m = /^layer (\d+) (\w+) of (\S+) on (\w+), [^:]*: (\w+)(?: - (.*))?$/.exec(line);
-        if (m) out.layers.push({ id: Number(m[1]), kind: m[2], app: m[3], target: m[4], state: m[5], reason: m[6] || '' });
+        m = /^layer (\d+) (\w+) of (\S+) on (\w+), (\w+) z (-?\d+)[^:]*: (\w+)(?: - (.*))?$/.exec(line);
+        if (m) out.layers.push({ id: Number(m[1]), kind: m[2], app: m[3], target: m[4], klass: m[5], z: Number(m[6]), state: m[7], reason: m[8] || '' });
     });
     return out;
 }
@@ -53,6 +56,26 @@ function busyOf(targets, mine) {
 }
 
 const warmOf = (st) => !!(st && st.targets.hud && st.targets.hud.published && !wanted(st.targets.hud));
+
+/** app's assets on target in a parsed status: { listed, unwritten (no write yet), failed (writes failed so far) }. */
+function uploadsOf(st, app, target) {
+    const r = { listed: 0, unwritten: 0, failed: 0 };
+    (st ? st.assets : []).forEach((a) => { if (a.app === app && a.target === target) { r.listed++; if (a.writes < 1) r.unwritten++; r.failed += a.failed; } });
+    return r;
+}
+/** Every app's assets as cluster-render counts them against its pixel memory (each asset's pixels twice): { all, mine, others: ['app 1.2 MiB'] }. */
+function memoryOf(st, app) {
+    const by = {};
+    let all = 0, mine = 0;
+    (st ? st.assets : []).forEach((a) => {
+        const b = a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2;
+        all += b;
+        if (a.app === app) mine += b; else by[a.app] = (by[a.app] || 0) + b;
+    });
+    return { all, mine, others: Object.keys(by).map((k) => k + ' ' + (by[k] / 1048576).toFixed(1) + ' MiB') };
+}
+/** Our layer of class / z on target in a parsed status: its state and reason, or null when not listed. */
+const layerOf = (st, app, target, z) => (st ? st.layers : []).filter((l) => l.app === app && l.target === target && l.z === z)[0] || null;
 
 function verdictOf(st) {
     const p = (st && st.targets.panel) || {};
@@ -85,20 +108,31 @@ function sendLine(m) {
 }
 
 function tap(c, diag, onEvent) {
-    const send = c._send, event = c._event, n = { uniform: 0, alive: 0 };
-    let since = Date.now();
+    const send = c._send, event = c._event, n = { uniform: 0, alive: 0, stop: 0 };
+    let since = Date.now(), lastStatus = null, same = 0;
     c._send = function (m) {
         if (c.sock !== undefined && !c.connected) return send.call(this, m);   // not on the wire: the replay on connect sends (and logs) it
-        if (m && (m.op === 'uniform' || (m.op === 'animate' && m.name === 'u_alive'))) {
-            n[m.op === 'uniform' ? 'uniform' : 'alive']++;
+        // the dead-man re-arms ~17 times a second a layer (an animate and a stop each): counted every 10 s, never one by one
+        if (m && (m.op === 'uniform' || m.op === 'stop' || (m.op === 'animate' && m.name === 'u_alive'))) {
+            n[m.op === 'animate' ? 'alive' : m.op]++;
             const now = Date.now();
-            if (now - since >= 10000 || now < since) { diag('> ' + c.app + ' sent ' + n.uniform + ' uniforms, ' + n.alive + ' alive restarts in ' + Math.round((now - since) / 1000) + ' s'); n.uniform = 0; n.alive = 0; since = now; }
+            if (now - since >= 10000 || now < since) {
+                diag('> ' + c.app + ' sent ' + n.uniform + ' uniforms, ' + n.alive + ' alive re-arms, ' + n.stop + ' stops in ' + Math.round((now - since) / 1000) + ' s');
+                n.uniform = 0; n.alive = 0; n.stop = 0; since = now;
+            }
         } else diag(sendLine(m));
         return send.call(this, m);
     };
     c._event = function (ev) {
         if (onEvent) onEvent(ev);
-        diag('< ' + (ev && ev.ev === 'status' ? 'status: ' + ev.text : JSON.stringify(ev)));
+        // a status asked again while a stage waits is often the same text: logged once, then counted
+        if (ev && ev.ev === 'status' && ev.text === lastStatus) same++;
+        else {
+            if (same) diag('< status: the same again, ' + same + ' times');
+            same = 0;
+            if (ev && ev.ev === 'status') lastStatus = ev.text;
+            diag('< ' + (ev && ev.ev === 'status' ? 'status: ' + ev.text : JSON.stringify(ev)));
+        }
         return event.call(this, ev);
     };
 }
@@ -130,4 +164,4 @@ function verifyRelease(o, why, done) {
     c.connect();
 }
 
-module.exports = { MINE, WANTED, parseStatus, othersOn, busyOf, warmOf, verdictOf, verdictText, verdictShort, tap, verifyRelease };
+module.exports = { MINE, WANTED, parseStatus, othersOn, busyOf, warmOf, uploadsOf, memoryOf, layerOf, verdictOf, verdictText, verdictShort, tap, verifyRelease };

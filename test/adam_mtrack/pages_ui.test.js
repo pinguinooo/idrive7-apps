@@ -62,12 +62,12 @@ const SIG_LONG = { speed: 'missing', mode: null, modeRaw: 'SPORT_INDIVIDUAL_XY',
     lastError: { op: 'layer', ref: 12, reason: 'the fragment shader did not compile: ERROR: 0:12: syntax error near the end' },
     release: { ok: false, ms: 6012, why: 'cover off', short: 'NOT released: panel shown, adam_shiftlights on hud, adam_shiftlights on panel (6.0 s)' } };
 /** The test pattern (ladder.status()) running, refused, and done with a release NOT confirmed, in its longest words. */
-const TEST_RUN = { n: 5, name: 'COVER', running: true, state: 'showing', line: 'Step 5 COVER showing: 10 s left. Watch the cluster', released: null,
-    lines: ['Step 5 COVER: showing, 10 s left: the whole cover (8 layers, 4.3 MB)', 'Panel: waiting (scene id in use by another target); HUD: shown, verified',
-        'Layers: 4 stalled (asset not written yet), 2 waiting (target waiting), 2 shown; uploaded 4.3 MB', 'Renderer: error layer: the fragment shader did not compile: ERROR: 0:12: syntax error; cap 5500 KB/s; HUD scene was published',
+const TEST_RUN = { n: 6, name: 'COVER', running: true, state: 'building', line: 'Step 6 COVER building: stage 2 of 4 PANELS: waiting for the renderer to write its art', released: null,
+    lines: ['Step 6 COVER: building: stage 2 of 4 PANELS: waiting for the renderer to write its art', 'Panel: waiting (scene id in use by another target); HUD: shown, verified',
+        'Layers: 1 waiting (an asset it samples is not written yet), 1 hidden; uploaded 1.3 MB; build 2 of 4', 'Renderer: error layer: the fragment shader did not compile: ERROR: 0:12: syntax error; cap 5500 KB/s; HUD scene was published',
         'Release: checked after the step'] };
-const TEST_REFUSED = { n: 3, name: 'IMAGE', running: false, state: 'refused', line: 'Step 3 IMAGE refused: another app is using the cluster', released: null, lines: TEST_RUN.lines };
-const TEST_BAD = { n: 1, name: 'BAR', running: false, state: 'done', line: 'Step 1 BAR done: release NOT confirmed', released: false, lines: TEST_RUN.lines };
+const TEST_REFUSED = { n: 4, name: 'IMAGE', running: false, state: 'refused', line: 'Step 4 IMAGE refused: another app is using the cluster', released: null, lines: TEST_RUN.lines };
+const TEST_BAD = { n: 2, name: 'BAR', running: false, state: 'done', line: 'Step 2 BAR done: release NOT confirmed', released: false, lines: TEST_RUN.lines };
 /** Every text drawn on page i with its left and right edge (the Recorder's own text widths). */
 function texts(i, m) {
     const ui = createUi(); ui.tab(i);
@@ -126,7 +126,7 @@ module.exports = [
         assert.deepStrictEqual(v.rows.slice(0, 3).map((r) => r.desc.length > 20 && /Protects|Always on/.test(r.desc)), [true, true, true], 'each says what it protects');
         assert.ok(/Off: /.test(v.rows[1].desc), 'and what happens when off');
         const locked = v.blocks[1].lines.map((l) => l.text).join('\n');
-        ['Speed timeout: on, 1 s', 'Kill switch (DISABLE file): clear', 'Errors: none', 'Heartbeat: running', 'Exit or crash', 'Clock jump', 'Demo data'].forEach((w) => assert.ok(locked.indexOf(w) >= 0, w));
+        ['Speed timeout: on, 1 s', 'Kill switch (DISABLE file): clear', 'Errors: none', 'Cover: not built yet; dead-man at 1 while shown', 'Exit or crash', 'Clock jump', 'Demo data'].forEach((w) => assert.ok(locked.indexOf(w) >= 0, w));
         assert.ok(/no switch/.test(v.blocks[1].title));
         const lo = P.view(3, model({ speedStaleMs: 500 })).rows[2].controls, hi = P.view(3, model({ speedStaleMs: 3000 })).rows[2].controls;
         assert.deepStrictEqual([lo[0].writes, lo[1].writes, hi[0].writes, hi[1].writes], [[], [['speedStaleMs', 1000]], [['speedStaleMs', 2500]], []], 'the timeout steps only inside 0.5 to 3 s');
@@ -134,12 +134,12 @@ module.exports = [
     ['Safety: the test pattern row: a pill per step and STOP, each an action that writes no setting; the running step lit; its result replaces the guards block; a press passes the action', () => {
         const v = P.view(3, model({}, { sig: SIG_OK })), row = v.rows.filter((x) => x.id === 'test')[0];
         assert.deepStrictEqual(row.controls.map((c) => [c.text, c.action, c.writes.length, c.on]),
-            [['1 BAR', 'test:1', 0, false], ['2 TINT', 'test:2', 0, false], ['3 IMAGE', 'test:3', 0, false], ['4 TACHS', 'test:4', 0, false], ['5 COVER', 'test:5', 0, false], ['STOP', 'test:stop', 0, false]]);
+            [['1 KNOWN', 'test:1', 0, false], ['2 BAR', 'test:2', 0, false], ['3 TINT', 'test:3', 0, false], ['4 IMAGE', 'test:4', 0, false], ['5 TACHS', 'test:5', 0, false], ['6 COVER', 'test:6', 0, false], ['STOP', 'test:stop', 0, false]]);
         assert.strictEqual(row.desc, 'Parked, cover off: each step shows 10 s, then removes itself');
         assert.strictEqual(v.blocks[1].title, 'Always on (no switch), and why');
         const run = P.view(3, model({}, { sig: Object.assign({}, SIG_OK, { test: TEST_RUN }) })), r2 = run.rows.filter((x) => x.id === 'test')[0];
-        assert.deepStrictEqual(r2.controls.filter((c) => c.on).map((c) => c.text), ['5 COVER']);
-        assert.deepStrictEqual([r2.desc, r2.value, r2.tone], [TEST_RUN.line, 'Step 5', 'on']);
+        assert.deepStrictEqual(r2.controls.filter((c) => c.on).map((c) => c.text), ['6 COVER']);
+        assert.deepStrictEqual([r2.desc, r2.value, r2.tone], [TEST_RUN.line, 'Step 6', 'on']);
         assert.strictEqual(run.blocks[1].title, 'Test pattern: what cluster-render said');
         assert.deepStrictEqual(run.blocks[1].lines.map((l) => l.text), TEST_RUN.lines);
         const bad = P.view(3, model({}, { sig: Object.assign({}, SIG_OK, { test: TEST_BAD }) }));
@@ -150,10 +150,27 @@ module.exports = [
         const r = new Recorder(1600, 520, { textScale: 1 }).reset();
         r.own = true; r.chrome = { tabs: null };
         ui.draw(r, t, model({}, { sig: SIG_OK }), (writes, action) => { got.push([writes.length, action]); return () => {}; });
-        ['test:1', 'test:2', 'test:3', 'test:4', 'test:5', 'test:stop'].forEach((a) => assert.ok(got.some((g) => g[1] === a && g[0] === 0), a));
-        assert.ok(['safety:test:1', 'safety:test:5', 'safety:test:stop'].every((k) => r.targets.some((x) => x.key === k)), 'each pill can be pressed');
+        ['test:1', 'test:2', 'test:3', 'test:4', 'test:5', 'test:6', 'test:stop'].forEach((a) => assert.ok(got.some((g) => g[1] === a && g[0] === 0), a));
+        assert.ok(['safety:test:1', 'safety:test:6', 'safety:test:stop'].every((k) => r.targets.some((x) => x.key === k)), 'each pill can be pressed');
         const rel = P.view(3, model({}, { sig: Object.assign({}, SIG_OK, { release: { ok: true, why: 'cover off', short: 'Released: panel idle 3.1 s after, status lists none of ours' } }) }));
         assert.deepStrictEqual([rel.blocks[1].lines[4].text, rel.blocks[1].lines[4].tone], ['Last release (cover off): panel idle 3.1 s after, status lists none of ours', 'dim']);
+    }],
+    ['Home and Safety while the cover builds: the stage under way; a stopped build says where and why, also behind the error guard and the trip; shown: every stage and the dead-man', () => {
+        const building = { state: 'writing', n: 2, of: 4, name: 'PANELS', word: 'waiting for the renderer to write its art', why: '', stop: null };
+        const stop = { n: 3, of: 4, name: 'CENTRE', why: 'refused: layer: the shader did not compile' };
+        const m = (reason, build) => model({ coverOn: true }, { reason, sig: Object.assign({}, SIG_OK, { build }) });
+        assert.strictEqual(P.view(0, m('showing', building)).card.state.text, 'Building the cover: stage 2 of 4 PANELS: waiting for the renderer to write its art');
+        assert.strictEqual(P.whyOf(m('showing', building)).text, 'Building the cover: stage 2 of 4 PANELS: waiting for the renderer to write its art');
+        const st = { state: 'stopped', n: 3, of: 4, name: 'CENTRE', word: 'stopped', why: stop.why, stop };
+        assert.strictEqual(P.whyOf(m('showing', st)).text, 'Cover build stopped at stage 3 of 4 CENTRE: refused: layer: the shader did not compile');
+        assert.strictEqual(P.whyOf(m('showing', st)).tone, 'warn');
+        assert.ok(/^Why the cover is off right now: Error guard: .* \(last build stopped at stage 3 of 4 CENTRE: refused: layer: the shader did not compile\)$/.test(P.whyOf(m('error', st)).text), P.whyOf(m('error', st)).text);
+        assert.ok(/Error guard: stopped after 5 errors\..*\(last build stopped at stage 3 of 4 CENTRE/.test(P.whyOf(m('tripped', st)).text), P.whyOf(m('tripped', st)).text);
+        const line = (b) => P.view(3, m('showing', b)).blocks[1].lines[3].text;
+        assert.strictEqual(line(building), 'Cover build: stage 2 of 4 PANELS: waiting for the renderer to write its art');
+        assert.strictEqual(line(st), 'Cover build: stopped at stage 3 of 4 CENTRE: refused: layer: the shader did not compile');
+        assert.strictEqual(line({ state: 'shown', n: 4, of: 4, name: '', word: 'shown', why: '', stop: null }), 'Cover: 4 of 4 stages shown; dead-man at 1, re-armed every 0.06 s');
+        assert.strictEqual(P.whyOf(m('showing', { state: 'shown', n: 4, of: 4 })).text, 'Showing on the cluster: every guard holds');
     }],
     ['Safety: risky choices are flagged (Ignore, a timeout over 1 s); a bad saved value shows the strict choice and says so', () => {
         const ig = P.view(3, model({ popupGuard: 'ignore' })).rows[0];

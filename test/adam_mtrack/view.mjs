@@ -6,6 +6,7 @@
 // choice, and the app's own "why off" log line under the panel.
 // env: EMU_DIR (idrive7-apps clone with apps/adam_mtrack linked), EMU_PORT (8077), VIEW_PORT (8090), NODE_EMU (node for emu.js),
 // NO_POPUPS=1: a car that sends no Check Control signal at all (Adam's G01 in the 0.1.0 test): the list is never fed.
+// CR_ANIMS=off: a renderer that plays no animation (what Adam's KOMBI did to 0.1.1's dead-man): uniforms keep the client's value.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -114,7 +115,7 @@ const server = http.createServer((req, res) => {
     try {
         if (files[u.pathname]) { res.writeHead(200, { 'content-type': files[u.pathname][1], 'cache-control': 'no-store' }); res.end(fs.readFileSync(path.join(here, files[u.pathname][0]))); return; }
         if (u.pathname === '/state') {
-            const list = layersAt(S, Date.now(), 'panel'), assets = {};
+            const list = layersAt(S, Date.now(), 'panel', { anims: process.env.CR_ANIMS !== 'off' }), assets = {};
             assetsOf(list).forEach((k) => { const a = S.assets.get(k); if (a && a.version) assets[k] = { v: a.version, format: a.format, w: a.w, h: a.h, sampling: a.sampling }; });
             res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
             res.end(JSON.stringify({ list, assets, state, sig: sigV, emuPort: EMU_PORT, appLog: appLines.slice(-3) }));

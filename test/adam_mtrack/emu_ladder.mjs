@@ -1,9 +1,11 @@
 // The Safety page's test pattern in the idrive7-apps emulator (SCRIPT=emu_ladder.mjs test/adam_mtrack/emu-run.sh runs it):
-// the Safety tab with the ladder row; a step pressed while the cover is on is refused and says why; steps 1, 2, 4 and 5
-// with the cover off and parked each draw on their own client (adam_mtrack-test), are drawn as the service would
-// (composite.mjs: step 1's amber bar and its blue dead-man bar, the tint, the tachs, the whole cover), are removed
-// after 10 s and confirmed released by the watcher; another app on the HUD (a client of this script's own, named
-// adam_shiftlights) makes a step refuse and names it, and keeps the cover off with "Another app is using the cluster".
+// the Safety tab with the ladder row; a step pressed while the cover is on is refused and says why; steps 1 to 6 with
+// the cover off and parked each draw on their own client (adam_mtrack-test), are drawn as the service would
+// (composite.mjs: the KNOWN test card and dials, step 2's three bars, the tint, the image card, the tachs, the whole
+// cover), and also as a renderer that plays no animation would (step 2's blue bar, 0.1.1's dead-man, then vanishes;
+// KNOWN, TACHS and COVER still draw), are removed 10 s after they show and confirmed released by the watcher; another
+// app on the HUD (a client of this script's own, named adam_shiftlights) makes a step refuse and names it, keeps the
+// cover off with "Another app is using the cluster", and the cover builds 3.5 s after it lets go.
 // A step is pressed through the app's emu feed ({"action": "test:N"}, the same act as the page's pill; the pill press
 // itself is in test/adam_mtrack/main_flow.test.js). env: PORT, CR_LOG, FEED, CTL, DATA_DIR, OUT. Exit 1 on a failed check.
 import fs from 'node:fs';
@@ -84,13 +86,15 @@ const stage = page.locator('#stage');
 const uiShot = async (name) => { await wait(900); await stage.screenshot({ path: path.join(OUT, name + '.png') }); };
 const key = async (k, n) => { for (let i = 0; i < (n || 1); i++) { await page.keyboard.press(k); await wait(180); } };
 const tab = async (i) => { await page.focus('#stage'); await key('[', 6); await key('Enter'); if (i) { await key(']', i); await key('Enter'); } await wait(500); };
-async function shot(name) {
+async function shot(name, anims) {
     tail();
-    const t = Date.now(), r = await comp.render(createReplay(recs.slice(), path.dirname(CR_LOG)).at(t), t);
+    const t = Date.now(), r = await comp.render(createReplay(recs.slice(), path.dirname(CR_LOG)).at(t), t, { anims: anims !== false });
     fs.writeFileSync(path.join(OUT, name + '.png'), r.png);
     if (r.errors.length) check(false, name + ': shader errors ' + r.errors.join(' | '));
     return r;
 }
+/** When a step's drawing showed: a build's first u_alive 1 (sent once every stage is confirmed), else its first layer. */
+const shownOf = (conn) => (of(conn, (m) => m.op === 'uniform' && m.name === 'u_alive' && m.v === '1')[0] || of(conn, (m) => m.op === 'layer')[0] || {}).t;
 /** Lit pixels of the composite inside a rect (via the compositor page's own canvas). */
 const litIn = (x, y, w, h) => comp.page.evaluate((b) => {
     const gl = window.__cr.gl, px = new Uint8Array(b.w * b.h * 4);
@@ -101,20 +105,24 @@ const litIn = (x, y, w, h) => comp.page.evaluate((b) => {
 }, { x, y, w, h });
 
 /** Presses step n and follows it: its client, layers, a composite and a Safety shot while shown, removal, release. */
-async function step(n, name, expectLayers, probe) {
+async function step(n, name, expectLayers, probe, built) {
     console.log('step ' + n + ' ' + name);
     const before = conns('adam_mtrack-test').length, t0 = Date.now();
     action('test:' + n);
-    const up = await until(() => conns('adam_mtrack-test').length > before && of(conns('adam_mtrack-test')[before], (m) => m.op === 'layer').length >= expectLayers, 8000, 'step ' + n + ' layers');
-    check(up, n + ' ' + name + ': ' + expectLayers + ' layer(s) on its own client adam_mtrack-test');
+    const up = await until(() => conns('adam_mtrack-test').length > before && of(conns('adam_mtrack-test')[before], (m) => m.op === 'layer').length >= expectLayers &&
+        (!built || of(conns('adam_mtrack-test')[before], (m) => m.op === 'uniform' && m.name === 'u_alive' && m.v === '1').length >= expectLayers), 9000, 'step ' + n + ' layers');
+    check(up, n + ' ' + name + ': ' + expectLayers + ' layer(s) on its own client adam_mtrack-test' + (built ? ', each made hidden, confirmed and shown with u_alive 1' : ''));
     if (!up) return null;
     const conn = conns('adam_mtrack-test')[before];
+    if (built) check(of(conn, (m) => m.op === 'layer').every((m) => m.visible === 0 && m.class === 'content'), n + ' ' + name + ': made hidden (content class), lifted only once confirmed');
     await wait(1800);
     const r = await shot('mtrack-ladder-step' + n + '-panel');
     if (probe) await probe(r);                       // reads the compositor's canvas while it still holds this step
+    r.noAnim = await shot('mtrack-ladder-step' + n + '-panel-no-renderer-animations', false);
+    if (probe && probe.noAnim) await probe.noAnim(r.noAnim, r);
     await uiShot('mtrack-ladder-step' + n + '-safety');
     const gone = await until(() => closed(conn), 13000, 'step ' + n + ' removed');
-    const shownAt = of(conn, (m) => m.op === 'layer')[0].t, closeAt = of(conn, (m) => m.ev === 'close')[0];
+    const shownAt = shownOf(conn), closeAt = of(conn, (m) => m.ev === 'close')[0];
     results['step' + n + 'ShownMs'] = closeAt ? closeAt.t - shownAt : null;
     check(gone && closeAt.t - shownAt >= 9500 && closeAt.t - shownAt <= 11500, n + ' removed by itself after ' + (closeAt ? closeAt.t - shownAt : '?') + ' ms (10 s)');
     let rel = false;
@@ -139,25 +147,42 @@ try {
     let t = Date.now();
     action('test:1');
     await wait(800);
-    check((await appLog(t)).indexOf('test: step 1 BAR refused: turn Cover the cluster off first') >= 0, 'a step with the cover on is refused and says why');
+    check((await appLog(t)).indexOf('test: step 1 KNOWN refused: turn Cover the cluster off first') >= 0, 'a step with the cover on is refused and says why');
     check(!conns('adam_mtrack-test').length, 'nothing drawn for a refused step');
     await uiShot('mtrack-ladder-refused-cover-on');
     await set('coverOn', false);
     await wait(500);
 
-    let r = await step(1, 'BAR', 2, async () => {
-        const amber = await litIn(690, 236, 260, 44), blue = await litIn(970, 236, 260, 44), mid = await litIn(400, 400, 200, 100);
-        results.step1 = { amber, blue, mid };
-        check(amber > 260 * 44 * 0.9 && blue > 260 * 44 * 0.9 && mid === 0, '1 the amber bar and the blue dead-man bar drawn, nothing else (' + amber + ', ' + blue + ', ' + mid + ')');
-    });
-    r = await step(2, 'TINT', 1);
-    if (r) { results.step2Lit = r.lit; check(r.lit > 1920 * 720 * 0.9, '2 the tint covers the whole panel (' + r.lit + ' lit px)'); }
-    r = await step(4, 'TACHS', 1);
-    if (r) { results.step4Lit = r.lit; check(r.lit > 20000, '4 the tachs drawn (' + r.lit + ' lit px)'); }
-    r = await step(5, 'COVER', 8);
-    if (r) { results.step5Lit = r.lit; check(r.lit > 0.25 * 1920 * 720, '5 the whole cover drawn (' + r.lit + ' lit px)'); }
+    const knownProbe = async () => {
+        const card = await litIn(700, 220, 520, 280), rimL = await litIn(80, 340, 30, 40), rimR = await litIn(1810, 340, 30, 40);
+        results.step1 = { card, rimL, rimR };
+        check(card > 2000 && rimL > 0 && rimR > 0, '1 the KNOWN test card and both dials drawn (' + card + ', ' + rimL + ', ' + rimR + ')');
+    };
+    knownProbe.noAnim = async (x, a) => { results.step1NoAnim = x.lit; check(x.lit > 20000 && Math.abs(x.lit - a.lit) < 0.02 * a.lit, '1 drawn the same by a renderer that plays no animation (' + x.lit + ' vs ' + a.lit + ' lit px)'); };
+    let r = await step(1, 'KNOWN', 1, knownProbe, true);
+    const barProbe = async () => {
+        const amber = await litIn(590, 236, 240, 44), green = await litIn(840, 236, 240, 44), blue = await litIn(1090, 236, 240, 44), mid = await litIn(400, 400, 200, 100);
+        results.step2 = { amber, green, blue, mid };
+        check(amber > 240 * 44 * 0.9 && green > 240 * 44 * 0.9 && blue > 240 * 44 * 0.9 && mid === 0, '2 amber, green and blue bars drawn, nothing else (' + amber + ', ' + green + ', ' + blue + ', ' + mid + ')');
+    };
+    barProbe.noAnim = async () => {
+        const amber = await litIn(590, 236, 240, 44), green = await litIn(840, 236, 240, 44), blue = await litIn(1090, 236, 240, 44);
+        results.step2NoAnim = { amber, green, blue };
+        check(amber > 240 * 44 * 0.9 && green > 240 * 44 * 0.9 && blue === 0, '2 a renderer that plays no animation: amber and green drawn, blue (0.1.1\'s dead-man) gone (' + amber + ', ' + green + ', ' + blue + ')');
+    };
+    r = await step(2, 'BAR', 3, barProbe);
+    r = await step(3, 'TINT', 1);
+    if (r) { results.step3Lit = r.lit; check(r.lit > 1920 * 720 * 0.9, '3 the tint covers the whole panel (' + r.lit + ' lit px)'); }
+    r = await step(4, 'IMAGE', 2);
+    // the renderer stand-in draws effect layers only: the asset card (an effect sampling the asset) is drawn, the image layer is not
+    if (r) { results.step4Lit = r.lit; check(r.lit >= 256 * 128 * 0.9, '4 the asset card drawn through its effect layer (' + r.lit + ' lit px; the image layer is not drawn by the stand-in)'); }
+    r = await step(5, 'TACHS', 1, null, true);
+    if (r) { results.step5Lit = r.lit; check(r.lit > 0.25 * 1920 * 720 && r.noAnim.lit > 0.25 * 1920 * 720, '5 the tachs drawn, with or without renderer animations (' + r.lit + ', ' + r.noAnim.lit + ' lit px)'); }
+    r = await step(6, 'COVER', 4, null, true);
+    if (r) { results.step6Lit = r.lit; check(r.lit > 0.25 * 1920 * 720 && Math.abs(r.noAnim.lit - r.lit) < 0.02 * r.lit, '6 the whole cover drawn, the same without renderer animations (' + r.lit + ', ' + r.noAnim.lit + ' lit px)'); }
     const lg = await appLog();
-    check(lg.some((l) => /^test: upload at arm: 4287608 bytes \(us, 10 assets\)$/.test(l)) && lg.some((l) => /^test: upload at arm: 2398392 bytes \(us, 4 assets\)$/.test(l)), 'steps 4 and 5 upload 2.4 MB and 4.3 MB');
+    check(lg.some((l) => /^test: shown \(1 layers, 1 assets, 1\.1 MiB of renderer memory, built in \d+ ms\)$/.test(l)) && lg.some((l) => /^test: shown \(1 layers, 5 assets, 1\.6 MiB/.test(l)) &&
+        lg.some((l) => /^test: shown \(4 layers, 11 assets, 2\.9 MiB/.test(l)), 'KNOWN 1.1 MiB, TACHS 1.6 MiB, COVER 2.9 MiB of the renderer\'s memory, each built stage by stage');
 
     console.log('another app on the HUD');
     const other = new ClusterRender('adam_shiftlights', SOCK);
@@ -165,9 +190,9 @@ try {
     other.connect();
     await wait(1200);
     t = Date.now();
-    action('test:1');
+    action('test:2');
     await wait(1500);
-    check((await appLog(t)).some((l) => /^test: step 1 BAR refused: another app is using the cluster \(adam_shiftlights on hud\)/.test(l)), 'a step while another app holds the HUD is refused and names it');
+    check((await appLog(t)).some((l) => /^test: step 2 BAR refused: another app is using the cluster \(adam_shiftlights on hud\)/.test(l)), 'a step while another app holds the HUD is refused and names it');
     await uiShot('mtrack-ladder-refused-another-app');
     t = Date.now();
     feed({ iface: 'de.bmw.infotainment.drivingexcitement.FES', field: 'statusFESVehicleDynamicSwitchHMI', value: { actualValueModeDrivingExperience: 2 } });
@@ -178,9 +203,12 @@ try {
     await uiShot('mtrack-busy-safety');
     await tab(0);
     await uiShot('mtrack-busy-home');
+    const tc = Date.now();
     other.close();
-    const back = await until(() => conns('adam_mtrack').some((c) => of(c, (m) => m.op === 'layer' && m.t >= t).length >= 8), 8000, 'the cover after the HUD let go');
-    check(back, 'the cover shows once the other app lets go of the HUD');
+    const back = await until(() => conns('adam_mtrack').some((c) => of(c, (m) => m.op === 'uniform' && m.name === 'u_alive' && m.v === '1' && m.t >= t).length >= 4), 12000, 'the cover after the HUD let go');
+    const firstLayer = conns('adam_mtrack').map((c) => of(c, (m) => m.op === 'layer' && m.t >= t)[0]).filter(Boolean)[0];
+    results.handoverMs = firstLayer ? firstLayer.t - tc : null;
+    check(back && firstLayer && firstLayer.t - tc >= 3400, 'the cover builds 3.5 s after the other app lets go of the HUD (first layer ' + results.handoverMs + ' ms after) and shows');
     await set('coverOn', false);
     await wait(500);
 } finally {

@@ -124,17 +124,21 @@ const CENTRE = { cx: 967.5, gearY: 394, gearH: 82, gearW: 101, gearSW: 18, lineY
 const box = (x, y, w, h) => ({ target: 'panel', x, y, w, h });
 const flipRect = (r) => box(1920 - r.x - r.w, r.y, r.w, r.h);
 const RECTS = {
-    base: box(0, 0, 1920, 720),
+    tachs: box(0, 0, 1920, 720),               // the tachs layer: the whole panel, opaque (background, bars, fill, numerals)
     band: box(1196, 168, 180, 462),            // the right band (mask), mirrored for the left
-    overR: box(1138, 160, 246, 474),           // the bars' edge lines, ticks, numerals, red and amber fields (right)
-    glyphs: box(820, 326, 320, 266),           // gear, small gear digit, speed, unit, drive-mode tag
+    overR: box(1138, 160, 246, 474),           // the bars' edge lines, ticks, red and amber fields (right; mirrored for the left)
+    centre: box(748, 220, 440, 376),           // the centre layer: gear, small gear digit, speed, unit, drive-mode tag,
+                                               // the line, end caps and stack icon (CENTRE_CELL), the M badge
     badge: box(890, 222, 132, 56),             // the M badge (in the slats' place)
-    panelR: box(1400, 262, 260, 278),          // a side panel's content (plates are in the base art)
+    panelR: box(1400, 262, 260, 278),          // a side panel's content (plates are in the background art)
     cornerL: box(150, 470, 450, 232),          // fuel gauge, range, clock
-    cornerR: box(1420, 470, 410, 232),         // oil gauge, outside temperature
+    cornerR: box(1420, 470, 340, 232),         // oil gauge, outside temperature (0.1.3: ends at 1760, KB-ANY-205's stray label gone)
 };
 RECTS.overL = flipRect(RECTS.overR);
 RECTS.panelL = flipRect(RECTS.panelR);
+RECTS.panels = box(150, 262, 1610, 440);       // the panels layer: both side panels and both corners
+/** The centre's static line, end caps and stack icon, one atlas cell drawn at this panel rect (tools/mtrack-art/art.html). */
+const CENTRE_CELL = { x: 748, y: 400, w: 440, h: 66 };
 
 /** A side panel's content box in panel px. half: 'upper' | 'lower' | 'full'; side -1 left, 1 right. */
 function slotRect(side, half) {
@@ -159,7 +163,7 @@ function slatBar(st) {
  * small digit beside D, 1-8), speed (whole number shown, or null: a dash), unit ('mph' | 'km/h'), tag (a drive-mode tag) }.
  */
 function centreQuads(atlas, f) {
-    const R = RECTS.glyphs, X = CENTRE.cx, out = [];
+    const R = RECTS.centre, X = CENTRE.cx, out = [];
     const put = (cell, x, y, k) => { if (cell) out.push({ dst: [Math.round(x - R.x), Math.round(y - R.y), cell.w, cell.h], src: [cell.x, cell.y, k, 0] }); };
     const gs = atlas.styles.gear, ss = atlas.styles.small, sp = atlas.styles.speed;
     const g = typeof f.gear === 'string' && gs.glyphs[f.gear] ? f.gear : '-';
@@ -180,8 +184,21 @@ function centreQuads(atlas, f) {
     return out;
 }
 
+/**
+ * The tachs' numerals 0..7 on both bars, from the atlas's bar style: [{ dst: [x, y, w, h] (panel px, whole), src: [x, y]
+ * (atlas px) }], the right bar's 8 then the left's (placed at the mirror of each centre, the glyph itself not mirrored).
+ */
+function barNumeralQuads(atlas, T) {
+    const st = atlas.styles.bar, out = [];
+    [1, -1].forEach((side) => numerals(T).forEach((n) => {
+        const c = st.glyphs[String(n.k)], cx = side > 0 ? n.x : 1920 - n.x;
+        out.push({ dst: [Math.round(cx - c.adv / 2 - c.ox), Math.round(n.y - c.h / 2), c.w, c.h], src: [c.x, c.y] });
+    }));
+    return out;
+}
+
 module.exports = {
-    centreQuads,
+    centreQuads, barNumeralQuads, CENTRE_CELL,
     BARS, CENTRE, SLOTS, RECTS, spline, at, xAtY, arcAtY, mirror, mirrorPt, fracOf, rpmPoint, yOfRpm, ticks, numerals,
     bandWidthAt, slotRect, slatBar, flipRect, OUTER, INNER,
 };

@@ -1,4 +1,4 @@
-# M Track Cluster (`adam_mtrack`) 0.1.2
+# M Track Cluster (`adam_mtrack`) 0.1.3
 
 An M Track style cover over the instrument cluster, drawn by the cluster-render service on its `panel` target
 (1920 x 720): two bar tachs from 0 to 7 (x1000 rpm, the B58's 7,000 rpm limit), the gear over a line over the speed
@@ -7,6 +7,18 @@ clock and outside temperature. Built for a 2024 X3 M40i (G01 LCI, iDrive 7, US u
 
 It covers the real speedometer, so it only shows while every guard holds, and drops at once when one fails.
 
+**0.1.3: why 0.1.1 drew nothing, and the rebuild.** On Adam's car G's Dash's "Full-screen cluster test"
+(nickgcode/idrive7-apps, MIT) draws over the whole cluster, while M Track's cover drew nothing and only moved BMW's gear
+letter. The one code difference that explains both: every one of the old cover's 8 layers multiplied its alpha by
+`u_alive`, whose own value was **0**, lifted to 1 only by a renderer animation re-sent every 250 ms under the same number
+(cluster-render's `play()` first runs `stop()`, which puts the client's 0 back, then starts a new animation stamped with
+the head unit's clock that the KOMBI plays on its own). A KOMBI that does not play that animation in step draws every
+layer at alpha 0 while still showing the scene (so it re-lays out its cluster: the gear letter moved). G's Dash keeps
+its value at **1** while shown. 0.1.3 does the same, and rebuilds the cover the way G's Dash draws (details in
+"How it draws"): 4 layers instead of 8, 2.9 MiB of the renderer's 16 MiB instead of 8.2, built one stage at a time and
+each confirmed by the renderer before the next. Safety > Test pattern step 2 (BAR) proves the cause on the car: its blue
+bar is exactly 0.1.1's dead-man.
+
 ## Settings (on the centre screen)
 
 | Page | What |
@@ -14,7 +26,7 @@ It covers the real speedometer, so it only shows while every guard holds, and dr
 | Home | **Cover the cluster** On/Off (default Off); **When to show**: Sport+ only (default), Sport and above (Sport, Sport individual, Sport+), Always; "Why the cover is off right now: ..." and the signals it reads (speed, drive mode, BMW popups) |
 | Panels | Left panel, left lower half, right panel, right lower half (from the 22-widget catalogue: a whole widget takes both halves), Swap sides. Widgets with no signal on the car are skipped and say "No signal on this car" |
 | Look | Units: US (mph, psi, F, lb-ft, hp, mi, mpg), Metric, Follow car; Brightness; Night dim; Shift lights in the cover |
-| Safety | **BMW popups**: Use if sent (default), Require, Ignore; **Drop the cover if the drive-mode signal is missing** (default Off); **Speed timeout** 0.5 to 3 s (default 1 s, the guard itself is always on); **Test pattern (parked)**: steps 1 to 5 and STOP (below); why the cover is off right now; every signal the guards read (present / missing / stale) and what cluster-render says (the panel's and the HUD's state, the last error event); every always-on guard with its state and why it has no switch, and the last release check (or, after a test step, what the renderer said) |
+| Safety | **BMW popups**: Use if sent (default), Require, Ignore; **Drop the cover if the drive-mode signal is missing** (default Off); **Speed timeout** 0.5 to 3 s (default 1 s, the guard itself is always on); **Test pattern (parked)**: steps 1 to 6 and STOP (below); why the cover is off right now (or which build stage it is at, or where it stopped and why); every signal the guards read (present / missing / stale) and what cluster-render says (the panel's and the HUD's state, the last error event); every always-on guard with its state and why it has no switch, the cover's build stage, and the last release check (or, after a test step, what the renderer said) |
 | About | Version, what is unproven on the car, the widgets not in this version, how to remove it safely, Shift Lights |
 
 Settings apply live and are saved; a bad saved value falls back to its default (logged once), and a bad Safety value
@@ -46,6 +58,8 @@ not hidden) within one 100 ms tick. Home and the Safety tab say which guard hold
 | When to show (`mode`): FES `statusFESVehicleDynamicSwitchHMI`, Shift Lights' decoding | the owner's choice of modes | Home |
 | Show delay 1 s, clock-jump guard (a backward jump restarts the delay and the heartbeat, a future speed is stale) | flicker; an old speed kept alive | none |
 | Heartbeat (dead-man), exit and crash cleanup | a hung or dead app's cover | none |
+| Staged build (0.1.3): each layer made hidden, confirmed by the renderer's status, written, before the next; a refusal, the renderer's pixel memory full, or a stage not done in 10 s stops it (an error: the stage and why on Home and Safety) | a half-built cover; the 0.1.1 blind spot | none |
+| Hand-over (0.1.3): 3.5 s after another app's HUD lets go of the shared scene id before asking for the panel | the KOMBI's "mapped and never drawn" scene swap | none |
 
 There is no engine-running guard (the cover can show with the engine off when the speed is fresh), so none was added.
 
@@ -60,11 +74,14 @@ and `requireCheckControl: true` (a config switch, no setting) kept the cover off
 Any error inside a callback drops it at once; five errors in 10 s stop it until Cover the cluster is turned off and
 on. Turning the cover off disarms in the settings callback itself and closes the connection.
 
-**Dead-man switch.** Every layer's shader multiplies its output by `u_alive`, whose value is 0; while shown, the app
-restarts an animation every 250 ms that holds it at 1 for 1 s and then ramps it to 0. If the app hangs, the renderer
-blanks the cover about 1.2 s after the last restart, on its own clock. If the app crashes or exits, its connection
-closes and the service drops its layers at once (PROTOCOL.md: layers go with the connection). If the service itself
-dies, the KOMBI drops the content within about 10 s.
+**Dead-man switch (0.1.3, G's Dash's recipe).** Every layer's shader multiplies its output by `u_alive`. While shown its
+own value is **1**, and every 60 ms the app starts a **new** renderer animation that holds it at 1 for 200 ms and fades it
+to 0 in 40 ms, then stops the previous one (never a moment with none). If the app hangs and the KOMBI plays renderer
+animations, the cover fades by itself about 0.24 s after the last re-arm. If the KOMBI does not play them (Test pattern
+step 2: the blue bar missing), a hung app's cover stays as it was until the app resumes or ends: then only the exit and
+crash cleanup protect (a crash or exit closes the connection and the service drops its layers at once). 0.1.1 had 0 as
+its own value, which on such a KOMBI drew nothing at all. If the service itself dies, the KOMBI drops the content within
+about 10 s.
 
 **Kill switches**, fastest first: Home > Cover the cluster Off; a file named `DISABLE` in the app's data folder (its path
 is the first log line); Store > M Track Cluster > Remove. Never kill or restart the app or MainApp by hand: three
@@ -76,7 +93,8 @@ crashes in about 30 s wipe every app. No saved setting can switch an always-on g
 The `hud` and `panel` targets share one scene id (0x01000400) and are never up at once (cluster-render.conf). Since
 0.1.2 the cover refuses to start while any other app wants the HUD or the panel, and Home and Safety say "Another app
 is using the cluster: turn off Shift Lights cluster/HUD" (Safety names the app from the renderer's status). Turn
-Shift Lights' HUD and cluster off to use the cover. 0.1.1 read that state as "BMW holds the cluster panel".
+Shift Lights' HUD and cluster off to use the cover. 0.1.1 read that state as "BMW holds the cluster panel". 0.1.3 also
+waits 3.5 s after the HUD lets go before it asks for the panel (G's Dash's `HANDOVER_MS`, past the 3 s linger).
 
 ## Cleanup and what cluster-render said (0.1.2)
 
@@ -88,33 +106,46 @@ Shift Lights' HUD and cluster off to use the cover. 0.1.1 read that state as "BM
 - **The renderer's replies are surfaced:** target events (state, holder, reason, rendering) for the panel and the HUD,
   layer states, error events and the upload cap, on Safety and in the log; the status text when it matters.
 - **Diagnostic log** `mtrack-diag.log` in the app's data folder (its path is logged at start; 256 KB, then `.1`):
-  every op sent (shaders as their length, asset bytes; uniforms and dead-man restarts counted every 10 s) and every
-  event that came back, the status texts, each test step and release check.
+  every op sent (shaders as their length, asset bytes; uniforms, dead-man re-arms and stops counted every 10 s), every
+  build stage (made hidden, confirmed and written, stopped and why), every event that came back, the status texts (a
+  repeated one counted), each test step and release check.
 - **Collect the evidence** from the car, read-only, with the repo's `tools/car-logs.sh` (its comments say how).
 
 ## Test pattern (Safety page, parked)
 
 Each step draws on its own cluster-render client (`adam_mtrack-test`), only with the cover off and the car parked (in
 P or under 3 km/h; it stops at once if the car moves), refuses while another app holds the cluster scene, shows for
-10 s and removes itself; the page shows what cluster-render said and then the release check. Run them in order and
-note the first step that does not show on the cluster:
+10 s once drawn and removes itself; the page shows what cluster-render said (for a built step, the stage it reached
+and, if it stopped, why) and then the release check. Run them in order and note what each one shows:
 
 | Step | Draws | Proves |
 |---|---|---|
-| 1 BAR | two 260 x 44 bars at the top centre, no asset: **amber** plain, **blue** through the cover's dead-man (`u_alive` animated on the renderer's clock) | the panel path; the renderer's clock (amber only = the dead-man is why the cover never showed) |
-| 2 TINT | a translucent blue over the whole 1920 x 720 panel | a whole-panel layer |
-| 3 IMAGE | a 256 x 128 test card as an image layer (left, blue) and as an asset sampled by an effect (right, orange), 131 KB each | uploads |
-| 4 TACHS | the cover's base layer and its four assets (2.4 MB), dead-man off | the big shader and upload |
-| 5 COVER | the whole cover (8 layers, 10 assets, 4.3 MB), dead-man off | everything but the dead-man |
+| 1 KNOWN | G's Dash's full-screen cluster test shape in M Track's own code: one effect layer over the whole panel (content z 90, never exclusive), one r8 1024 x 576 bilinear asset (1.1 MiB), made hidden, confirmed, lifted, written, shown with the dead-man held at 1: two dials with live needles and a "KNOWN-GOOD TEST" card | our client and G's call sequence draw on this car (G's Dash's own test did) |
+| 2 BAR | three 240 x 44 bars, no asset: **amber** u_alive 1, no animation; **green** 0.1.3's dead-man; **blue** exactly 0.1.1's (own value 0, the same animation number sent again every 250 ms) | the panel path; whether the KOMBI plays renderer animations (blue missing = the 0.1.1 cause, and no hang fade on this car) |
+| 3 TINT | a translucent blue over the whole 1920 x 720 panel | a whole-panel layer |
+| 4 IMAGE | a 256 x 128 test card as an image layer (left, blue) and as an asset sampled by an effect (right, orange), 131 KB each | uploads |
+| 5 TACHS | the cover's stage 1 (its opaque tachs layer, 5 assets, 1.6 MiB), built as the cover builds it | the big shader and its art |
+| 6 COVER | the whole cover, 4 stages (4 layers, 11 assets, 2.9 MiB), each confirmed before the next | everything |
 
-## How it draws
+## How it draws (0.1.3)
 
 The static art is the approved mockup's (iDrive-Apps `docs/mockups/mtrack-cluster.html`) drawn by its own code in
-headless Chromium (`tools/mtrack-art/`, re-run gives the same bytes) into `art/art.json`, with the tach scale 0-7 from
-`geom.js`. At arm (cover turned on) the art goes up once as assets (about 4.3 MB, budget 4.5 MB, logged); showing and
-dropping upload nothing. Effect layers sample it: the base (art, the tach fill up to the revs, the bars' over-art),
-the glyphs (gear, speed, unit, mode), the badge, the slats (Shift Lights' shader), the two side panels and two corners
-(drawn in software, only the changed rows sent, at most twice a second).
+headless Chromium (`tools/mtrack-art/`, re-run gives the same bytes) into `art/art.json` (v2), with the tach scale 0-7
+from `geom.js`. Four effect layers on `panel`, content class z 90 to 93, never exclusive, never contending (G's
+Dash's), one a stage (`stages.js`):
+
+| Stage | Layer | Assets (as cluster-render counts them, twice) |
+|---|---|---|
+| 1 TACHS | the whole panel, opaque: the background (its right half at half resolution, mirrored), the bars' art (the right bar's lines, ticks and fields as coverage + palette index, mirrored for the left), the fill to the revs, the numerals 0..7 from the glyph atlas | bgR2, overR, its palette, band, atlas: 1.6 MiB |
+| 2 PANELS | both side panels and both corners (drawn in software, sent as coverage + palette index, only the changed rows, at most twice a second) | 4 boxes, palette: 1.25 MiB |
+| 3 CENTRE | gear, small gear digit, speed, unit, drive-mode tag, the line and stack icon, the M badge | badge (the atlas shared): 0.06 MiB |
+| 4 SLATS | the shift-light slats (Shift Lights' shader), only with "Shift lights in the cover" on | none |
+
+The build follows G's Dash's call sequence: nothing before the first status answer; each stage's assets (checked against
+the renderer's pixel memory first), its layer made hidden, confirmed by a status asked after it (no error for it),
+lifted clear (u_alive 0, visible: the renderer then asks for the panel and writes the art), bound once the status says
+every asset is written, then the next stage; shown once all are, with u_alive 1 and the dead-man, the opaque tachs last
+(dropped first). Assets go once per arm; a drop and a re-show build the layers again without re-sending art.
 
 ## The emulator
 
@@ -130,8 +161,9 @@ plays a car that sends no Check Control signal (Adam's G01 in the 0.1.0 test).
 `EMU_DIR` points at an idrive7-apps clone (default `~/Documents/Projects/idrive7-apps-upstream`).
 The scripted sweep (`test/adam_mtrack/emu-run.sh`, on claudius-vm) runs every guard (first with no popup signal at
 all: Use if sent shows, Require keeps it off and says why), the hang and the crash, and saves PNGs (every settings tab,
-the Safety tab with a guard holding the cover off) and the pull clip. `test/adam_mtrack/shader_check.mjs` compiles
-every shader under WebGL1 and probes pixels.
+the Safety tab with a guard holding the cover off) and the pull clip; it also draws the cover as a renderer that plays
+no animation would, where it must still draw. `CR_ANIMS=off bash test/adam_mtrack/view.sh` shows the live view that way.
+`test/adam_mtrack/shader_check.mjs` compiles every shader under WebGL1 and probes pixels.
 
 **The emulator proves:** the app's logic and every guard with its timing (mode, speed loss, popup, BMW take-over, kill
 file, error, hang, crash); the exact message stream (layers, assets, uniforms, animations); the shaders compiling and
@@ -143,7 +175,12 @@ clock for the dead-man; pixel mapping, brightness, latency; the real signal valu
 scale, range unit) and the speed factor against the OEM speedometer; coexistence with Shift Lights' HUD.
 cluster-render's own unit emulator needs the head unit's root filesystem, so it is not used here.
 
-## On the car (0.1.1, 2026-11-04) and what is untested
+## On the car (0.1.1, 2026-11-04; G's Dash 2026-11-05) and what is untested
+
+2026-11-05: G's Dash's full-screen cluster test draws over the whole cluster on Adam's car, so the panel path works;
+M Track 0.1.1 drew nothing even with Shift Lights off. 0.1.3's top section names the cause and the fix; the older
+ranking below is kept as it was written.
+
 
 0.1.1 on Adam's car, parked, When to show Always: the cover never appeared, and BMW's gear letter moved to the bottom
 of the cluster and stayed there after Cover the cluster went off. Ranked causes, from the code: (1) Shift Lights'
@@ -166,8 +203,10 @@ BMW popups on Ignore.
 
 ## Files
 
-`main.js` wiring; `logic.js` decisions (pure); `geom.js` geometry; `output.js` the cluster-render side; `renderer.js` what
-cluster-render says (status text, whose the scene is, release checks, the diag tap); `ladder.js` the test pattern;
+`main.js` wiring; `logic.js` decisions (pure); `geom.js` geometry; `stages.js` the cover's and the KNOWN step's layers,
+assets and uniforms, the coverage + palette encoder, the memory count; `output.js` the cluster-render side (the staged
+build, the dead-man); `renderer.js` what cluster-render says (status text, uploads, pixel memory, whose the scene is,
+release checks, the diag tap); `ladder.js` the test pattern;
 `diaglog.js` mtrack-diag.log; `shader.js`;
 `widgets.js` the live boxes; `pages.js` / `ui.js` the settings pages; `units.js`, `settings_check.js`, `safety.js`, `poll.js`
 (copies from the sibling apps, extended); `catalogue.js`; `config.js` every tunable; `emufeed.js` emulator only (loaded only

@@ -5,9 +5,10 @@
  * slats. It covers the real speedometer, so it shows only while every guard holds (logic.decide): the cover is on,
  * the drive mode is allowed, a valid speed arrived within the speed timeout (1 s), no BMW popup (when the car sends
  * that signal, Safety > BMW popups), BMW does not hold the panel, no kill file, no recent error, live data. Any of
- * them failing drops every layer within one tick (100 ms).
- * A hung app's cover blanks by itself (output.js dead-man switch); a crashed or exited app's connection closes and
- * the service drops its layers at once. Default off.
+ * them failing drops every layer within one tick (100 ms), a build under way too. The cover is built stage by stage
+ * (output.js, stages.js: each layer confirmed by cluster-render's status before the next) and shown with u_alive 1,
+ * re-armed by a renderer animation (G's Dash's dead-man: a hung app's cover fades by itself when the KOMBI plays it); a
+ * crashed or exited app's connection closes and the service drops its layers at once. Default off.
  * Centre screen: the settings pages (ui.js), drawn only when something changes (a setting, the cover's reason, a
  * signal's status on the Safety page: present / missing / stale). Every callback goes through
  * safety.guard: nothing may throw out of the main loop (three app crashes in ~33 s wipe every app).
@@ -25,6 +26,7 @@ const CAT = require('./catalogue');
 const { createSafety } = require('./safety');
 const { createOutput } = require('./output');
 const { createLadder } = require('./ladder');
+const ST = require('./stages');
 const { createDiag } = require('./diaglog');
 const RD = require('./renderer');
 const { createPoll } = require('./poll');
@@ -219,6 +221,8 @@ mgu.run({
             const car = new Car(Object.assign({}, ctx, { signals }), ['rpm', 'temps', 'speed', 'gear', 'accel', 'torque'], extra);
 
             /* ---------- the cover ---------- */
+            /** Shown, or a build under way (its layers made or about to be): a failing guard drops it. */
+            const active = (st) => st.shown || ['waiting', 'handover', 'confirming', 'writing'].indexOf(st.build.state) >= 0;
             let since = null, dec = { want: false, reason: 'off' }, slat = null, lastPanels = -Infinity, lastStats = Date.now();
             let sigKey = '', ccWas = '', heldUntil = null, busyWas = '';
             const recentError = (now) => { const e = safety.lastErrorAt(); return isNum(e) && now - e >= 0 && now - e < cfg.safety.showHoldMs; };
@@ -235,7 +239,7 @@ mgu.run({
                     link: st.link, target: st.target, holder: st.holder, reason: st.reason, shown: st.shown, art: artOk,
                     killed, tripped: safety.tripped(), errorRecent: recentError(now), demo: !!d.demo,
                     hud: st.targets.hud ? st.targets.hud.state : null, rendering: st.rendering, cap: st.cap, lastError: st.lastError,
-                    busy: st.busy, others: st.others, warm: st.warm, release: latestRelease(st), test: ladder ? ladder.status() : null,
+                    busy: st.busy, others: st.others, warm: st.warm, release: latestRelease(st), test: ladder ? ladder.status() : null, build: st.build,
                 };
             }
             const model = () => ({ get, schema, cfg, carMode, reason: dec.reason, avail, version: (ctx.spec && ctx.spec.version) || '', sig: sigNow(Date.now()) });
@@ -270,6 +274,7 @@ mgu.run({
                 slat = L.step(slat, d.rpm, th, cfg);
                 const kmh = isNum(speedKmh) ? speedKmh * cfg.speedFactor : null, g = gearOf();
                 return {
+                    mph: kmh === null ? null : kmh / U.KM_PER_MI, rpm: isNum(d.rpm) ? d.rpm : null,   // the KNOWN step's needles
                     yr: G.yOfRpm(isNum(d.rpm) ? d.rpm : 0, cfg.tach),
                     quads: G.centreQuads(art.atlas, { gear: g.gear, gearNo: g.gearNo, speed: kmh === null ? null : U.SPD(kmh, u), unit: u.speed, tag: MODE_TAG[carMode] }),
                     slats: v.coverSlats ? slat : null,
@@ -322,10 +327,10 @@ mgu.run({
                 since = r.since;
                 const before = dec.reason;
                 dec = r;
-                if (!r.want && st.shown) {
+                if (!r.want && active(st)) {
                     output.drop(r.reason);
                     if (r.reason === 'held') { heldUntil = now + cfg.renderer.heldBackoffMs; log.info('cover: BMW took the panel (' + (st.reason || st.holder || st.target) + '): asking again in ' + cfg.renderer.heldBackoffMs / 1000 + ' s'); }
-                } else if (r.want && !st.shown) { output.show(frame()); log.info('cover: shown'); }
+                } else if (r.want && !st.shown) output.show(frame());      // builds stage by stage; logs "cover: shown" when done
                 else if (r.want) output.update(frame());
                 output.tick(Date.now());   // after show() stamped its start: an older `now` would read as a clock jump
                 if (st.busy !== busyWas) {
@@ -355,7 +360,7 @@ mgu.run({
                     lastStats = now;
                 }
             });
-            safety.onError(() => { if (output.status().shown) output.drop('error'); since = null; });
+            safety.onError(() => { if (active(output.status())) output.drop('error'); since = null; });
             safety.onTrip(() => {
                 if (ladder) ladder.stop('stopped after errors');
                 if (output.disarm('stopped after errors')) checkRelease('stopped after errors');
@@ -391,16 +396,18 @@ mgu.run({
                 if (action) doAction(action);
                 writes.forEach((w) => settings.set(w[0], w[1]));
             });
+            let card = null;
+            const knownCard = () => card || (card = ST.knownCard(Canvas, (ctx.spec && ctx.spec.version) || ''));
             ladder = createLadder({
-                cfg, log, diag, verify, changed, frame: () => frame(), drawBoxes: (out) => drawBoxes(out, true),
+                cfg, log, diag, verify, changed, frame: () => frame(), drawBoxes: (out) => drawBoxes(out, true), art: art || {}, knownCard,
                 units: () => (units().temp === 'C' ? 'metric' : 'us'),
                 makeOutput: (opts) => createOutput(Object.assign({ ClusterRender, socketPath: crSocket, log, cfg, guard, art: art || {}, diag, fault: (msg) => log.warn('test: ' + msg) }, opts)),
             });
             function doAction(a) {
-                const m = /^test:([1-5]|stop)$/.exec(a);
+                const m = /^test:([1-6]|stop)$/.exec(a);
                 if (!m) return;
                 if (m[1] === 'stop') ladder.stop('stop button');
-                else if (!artOk && Number(m[1]) >= 4) log.warn('test: step ' + m[1] + ' needs the art file');
+                else if (!artOk && Number(m[1]) >= 5) log.warn('test: step ' + m[1] + ' needs the art file');
                 else ladder.start(Number(m[1]), { armed: output.status().armed, parked: parked() });
                 changed();
             }
@@ -440,6 +447,8 @@ mgu.run({
                 log.info('signals after the watches: ' + P.sigSummary(model()));
             }), (e) => log.warn('polls not started: ' + e));
             setInterval(tick, cfg.safety.tickMs);
+            // the dead-man re-arm (output.pump: a new animation every aliveRearmMs while something of ours is shown)
+            setInterval(guard('alive', () => { const now = Date.now(); output.pump(now); if (ladder) ladder.pump(now); }), cfg.safety.alivePumpMs);
             rearm();
             changed();
             log.info('started: cover ' + (v.coverOn ? 'on' : 'off') + ', when ' + v.whenToShow + ', BMW popups ' + v.popupGuard + ', drop if no drive mode ' + v.modeMissingDrop +

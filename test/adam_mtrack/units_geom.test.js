@@ -63,11 +63,31 @@ module.exports = [
         assert.ok(G.centreQuads(art.atlas, { gear: 'P', gearNo: 3, speed: 5, unit: 'km/h' }).length === 3, 'P: no small digit, one speed digit, unit, no tag');
         const none = G.centreQuads(art.atlas, { gear: null, speed: null, unit: 'mph' });
         assert.deepStrictEqual(none.map((x) => x.src.slice(0, 2)), [[art.atlas.styles.gear.glyphs['-'].x, art.atlas.styles.gear.glyphs['-'].y], [art.atlas.styles.speed.glyphs['-'].x, art.atlas.styles.speed.glyphs['-'].y], [art.atlas.labels.mph.x, art.atlas.labels.mph.y]]);
-        const sp = G.centreQuads(art.atlas, { gear: 'N', speed: 88, unit: 'mph' }).slice(1, 3), mid = (sp[0].dst[0] + sp[1].dst[0] + sp[1].dst[2]) / 2 + G.RECTS.glyphs.x;
+        const sp = G.centreQuads(art.atlas, { gear: 'N', speed: 88, unit: 'mph' }).slice(1, 3), mid = (sp[0].dst[0] + sp[1].dst[0] + sp[1].dst[2]) / 2 + G.RECTS.centre.x;
         near(mid, G.CENTRE.cx, 2, 'speed centred on the axis');
         const spH = art.atlas.styles.speed.glyphs['0'].h;
         assert.strictEqual(G.centreQuads(art.atlas, { gear: 'D', speed: 1500, unit: 'mph' }).filter((x) => x.dst[3] === spH).length, 3, 'speed capped at 3 digits');
-        q.forEach((x) => { assert.ok(x.dst[0] >= 0 && x.dst[1] >= 0 && x.dst[0] + x.dst[2] <= G.RECTS.glyphs.w && x.dst[1] + x.dst[3] <= G.RECTS.glyphs.h, JSON.stringify(x)); });
+        q.forEach((x) => { assert.ok(x.dst[0] >= 0 && x.dst[1] >= 0 && x.dst[0] + x.dst[2] <= G.RECTS.centre.w && x.dst[1] + x.dst[3] <= G.RECTS.centre.h, JSON.stringify(x)); });
+        const B = G.RECTS.badge, C = G.RECTS.centre, cc = G.CENTRE_CELL;
+        assert.ok(B.x >= C.x && B.y >= C.y && B.x + B.w <= C.x + C.w && B.y + B.h <= C.y + C.h, 'the M badge inside the centre layer');
+        assert.ok(cc.x >= C.x && cc.y >= C.y && cc.x + cc.w <= C.x + C.w && cc.y + cc.h <= C.y + C.h, 'the static line and stack icon inside the centre layer');
+        assert.deepStrictEqual([art.atlas.centre.px, art.atlas.centre.py, art.atlas.centre.w, art.atlas.centre.h], [cc.x, cc.y, cc.w, cc.h], 'the atlas cell is the geom one');
+    }],
+    ['the tachs\' numerals: 8 a bar from the atlas\'s bar style, the left bar\'s at the mirror of each centre, inside the over-art; the panels layer holds every live box', () => {
+        const art = JSON.parse(fs.readFileSync(path.join(__dirname, '../../apps/adam_mtrack/art/art.json'), 'utf8'));
+        const q = G.barNumeralQuads(art.atlas, cfg.tach), n = G.numerals(cfg.tach), O = G.RECTS.overR, L = G.RECTS.overL;
+        assert.strictEqual(q.length, 16);
+        q.slice(0, 8).forEach((x, i) => {
+            const c = art.atlas.styles.bar.glyphs[String(i)], l = q[8 + i];
+            assert.deepStrictEqual(x.src, [c.x, c.y]);
+            assert.deepStrictEqual(l.src, x.src, 'the same glyph, not mirrored');
+            near(x.dst[0] + c.ox + c.adv / 2, n[i].x, 0.6, 'right ' + i + ' centred on its numeral');
+            near(l.dst[0] + c.ox + c.adv / 2, 1920 - n[i].x, 0.6, 'left ' + i + ' at the mirror');
+            assert.ok(x.dst[0] >= O.x && x.dst[0] + x.dst[2] <= O.x + O.w && l.dst[0] >= L.x && l.dst[0] + l.dst[2] <= L.x + L.w, 'inside the over-art: ' + JSON.stringify([x.dst, l.dst]));
+        });
+        const P = G.RECTS.panels;
+        ['panelL', 'panelR', 'cornerL', 'cornerR'].forEach((k) => { const r = G.RECTS[k]; assert.ok(r.x >= P.x && r.y >= P.y && r.x + r.w <= P.x + P.w && r.y + r.h <= P.y + P.h, k); });
+        assert.ok(G.RECTS.cornerR.x + G.RECTS.cornerR.w <= 1760, 'the right corner ends at 1760 (the stray unit label is gone, KB-ANY-205)');
     }],
     ['widgets: a panel key changes only with what it shows (rounded as drawn); corners likewise', () => {
         const u = U.resolve('us'), lay = { upper: 'coolant', lower: 'boost' }, all = () => true;

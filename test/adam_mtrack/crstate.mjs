@@ -69,8 +69,13 @@ export function animAt(a, t) {
     return keys[keys.length - 1][1];
 }
 
-/** What target draws at t: [{ key, kind, x, y, w, h, fs, opacity, uniforms: [[name, v, type]], binds: [[sampler, assetKey]] }]. */
-export function layersAt(S, t, target) {
+/**
+ * What target draws at t: [{ key, kind, x, y, w, h, fs, opacity, uniforms: [[name, v, type]], binds: [[sampler, assetKey]] }].
+ * opts.anims false: the renderer plays no animation (a KOMBI that ignores them, or runs its clock behind): every
+ * uniform keeps the client's own value (what 0.1.1's cover drew on Adam's car: u_alive 0, nothing).
+ */
+export function layersAt(S, t, target, opts) {
+    const anims = !opts || opts.anims !== false;
     let list = Array.from(S.layers.values()).filter((l) => l.target === (target || 'panel') && l.visible)
         .sort((a, b) => a.cls - b.cls || a.z - b.z || a.order - b.order);
     let top = -1;
@@ -78,7 +83,7 @@ export function layersAt(S, t, target) {
     if (top > 0) list = list.slice(top);
     return list.map((l) => {
         const u = Object.assign({}, l.uniforms);
-        Object.values(l.anims).forEach((a) => { if (a.property === 'uniform') u[a.name] = { v: animAt(a, t), type: u[a.name] && u[a.name].type }; });
+        if (anims) Object.values(l.anims).forEach((a) => { if (a.property === 'uniform') u[a.name] = { v: animAt(a, t), type: u[a.name] && u[a.name].type }; });
         return { key: l.key, kind: l.kind, x: l.x, y: l.y, w: l.w, h: l.h, fs: l.fs, opacity: l.opacity, iw: l.iw, ih: l.ih, version: l.version,
             uniforms: Object.entries(u).map(([n, x]) => [n, x.v, x.type]), binds: Object.entries(l.binds) };
     });

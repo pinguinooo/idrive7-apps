@@ -1,11 +1,13 @@
 'use strict';
 /* main.js end to end: the kit's real Car on a fake signal link, the real cluster-render client against the fake
- * service. A default install never connects; the cover shows only after every condition held 1 s; each drop
- * condition removes every layer within one tick; exit closes the connection; the dead-man animation is restarted
- * every ~250 ms while shown; assets go once per arm, never on show or drop. The Safety settings: no popup signal
- * (Adam's car) shows with Use if sent and stays off with Require; Ignore; a popup signal not answered yet; drop if no
- * drive mode; the speed timeout; a hand-edited settings file cannot switch an always-on guard off; 0.1.0 settings
- * migrate; the trip disarms; no art never arms. */
+ * service. A default install never connects; the cover builds only after every condition held 1 s, stage by stage
+ * (4 layers, each made hidden, confirmed and written before the next), and shows with u_alive 1; each drop condition
+ * removes every layer within one tick; exit closes the connection; the dead-man is re-armed every ~60 ms with a new
+ * animation while shown; assets go once per arm, never again on a drop and a re-show; a refused stage stops the build
+ * and the Safety page says which and why; the 3.5 s hand-over after Shift Lights' HUD. The Safety settings: no popup
+ * signal (Adam's car) shows with Use if sent and stays off with Require; Ignore; a popup signal not answered yet; drop
+ * if no drive mode; the speed timeout; a hand-edited settings file cannot switch an always-on guard off; 0.1.0
+ * settings migrate; the trip disarms; no art never arms. */
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -120,13 +122,22 @@ async function start(saved, opts) {
     };
     return r;
 }
-/** Cover on, Sport+, speed and Check Control there: resolves once the layers are made; t0 = when the conditions started. */
+/** The cover's own live layers (not another app's, not a test step's). */
+const mine = (r) => r.live().filter((m) => r.app(m.conn) === 'adam_mtrack');
+/** The cover's live tachs layer (stage 1) and when it got u_alive 1 (it is shown last): null while not shown. */
+function shownAt(r) {
+    const t = mine(r).filter((l) => l.z === cfg.build.z)[0];
+    const m = t && r.msgs.filter((x) => x.conn === t.conn && x.ref === t.ref && x.op === 'uniform' && x.name === 'u_alive' && x.v === '1')[0];
+    return m ? m.t : null;
+}
+const coverUp = (r) => shownAt(r) !== null;
+/** Cover on, Sport+, speed and Check Control there: resolves once the cover is shown; t0 = when the conditions started. */
 async function shownApp(saved) {
     const r = await start(Object.assign({ coverOn: true }, saved));
     r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
     const t0 = Date.now();
-    await until(() => r.live().length >= 8, 4000, 'the cover');
-    r.shownAt = r.live()[0].t; r.t0 = t0;
+    await until(() => coverUp(r), 5000, 'the cover');
+    r.shownAt = shownAt(r); r.t0 = t0;
     return r;
 }
 /** Another app's client (Shift Lights) with one effect layer on target. */
@@ -136,12 +147,10 @@ function otherApp(r, target) {
     c.connect();
     return c;
 }
-/** The cover's own live layers (not another app's, not a test step's). */
-const mine = (r) => r.live().filter((m) => r.app(m.conn) === 'adam_mtrack');
 /** Every live layer is dropped within ms of cause() (fake-service timestamps). */
 async function dropsWithin(r, cause, ms, what) {
     const refs = r.live().map((m) => m.ref);
-    assert.ok(refs.length >= 7, 'layers before ' + what + ': ' + refs.length);
+    assert.ok(refs.length >= 4, 'layers before ' + what + ': ' + refs.length);
     const t = Date.now();
     await cause();
     await until(() => refs.every((ref) => r.drops().some((d) => d.ref === ref)), 2500, what + ' to drop every layer');
@@ -160,20 +169,20 @@ module.exports = [
         assert.ok(r.lines.some((l) => /^kill switch file: /.test(l)));
         await r.done();
     }],
-    ['shows only after 1 s of every condition; base overlay z 900 exclusive; assets once, before the layers', async () => {
+    ['builds only after 1 s of every condition: 4 layers (content z 90 to 93, never exclusive), each made hidden after its assets and lifted; 11 assets under the memory budget; shown with u_alive 1', async () => {
         const r = await shownApp({});
-        assert.ok(r.shownAt - r.t0 >= 950, 'shown after ' + (r.shownAt - r.t0) + ' ms');
-        const base = r.live()[0];
-        assert.strictEqual(base.target, 'panel'); assert.strictEqual(base.class, 'overlay'); assert.strictEqual(base.z, 900); assert.strictEqual(base.exclusive, 1);
-        assert.ok(r.live().every((l) => l.class === 'overlay' && l.z >= 900 && l.target === 'panel'));
-        const assetRefs = r.msgs.filter((m) => m.op === 'asset').map((m) => m.ref);
-        assert.strictEqual(assetRefs.length, 10);
+        const L4 = mine(r);
+        assert.ok(L4[0].t - r.t0 >= 950, 'first layer after ' + (L4[0].t - r.t0) + ' ms');
+        assert.deepStrictEqual(L4.map((l) => [l.target, l.class, l.z, l.exclusive, l.visible]), [90, 91, 92, 93].map((z) => ['panel', 'content', z, 0, 0]));
+        L4.forEach((l) => assert.ok(r.msgs.some((m) => m.conn === l.conn && m.op === 'set' && m.ref === l.ref && m.visible === 1 && m.t >= l.t), 'lifted: z ' + l.z));
+        const assets = r.msgs.filter((m) => m.op === 'asset');
+        assert.strictEqual(assets.length, 11);
+        const mem = assets.reduce((b, a) => b + a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2, 0);
+        assert.ok(mem <= cfg.memoryBudgetBytes, 'renderer memory ' + mem);
         const frames = r.msgs.filter((m) => m.op === 'frame');
-        assert.ok(frames.filter((f) => assetRefs.indexOf(f.ref) >= 0 && f.t <= r.shownAt).length >= 10, 'asset pixels before the layers');
-        const up = r.lines.filter((l) => /^upload at arm: /.test(l));
-        assert.strictEqual(up.length, 1, up.join('\n'));
-        assert.ok(Number(/(\d+) bytes/.exec(up[0])[1]) <= cfg.uploadBudgetBytes, up[0]);
-        assert.ok(r.lines.indexOf('cover: shown') >= 0);
+        assert.ok(assets.every((a) => frames.some((f) => f.ref === a.ref && f.t <= r.shownAt)), 'every asset\'s pixels before the show');
+        assert.ok(L4.every((l) => r.msgs.some((m) => m.conn === l.conn && m.ref === l.ref && m.op === 'uniform' && m.name === 'u_alive' && m.v === '1')), 'u_alive 1 on every layer');
+        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 11 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
         await r.done();
     }],
     ['drop: Sport+ to Sport (Sport+ only), within one tick; back after 1 s in Sport+', async () => {
@@ -218,7 +227,7 @@ module.exports = [
         const r = await shownApp({});
         await dropsWithin(r, () => r.feed(I.CCM, 'basicList', [{ ccmId: 7, activeState: 'AKTIV' }]), 60, 'check control');
         r.feed(I.CCM, 'basicList', [{ ccmId: 7, activeState: 'INAKTIV' }]);
-        await until(() => r.live().length >= 8, 3000, 'back after the message');
+        await until(() => coverUp(r), 4000, 'back after the message');
         await dropsWithin(r, () => r.feed(I.KI2, 'newCCMessage', { cCIdentifier: 1 }), 60, 'new check control');
         await r.done();
     }],
@@ -246,7 +255,7 @@ module.exports = [
     ['no popup signal (CheckControlMaster never answers, Adam\'s car), default BMW popups = Use if sent: the cover shows', async () => {
         const r = await start({ coverOn: true }, { unavailable: [I.CCM] });
         r.speed(0); r.mode(2);
-        await until(() => r.live().length >= 8, 4000, 'the cover without a popup signal');
+        await until(() => coverUp(r), 5000, 'the cover without a popup signal');
         assert.ok(r.lines.indexOf('BMW popup signal (CheckControlMaster): missing') >= 0, r.lines.join('\n'));
         assert.ok(r.lines.some((l) => /^signals after the watches: Signals: speed .*, BMW popups missing \(no answer\)$/.test(l)), r.lines.join('\n'));
         await r.done();
@@ -258,7 +267,7 @@ module.exports = [
         assert.strictEqual(r.layerOps().length, 0, 'the 0.1.0 rule');
         assert.ok(r.lines.some((l) => /^why off: BMW popups \(Require\): the popup signal is missing \(no answer\)$/.test(l)), r.lines.join('\n'));
         r.settings.set('popupGuard', 'auto');
-        await until(() => r.live().length >= 8, 3000, 'shown with Use if sent');
+        await until(() => coverUp(r), 4000, 'shown with Use if sent');
         await dropsWithin(r, () => r.settings.set('popupGuard', 'require'), 60, 'back to Require');
         await r.done();
     }],
@@ -275,7 +284,7 @@ module.exports = [
         const r = await start({ coverOn: true }, { delay: { [I.CCM]: 1500 } });
         const t0 = Date.now();
         r.speed(0); r.mode(2);
-        await until(() => r.live().length >= 8, 5000, 'shown after the popup signal answered');
+        await until(() => coverUp(r), 6000, 'shown after the popup signal answered');
         assert.ok(r.live()[0].t - t0 >= 2300, 'shown ' + (r.live()[0].t - t0) + ' ms after start: it waited');
         assert.ok(r.lines.indexOf('BMW popup signal (CheckControlMaster): waiting') >= 0 && r.lines.indexOf('BMW popup signal (CheckControlMaster): present') >= 0);
         await r.done();
@@ -291,7 +300,7 @@ module.exports = [
             assert.strictEqual(r.layerOps().length, 0, 'waits while the popup signal may still answer');
             assert.ok(r.lines.some((l) => /^why off: BMW popups: waiting for the popup signal/.test(l)), r.lines.join('\n'));
             shift = Math.ceil(cfg.safety.signalWaitMs / 1000);
-            await until(() => r.live().length >= 8, 3000, 'shown once the wait ran out');
+            await until(() => coverUp(r), 4000, 'shown once the wait ran out');
             assert.ok(r.lines.indexOf('BMW popup signal (CheckControlMaster): missing') >= 0);
             await r.done();
         } finally { process.hrtime = realHr; }
@@ -303,7 +312,7 @@ module.exports = [
         assert.strictEqual(r.layerOps().length, 0, 'no drive mode, Drop if missing on');
         assert.ok(r.lines.some((l) => /^why off: Drop if no drive mode \(on\): the drive-mode signal is missing \(no mode sent yet\)$/.test(l)), r.lines.join('\n'));
         r.settings.set('modeMissingDrop', false);
-        await until(() => r.live().length >= 8, 3000, 'Always without a drive mode');
+        await until(() => coverUp(r), 4000, 'Always without a drive mode');
         r.mode(0);
         await wait(300);
         assert.strictEqual(r.drops().length, 0, 'a value with no mode, Drop if missing off: stays');
@@ -324,7 +333,7 @@ module.exports = [
         const ms = await dropsWithin(r, () => r.speed(null), 1150, 'speed stale with 999999 saved');
         assert.ok(ms >= 900, 'dropped too early: ' + ms + ' ms');
         r.speed(0);
-        await until(() => r.live().length >= 8, 3000, 'back');
+        await until(() => coverUp(r), 4000, 'back');
         await dropsWithin(r, () => fs.writeFileSync(path.join(r.dataDir, cfg.safety.killFile), ''), 150, 'kill file with a bad killFile saved');
         fs.unlinkSync(path.join(r.dataDir, cfg.safety.killFile));
         await r.done();
@@ -335,7 +344,7 @@ module.exports = [
         assert.deepStrictEqual([V.popupGuard, V.modeMissingDrop, V.speedStaleMs, V._settingsV, V.coverOn], ['auto', false, 1000, 2, true]);
         assert.ok(r.lines.some((l) => /^settings migrated to v2: /.test(l)), r.lines.join('\n'));
         r.speed(0); r.mode(2);
-        await until(() => r.live().length >= 8, 4000, 'the cover after the migration');
+        await until(() => coverUp(r), 5000, 'the cover after the migration');
         await r.done();
     }],
     ['5 errors in 10 s: the trip disarms (connection closed), the cover stays off until Cover the cluster goes off and on', async () => {
@@ -348,7 +357,7 @@ module.exports = [
         await wait(1300);
         assert.strictEqual(r.live().length, 0, 'stays off after the trip');
         r.settings.set('coverOn', false); r.settings.set('coverOn', true);
-        await until(() => r.live().length >= 8, 4000, 'back after off and on');
+        await until(() => coverUp(r), 5000, 'back after off and on');
         await r.done();
     }],
     ['no art: the cover never arms or connects, and says why', async () => {
@@ -370,24 +379,27 @@ module.exports = [
         await until(() => r.live().length > 0, 3000, 'Sport individual');
         await r.done();
     }],
-    ['dead-man: u_alive restarted every ~250 ms while shown, none after the drop; no asset frames on show or drop', async () => {
+    ['dead-man: u_alive 1 while shown (never 0 after the show), a new animation every ~60 ms then the old one stopped; none after the drop; the art never sent again on a drop and a re-show', async () => {
         const r = await shownApp({});
-        await wait(1100);
-        const base = r.live()[0];
-        const an = r.msgs.filter((m) => m.op === 'animate' && m.ref === base.ref && m.name === 'u_alive');
-        assert.ok(an.length >= 4, 'animates: ' + an.length);
+        await wait(700);
+        const tachs = mine(r).filter((l) => l.z === cfg.build.z)[0];
+        const an = r.msgs.filter((m) => m.op === 'animate' && m.ref === tachs.ref && m.conn === tachs.conn && m.name === 'u_alive');
+        assert.ok(an.length >= 7, 'animates: ' + an.length);
+        assert.ok(an.every((m, i) => m.anim === i + 1 && m.keys === cfg.safety.aliveKeys), 'a new number each time: ' + an.map((m) => m.anim).join(' '));
         const gaps = an.slice(1).map((m, i) => m.t - an[i].t);
-        assert.ok(gaps.every((g) => g >= 150 && g <= 400), 'gaps ' + gaps.join(' '));
-        assert.ok(an.every((m) => m.anim === an[0].anim && m.keys === cfg.safety.aliveKeys), 'same animation number and keys');
-        const assetRefs = r.msgs.filter((m) => m.op === 'asset').map((m) => m.ref), shownAt = r.shownAt;
-        const late = () => r.msgs.filter((m) => m.op === 'frame' && m.t > shownAt && ['lum', 'band', 'overR', 'overL', 'atlas', 'badge'].some((x, i) => assetRefs[i] === m.ref));
+        assert.ok(gaps.every((g) => g >= 40 && g <= 200), 'gaps ' + gaps.join(' '));
+        const stops = r.msgs.filter((m) => m.op === 'stop' && m.ref === tachs.ref && m.conn === tachs.conn);
+        assert.ok(stops.length >= an.length - 2 && stops.every((m, i) => m.anim === i + 1), 'each old one stopped after the new one: ' + stops.map((m) => m.anim).join(' '));
+        assert.deepStrictEqual(r.msgs.filter((m) => m.ref === tachs.ref && m.conn === tachs.conn && m.op === 'uniform' && m.name === 'u_alive').map((m) => m.v), ['0', '1'], 'clear while lifted, then 1 for good');
         r.mode(1);
         await until(() => r.live().length === 0, 500, 'drop');
         const n = r.msgs.filter((m) => m.op === 'animate' && m.name === 'u_alive').length;
-        await wait(600);
+        await wait(400);
         assert.strictEqual(r.msgs.filter((m) => m.op === 'animate' && m.name === 'u_alive').length, n, 'animates after the drop');
-        assert.strictEqual(late().length, 0, 'static art re-sent');
-        assert.strictEqual(r.lines.filter((l) => /^upload at arm/.test(l)).length, 1);
+        r.mode(2);
+        await until(() => coverUp(r), 4000, 'shown again');
+        assert.strictEqual(r.msgs.filter((m) => m.op === 'asset').length, 11, 'the art went once');
+        assert.strictEqual(r.msgs.filter((m) => m.op === 'frame' && m.t > r.shownAt && r.msgs.some((a) => a.op === 'asset' && a.ref === m.ref && a.w !== 520 && a.w !== 900 && a.w !== 680)).length, 0, 'static art re-sent');
         await r.done();
     }],
     ['exit: process exit disarms (the service sees the connection close)', async () => {
@@ -410,8 +422,12 @@ module.exports = [
         assert.ok(/Why the cover is off right now: Another app is using the cluster: turn off Shift Lights cluster\/HUD/.test(r.screen()), r.screen());
         await r.page(3);
         assert.ok(/Cluster renderer: another app is using the cluster \(adam_shiftlights on hud\)/.test(r.screen()), r.screen());
+        const tc = Date.now();
         other.close();
-        await until(() => mine(r).length >= 8, 4000, 'the cover once the HUD let go');
+        await until(() => mine(r).length > 0, 9000, 'the cover once the HUD let go');
+        assert.ok(mine(r)[0].t - tc >= cfg.build.handoverMs - 100, 'first layer ' + (mine(r)[0].t - tc) + ' ms after the HUD let go: the 3.5 s hand-over');
+        assert.ok(r.lines.some((l) => /^cover: waiting \d\.\d s for the HUD to let go of the shared scene$/.test(l)), r.lines.join('\n'));
+        await until(() => coverUp(r), 4000, 'shown');
         await r.done();
     }],
     ['another app\'s layer on the panel (Shift Lights\' cluster slats): the cover refuses too, and shows once it goes', async () => {
@@ -423,7 +439,7 @@ module.exports = [
         assert.strictEqual(mine(r).length, 0);
         assert.ok(r.lines.some((l) => l === 'WARN cover: another app is using the cluster (the panel is shown for another app): the cover waits'), r.lines.join('\n'));
         other.close();
-        await until(() => mine(r).length >= 8, 4000, 'shown after they left');
+        await until(() => coverUp(r), 9000, 'shown after they left');
         await r.done();
     }],
     ['Cover off: dropped and closed at once, then a watcher that only says hello and asks the status confirms the panel idle', async () => {
@@ -457,7 +473,7 @@ module.exports = [
     ['a renderer error event: the cover drops (an error) and the error reaches the Safety page and the diag log', async () => {
         const r = await start({ coverOn: true }, { own: true });
         r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
-        await until(() => mine(r).length >= 8, 4000, 'the cover');
+        await until(() => coverUp(r), 5000, 'the cover');
         const base = mine(r)[0];
         await dropsWithin(r, () => r.fake.error('layer', base.ref, 'fs: refused by the test'), 150, 'an error event');
         assert.ok(r.lines.some((l) => /^ERR error in cluster-render: Error: cluster-render refused layer \d+: fs: refused by the test/.test(l)), r.lines.join('\n'));
@@ -475,7 +491,7 @@ module.exports = [
         await wait(2500);
         assert.strictEqual(r.live().length, 0, 'back within 2.5 s');
         assert.ok(r.lines.some((l) => /^cover: BMW took the panel \(.+\): asking again in 10 s$/.test(l)), r.lines.join('\n'));
-        await until(() => r.live().length >= 8, 12000, 'back after the backoff');
+        await until(() => coverUp(r), 14000, 'back after the backoff');
         assert.ok(Date.now() - t >= 9500, 'back after ' + (Date.now() - t) + ' ms');
         await r.done();
     }],
@@ -485,35 +501,71 @@ module.exports = [
         await until(() => r.live().length === 0, 1000, 'drop');
         await until(() => r.lines.some((l) => /^release confirmed \(mode\)/.test(l)), 3000, 'release');
         const d = fs.readFileSync(path.join(r.dataDir, 'mtrack-diag.log'), 'utf8');
-        [/start: M Track 0\.1\.2, node v/, /> \{"op":"hello","app":"adam_mtrack","proto":1\}/, /> pixels lum \(asset \d+, r8 1920x720\): 1382400 B/,
-            /> \{"op":"layer","ref":\d+,"target":"panel","kind":"effect","class":"overlay","z":900,.*"exclusive":1,"fs":"\d+ chars"\}/, /> \{"op":"bind",/,
+        [/start: M Track 0\.1\.3, node v/, /> \{"op":"hello","app":"adam_mtrack","proto":1\}/, /> pixels bgR2 \(asset \d+, r8 480x360\): 172800 B/,
+            /> \{"op":"layer","ref":\d+,"target":"panel","kind":"effect","class":"content","z":90,"x":0,"y":0,"w":1920,"h":720,"visible":0,"exclusive":0,"contend":0,"fs":"\d+ chars"\}/,
+            /cover: stage 1 TACHS made hidden \(layer \d+, 5 assets, 839440 B\)/, /> \{"op":"set","ref":\d+,"visible":1\}/, /> \{"op":"bind",/,
+            /cover: stage 1 TACHS confirmed and written: bound/, /cover: stage 4 SLATS confirmed and written: bound/,
             /< \{"ev":"hello"/, /< \{"ev":"target","target":"panel","state":"shown"/, /< \{"ev":"layer","ref":\d+,"state":"shown"/,
             /< status: upload: cap .* \| target panel: /, /> \{"op":"drop","ref":\d+\}/, /release confirmed \(mode\): panel idle/].forEach((re) => assert.ok(re.test(d), re + '\n' + d.slice(0, 2500)));
-        assert.ok(!/"op":"uniform"/.test(d) && !/"name":"u_alive"/.test(d), 'uniforms and alive restarts are counted, not logged one by one');
+        assert.ok(!/"op":"uniform"/.test(d) && !/"name":"u_alive"/.test(d) && !/"op":"stop"/.test(d), 'uniforms, alive re-arms and stops are counted, not logged one by one');
         await r.done();
     }],
-    ['test pattern from the Safety page pill: refused while the cover is on (says so); step 1 with the cover off and parked: two bars on adam_mtrack-test, removed after 10 s, release confirmed', async () => {
+    ['test pattern from the Safety page pill: refused while the cover is on (says so); step 1 KNOWN with the cover off and parked: one layer and its 1024 x 576 card on adam_mtrack-test, built, shown 10 s, removed, release confirmed', async () => {
         const r = await start({ coverOn: true }, { own: true });
         r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
         await r.page(3);
         r.press('safety:test:1');
         await wait(100);
-        assert.ok(r.lines.indexOf('test: step 1 BAR refused: turn Cover the cluster off first') >= 0, r.lines.join('\n'));
+        assert.ok(r.lines.indexOf('test: step 1 KNOWN refused: turn Cover the cluster off first') >= 0, r.lines.join('\n'));
         r.settings.set('coverOn', false);
         await r.page(3);
-        assert.ok(/Step 1 BAR refused: turn Cover the cluster off first/.test(r.screen()), r.screen());
+        assert.ok(/Step 1 KNOWN refused: turn Cover the cluster off first/.test(r.screen()), r.screen());
         r.press('safety:test:1');
-        const t0 = Date.now();
-        await until(() => r.msgs.some((m) => m.op === 'layer' && r.app(m.conn) === 'adam_mtrack-test'), 3000, 'the test layers');
+        await until(() => r.msgs.some((m) => m.op === 'layer' && r.app(m.conn) === 'adam_mtrack-test'), 3000, 'the test layer');
         const layers = r.msgs.filter((m) => m.op === 'layer' && r.app(m.conn) === 'adam_mtrack-test'), conn = layers[0].conn;
-        assert.strictEqual(layers.length, 2);
-        await r.page(3);
-        assert.ok(/Step 1 BAR showing: \d+ s left\. Watch the cluster/.test(r.screen()) && /Test pattern: what cluster-render said/.test(r.screen()), r.screen());
+        assert.deepStrictEqual(layers.map((l) => [l.w, l.h, l.class, l.z, l.visible]), [[1920, 720, 'content', 90, 0]]);
+        assert.deepStrictEqual(r.msgs.filter((m) => m.op === 'asset' && m.conn === conn).map((a) => [a.format, a.w, a.h, a.sampling]), [['r8', 1024, 576, 'bilinear']]);
+        await until(() => r.msgs.some((m) => m.conn === conn && m.op === 'uniform' && m.name === 'u_alive' && m.v === '1'), 3000, 'shown');
+        const t0 = Date.now();
+        for (let i = 0; i < 20 && !/Step 1 KNOWN showing/.test(r.screen()); i++) await r.page(3);
+        assert.ok(/Step 1 KNOWN showing: \d+ s left\. Watch the cluster/.test(r.screen()) && /Test pattern: what cluster-render said/.test(r.screen()), r.screen());
         await until(() => r.msgs.some((m) => m.ev === 'close' && m.conn === conn), 12000, 'removed after 10 s');
-        assert.ok(Date.now() - t0 >= 9800, 'removed after ' + (Date.now() - t0) + ' ms');
+        assert.ok(Date.now() - t0 >= 9700, 'removed after ' + (Date.now() - t0) + ' ms');
         await until(() => r.lines.some((l) => /^release confirmed \(test step 1\): panel idle/.test(l)), 3000, 'released');
         await r.page(3);
-        assert.ok(/Step 1 BAR done: released/.test(r.screen()) && /Released: panel idle/.test(r.screen()), r.screen());
+        assert.ok(/Step 1 KNOWN done: released/.test(r.screen()) && /Released: panel idle/.test(r.screen()), r.screen());
+        await r.done();
+    }],
+    ['a guard failing while the cover builds drops what the build made, within one tick (the renderer not writing: the build waits at stage 1)', async () => {
+        const r = await start({ coverOn: true }, { own: true });
+        r.fake.writes(false);
+        r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
+        await until(() => mine(r).length === 1 && r.msgs.some((m) => m.op === 'set' && m.visible === 1), 5000, 'stage 1 made and lifted');
+        await wait(300);
+        assert.strictEqual(shownAt(r), null, 'never shown: its art is not written');
+        await r.page(3);
+        assert.ok(/Cover build: stage 1 of 4 TACHS: waiting for the renderer to write its art/.test(r.screen()), r.screen());
+        const ref = mine(r)[0].ref, t = Date.now();
+        r.mode('SPORT_DYNAMIC');
+        await until(() => r.drops().some((d) => d.ref === ref), 1000, 'the build dropped');
+        assert.ok(r.drops().filter((d) => d.ref === ref)[0].t - t <= 150, 'within one tick');
+        assert.ok(r.lines.some((l) => /^cover: build dropped at stage 1 \(mode\)$/.test(l)), r.lines.join('\n'));
+        r.fake.writes(true);
+        await r.done();
+    }],
+    ['a refused stage stops the cover\'s build there: Home and Safety say which stage and why; it builds again after the error hold', async () => {
+        const r = await start({ coverOn: true }, { own: true });
+        r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
+        await until(() => mine(r).some((l) => l.z === cfg.build.z + 1), 5000, 'stage 2 made');
+        const ref = mine(r).filter((l) => l.z === cfg.build.z + 1)[0].ref;
+        r.fake.error('layer', ref, 'refused by the test');
+        await until(() => r.lines.some((l) => l === 'WARN cover: build stopped at stage 2 of 4 PANELS: refused: layer: refused by the test'), 2000, 'stopped');
+        assert.ok(r.lines.some((l) => /^ERR error in cluster-render: Error: cluster-render refused layer \d+: refused by the test \(stage 2 PANELS\)/.test(l)), 'one error counted');
+        assert.strictEqual(mine(r).length, 0, 'the stopped build\'s layers dropped');
+        await r.page(3);
+        assert.ok(/Cover build: stopped at stage 2 of 4 PANELS: refused: layer: refused by the test/.test(r.screen()), r.screen());
+        assert.ok(/(Cover build|last build) stopped at stage 2 of 4 PANELS/.test(r.screen()), 'the why line names it: ' + r.screen());
+        await until(() => coverUp(r), 6000, 'built again and shown');
         await r.done();
     }],
     ['rpm moves the fill line (u_fill) and the slats light near the shift point', async () => {

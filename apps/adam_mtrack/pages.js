@@ -12,7 +12,7 @@
  */
 const L = require('./logic');
 const C = require('./catalogue');
-const { STEPS } = require('./ladder');
+const { STEPS, buildWord } = require('./ladder');
 
 const PAGES = ['Home', 'Panels', 'Look', 'Safety', 'About'];
 const IDS = ['home', 'panels', 'look', 'safety', 'about'];
@@ -63,9 +63,12 @@ function pills(m, page, key, eff) {
 }
 const settingsOf = (m) => L.readSettings(m.get, m.schema).values;
 
+/** The cover's build under way or stopped, as one sentence (Home and the Safety page's top line). */
+const buildPhrase = (b) => (b.state === 'stopped' ? 'Cover build ' : 'Building the cover: ') + buildWord(b);
 /** Home's status line for a decision reason. */
 function statusOf(m) {
-    const r = m.reason || 'off', v = settingsOf(m);
+    const r = m.reason || 'off', v = settingsOf(m), b = sigOf(m).build;
+    if (r === 'showing' && b && b.state !== 'shown' && b.state !== 'idle') return { text: buildPhrase(b), tone: b.state === 'stopped' ? 'warn' : 'on' };
     if (r === 'mode') {
         const now = MODE_NAME[m.carMode] || 'no drive mode from the car';
         return { text: (v.whenToShow === 'sport' ? 'Waiting for Sport or Sport+' : 'Waiting for Sport+') + ' (now ' + now + ')', tone: 'warn' };
@@ -115,7 +118,11 @@ function sigSummary(m) {
 const WHY_TONE = { off: 'off', showing: 'on', hold: 'on', kill: 'crit', tripped: 'crit', noart: 'crit', nocc: 'crit' };
 /** Why the cover is off: the blocking guard by its Safety-page name and its signal's status (present / missing / stale). */
 function whyOf(m) {
-    const r = m.reason || 'off', v = settingsOf(m), s = sigOf(m), S = m.cfg.safety;
+    const r = m.reason || 'off', v = settingsOf(m), s = sigOf(m), S = m.cfg.safety, b = s.build;
+    if (r === 'showing' && b && b.state !== 'shown' && b.state !== 'idle') {
+        const w = buildPhrase(b);
+        return { text: w, short: w, tone: b.state === 'stopped' ? 'warn' : 'on' };
+    }
     if (r === 'showing') return { text: 'Showing on the cluster: every guard holds', short: 'showing', tone: 'on' };
     if (r === 'hold') return { text: 'Showing in a moment: every guard has to hold for ' + secs(S.showHoldMs), short: 'holding for ' + secs(S.showHoldMs), tone: 'on' };
     const when = SHORT.whenToShow[v.whenToShow], mode = s.mode !== undefined ? s.mode : m.carMode;
@@ -136,7 +143,8 @@ function whyOf(m) {
         nomode: 'Drop if no drive mode (on): the drive-mode signal is ' + modeWord(s, m),
         mode: 'When to show (' + when + '): ' + (MODE_NAME[mode] ? 'drive mode is ' + MODE_NAME[mode] + ' (signal present)' : 'the drive-mode signal is ' + modeWord(s, m)),
     };
-    const short = SAY[r] || L.REASONS[r] || r;
+    const stop = b && b.stop && (r === 'error' || r === 'tripped') ? ' (last build ' + buildWord(Object.assign({}, b.stop, { state: 'stopped' })) + ')' : '';
+    const short = (SAY[r] || L.REASONS[r] || r) + stop;
     return { text: 'Why the cover is off right now: ' + short, short, tone: WHY_TONE[r] || 'warn' };
 }
 
@@ -200,6 +208,14 @@ function testRow(m) {
         { value: t && t.running ? 'Step ' + t.n : 'Off', tone: warn ? 'warn' : t && t.running ? 'on' : undefined });
 }
 
+/** The cover's build and its dead-man, one line (Safety, Always on block). */
+function buildLine(s, S) {
+    const b = s.build;
+    if (!b || b.state === 'idle') return 'Cover: not built yet; dead-man at 1 while shown. Exit or crash: dropped';
+    if (b.state === 'shown') return 'Cover: ' + b.of + ' of ' + b.of + ' stages shown; dead-man at 1, re-armed every ' + secs(S.aliveRearmMs);
+    return 'Cover build: ' + buildWord(b);
+}
+
 /**
  * Safety: the three Safety settings (BMW popups, drop if no drive mode, the speed timeout) and the test pattern, why
  * the cover is off, every signal the guards read with what cluster-render says, and every always-on guard with its
@@ -216,7 +232,7 @@ function safety(m) {
         { text: 'Speed timeout: on, ' + secs(stale) + '. A frozen speed over the real one is dangerous', tone: tone(['nospeed']) },
         { text: 'Kill switch (' + S.killFile + ' file): ' + (s.killed ? 'FOUND, cover off' : 'clear') + '. Works with no screen', tone: tone(['kill'], 'crit') },
         { text: 'Errors: ' + errors + '. ' + S.errorLimit + ' in ' + secs(S.errorWindowMs) + ' stop the cover until off and on', tone: tone(['error', 'tripped'], s.tripped ? 'crit' : 'warn') },
-        { text: 'Heartbeat: ' + (s.shown ? 'running' : 'idle') + ', blanks 1.2 s after a hang. Exit or crash: dropped', tone: 'dim' },
+        { text: buildLine(s, S), tone: s.build && s.build.state === 'stopped' ? 'warn' : 'dim' },
         rel ? { text: 'Last release (' + rel.why + '): ' + rel.short.replace(/^Released: /, ''), tone: rel.ok || rel.unreachable ? 'dim' : 'warn' }
             : { text: 'Clock jump: guarded. Demo data, BMW taking the panel, art check: always win', tone: 'dim' },
     ] };
@@ -263,17 +279,17 @@ function about(m) {
                 'The cover on a G01 cluster in Sport+, its pixels and brightness',
                 'Shown speed vs the OEM one (speed factor ' + m.cfg.speedFactor + ')',
                 'Popups above or below; the KOMBI GPU and the shaders',
-                'The renderer clock for the dead-man switch; the speed getter',
+                'Whether the KOMBI plays renderer animations (Test 2 BAR); the speed getter',
                 'Drive mode values, boost scale, range unit, clock time zone',
                 'Which signals the car sends (the Safety tab lists them)',
-                'Safety > Test pattern, parked: which step shows on the car',
+                'Safety > Test pattern, parked: 1 KNOWN first, then 2 to 6',
             ] },
             { title: 'Not in ' + (m.version || 'this version'), lines: [hidden.slice(0, 4).join(', '), hidden.slice(4).join(', ')] },
         ],
         right: [
             { title: 'Remove safely', lines: ['Store > M Track Cluster > Remove.', 'Never kill or restart it by hand: three crashes', 'in about 30 s wipe every app.'] },
             { title: 'Kill switch', lines: ['Home > Cover the cluster off, or a file named', m.cfg.safety.killFile + ' in the app\'s data folder (Safety tab).'] },
-            { title: 'With Shift Lights', lines: ['Turn Shift Lights\' HUD and cluster off for the cover:', 'the HUD and the cluster panel share one scene, and', 'the cover waits while another app holds it.'] },
+            { title: 'With Shift Lights', lines: ['Turn Shift Lights\' HUD and cluster off for the cover:', 'the HUD and the cluster panel share one scene; the', 'cover waits 3.5 s after the HUD lets go of it.'] },
         ],
     };
 }

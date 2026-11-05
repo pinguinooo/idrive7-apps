@@ -1,6 +1,7 @@
 'use strict';
 /* renderer.js: the service's status text parsed (its server.cpp format: holder in brackets, a reason, the rendering
- * after "; ", "scene published", layers by app), whose the shared scene is (busyOf), the warm HUD scene, a release's
+ * after "; ", "scene published", layers by app with class and z, assets with their writes), our uploads and the pixel
+ * memory every app takes, whose the shared scene is (busyOf), the warm HUD scene, a release's
  * verdict, the diag tap (uniforms counted, the rest logged, raw events seen first), and the watcher against the fake
  * service: the panel idle (confirmed), another app keeping it (NOT confirmed, named), no service (not reachable). */
 const assert = require('assert');
@@ -40,11 +41,25 @@ module.exports = [
         assert.deepStrictEqual(st.targets.hud, { state: 'shown', holder: 'us', reason: '', rendering: 'rendered: renderer 1a2b subscribed for 40 s', published: false });
         assert.deepStrictEqual(st.targets.guide_auto, { state: 'parked', holder: 'stock', reason: 'parked behind stock', rendering: '', published: false });
         assert.strictEqual(RD.parseStatus('target hud: slot 0x323 scene 0x1000400 800x480: idle; scene published').targets.hud.published, true);
-        assert.deepStrictEqual(st.layers.map((l) => [l.id, l.kind, l.app, l.target, l.state, l.reason]),
-            [[7, 'effect', 'adam_shiftlights', 'hud', 'shown', ''], [9, 'effect', 'adam_mtrack', 'panel', 'waiting', 'target waiting'], [3, 'video', 'waze-on-cluster', 'map', 'stalled', 'no frame yet']]);
+        assert.deepStrictEqual(st.layers.map((l) => [l.id, l.kind, l.app, l.target, l.klass, l.z, l.state, l.reason]),
+            [[7, 'effect', 'adam_shiftlights', 'hud', 'overlay', 2, 'shown', ''], [9, 'effect', 'adam_mtrack', 'panel', 'overlay', 900, 'waiting', 'target waiting'],
+                [3, 'video', 'waze-on-cluster', 'map', 'content', 0, 'stalled', 'no frame yet']]);
+        assert.deepStrictEqual(st.assets, [{ id: 4, format: 'r8', w: 1920, h: 720, app: 'adam_mtrack', target: 'panel', writes: 1, failed: 0 }]);
         assert.deepStrictEqual(RD.othersOn(st, ['panel', 'hud']), ['adam_shiftlights on hud']);
-        assert.deepStrictEqual(RD.parseStatus(''), { cap: null, targets: {}, layers: [] });
+        assert.deepStrictEqual(RD.parseStatus(''), { cap: null, targets: {}, layers: [], assets: [] });
         assert.deepStrictEqual(RD.parseStatus(undefined).layers, []);
+    }],
+    ['uploadsOf, memoryOf, layerOf: our assets\' writes on a target, every app\'s pixel memory (assets twice), our layer by its z', () => {
+        const st = RD.parseStatus(['asset 1 r8 480x360 of adam_mtrack on panel: 2 writes, 337 KB, 1 failed', 'asset 2 rgba8 16x1 of adam_mtrack on panel: 0 writes, 0 KB, 0 failed',
+            'asset 3 rgba8 1088x480 of robertn_waze_cluster on map: 1 writes, 2040 KB, 0 failed', 'asset 5 r8 10x10 of adam_mtrack-test on panel: 0 writes, 0 KB, 0 failed',
+            'layer 9 effect of adam_mtrack on panel, content z 91: hidden', 'layer 10 effect of adam_mtrack on panel, content z 90, guide_hold 0: shown'].join('\n'));
+        assert.deepStrictEqual(RD.uploadsOf(st, 'adam_mtrack', 'panel'), { listed: 2, unwritten: 1, failed: 1 });
+        assert.deepStrictEqual(RD.uploadsOf(st, 'adam_mtrack', 'hud'), { listed: 0, unwritten: 0, failed: 0 });
+        const m = RD.memoryOf(st, 'adam_mtrack');
+        assert.deepStrictEqual([m.mine, m.all], [480 * 360 * 2 + 16 * 4 * 2, 480 * 360 * 2 + 16 * 4 * 2 + 1088 * 480 * 4 * 2 + 100 * 2]);
+        assert.deepStrictEqual(m.others, ['robertn_waze_cluster 4.0 MiB', 'adam_mtrack-test 0.0 MiB']);
+        assert.deepStrictEqual([RD.layerOf(st, 'adam_mtrack', 'panel', 91).state, RD.layerOf(st, 'adam_mtrack', 'panel', 90).state, RD.layerOf(st, 'adam_mtrack', 'panel', 92)], ['hidden', 'shown', null]);
+        assert.deepStrictEqual(RD.memoryOf(null, 'x'), { all: 0, mine: 0, others: [] });
     }],
     ['busyOf: the HUD wanted by anyone, the panel wanted by another app (not ours), waiting on the shared scene id, a foreign holder; BMW is not busy', () => {
         const B = RD.busyOf;
@@ -72,20 +87,42 @@ module.exports = [
         assert.ok(/^NOT released: panel shown, adam_shiftlights on panel \(6\.0 s\)$/.test(RD.verdictShort(held)), RD.verdictShort(held));
         assert.ok(/^release NOT confirmed \(cover off\): our layers gone, panel shown, adam_shiftlights on panel after 6\.0 s$/.test(RD.verdictText(held, 'cover off')), RD.verdictText(held, 'cover off'));
     }],
-    ['tap: every op but uniforms and alive restarts goes to the diag log (shaders as their length), events too, onEvent sees each first', () => {
+    ['tap: every op but uniforms, alive re-arms and stops goes to the diag log (shaders as their length), events too (a repeated status counted), onEvent sees each first', () => {
         const lines = [], seen = [], sent = [];
         const c = { app: 'adam_mtrack', _send(m) { sent.push(m); }, _event(ev) { seen.push('client ' + ev.ev); } };
         RD.tap(c, (l) => lines.push(l), (ev) => seen.push('tap ' + ev.ev));
         c._send({ op: 'layer', ref: 3, fs: 'x'.repeat(2100) });
         c._send({ op: 'uniform', ref: 3, name: 'u_fill', v: '1' });
         c._send({ op: 'animate', ref: 3, anim: 1, name: 'u_alive' });
+        c._send({ op: 'stop', ref: 3, anim: 1 });
         c._send({ op: 'animate', ref: 3, anim: 2, name: 'u_on' });
         c._event({ ev: 'target', target: 'panel', state: 'shown' });
         c._event({ ev: 'status', text: 'a\nb' });
-        assert.strictEqual(sent.length, 4, 'everything still sent');
+        c._event({ ev: 'status', text: 'a\nb' });
+        c._event({ ev: 'status', text: 'a\nb' });
+        c._event({ ev: 'status', text: 'c' });
+        assert.strictEqual(sent.length, 5, 'everything still sent');
         assert.deepStrictEqual(lines, ['> {"op":"layer","ref":3,"fs":"2100 chars"}', '> {"op":"animate","ref":3,"anim":2,"name":"u_on"}',
-            '< {"ev":"target","target":"panel","state":"shown"}', '< status: a\nb']);
-        assert.deepStrictEqual(seen, ['tap target', 'client target', 'tap status', 'client status']);
+            '< {"ev":"target","target":"panel","state":"shown"}', '< status: a\nb', '< status: the same again, 2 times', '< status: c']);
+        assert.deepStrictEqual(seen, ['tap target', 'client target', 'tap status', 'client status', 'tap status', 'client status', 'tap status', 'client status', 'tap status', 'client status']);
+    }],
+    ['the fake service writes an asset only while its target is asked for (a visible layer), as cluster-render does; hidden layers say so', async () => {
+        const s1 = sock(), fake = createFake(s1, () => {}, null, { lingerMs: 100 });
+        const c = new ClusterRender('adam_mtrack', s1), texts = [];
+        try {
+            c.on('status', (t) => texts.push(t));
+            await new Promise((res) => { c.on('ready', res); c.connect(); });
+            const a = c.asset({ target: 'panel', format: 'r8', w: 4, h: 4 });
+            c.pixels(a, null, Buffer.alloc(16, 9));
+            const l = c.effect({ target: 'panel', x: 0, y: 0, w: 4, h: 4, visible: false, fs: 'void main(){}' });
+            await wait(150); c.status(); await wait(150);
+            let st = RD.parseStatus(texts[texts.length - 1]);
+            assert.deepStrictEqual([st.assets[0].writes, st.layers[0].state, st.targets.panel.state], [0, 'hidden', 'idle'], 'hidden: nothing asks for the panel, nothing written');
+            c.set(l, { visible: true });
+            await wait(200); c.status(); await wait(150);
+            st = RD.parseStatus(texts[texts.length - 1]);
+            assert.deepStrictEqual([st.assets[0].writes, st.targets.panel.state], [1, 'shown'], 'visible: the panel asked for, the asset written');
+        } finally { c.close(); await new Promise((res) => fake.close(res)); }
     }],
     ['verifyRelease against the fake service: panel idle: confirmed; another app keeping the panel: NOT confirmed and named; no service: not reachable', async () => {
         const s1 = sock(), fake = createFake(s1, () => {}, null, { lingerMs: 200 });

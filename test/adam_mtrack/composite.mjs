@@ -36,7 +36,7 @@ export async function createCompositor(browser) {
     await page.evaluate(() => { window.__cr = window.CRDraw.create(document.getElementById('c')); });
     const sent = {};
     async function render(S, t, opts) {
-        const list = layersAt(S, t, 'panel');
+        const list = layersAt(S, t, 'panel', { anims: !(opts && opts.anims === false) && process.env.CR_ANIMS !== 'off' });
         for (const k of assetsOf(list)) {
             const a = S.assets.get(k);
             if (!a || !a.version || sent[k] === a.version) continue;

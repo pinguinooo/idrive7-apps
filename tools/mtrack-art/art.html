@@ -111,7 +111,7 @@ function barUnder(side) {           // the translucent band and its darker top (
   ctx.fillStyle = top; ctx.fillRect(0, 170, 1920, 170);
   ctx.restore();
 }
-function barOver(side) {            // everything the mockup draws after the fill: fields, lines, ticks, numerals 0..7
+function barOver(side, numerals) {  // everything the mockup draws after the fill: fields, lines, ticks (numerals 0..7: the atlas's bar style)
   const b = bar(side), s = b.side;
   const o0 = BARS.line + BARS.gap + BARS.line2 + 1, o1 = o0 + 8;
   [[T.amberFrom, T.redFrom, COL.yellowField, 'dash'], [T.redFrom, T.max, COL.redField, 'solid']].forEach(([a, c, col, kind]) => {
@@ -137,7 +137,7 @@ function barOver(side) {            // everything the mockup draws after the fil
     line([[xo2 + s * 2, y], [xo2 - s * t.len, y]], t.major ? 3.4 : 2.6, COL.line, 'butt');
     fill([[xo2 + s * 5, y], [xo2 - s * 1, y - 4], [xo2 - s * 1, y + 4]], COL.line);
   });
-  GEOM.numerals(T).forEach((n) => sq(String(n.k), s > 0 ? n.x : 1920 - n.x, n.y, BARS.numH, '#f4f6f8', { box: true, w: BARS.numW, sw: BARS.numSW, glow: 'rgba(255,255,255,0.35)' }));
+  if (numerals) GEOM.numerals(T).forEach((n) => sq(String(n.k), s > 0 ? n.x : 1920 - n.x, n.y, BARS.numH, '#f4f6f8', { box: true, w: BARS.numW, sw: BARS.numSW, glow: 'rgba(255,255,255,0.35)' }));
 }
 function bandMask(side) { fill(bandPoly(bar(side)), '#ffffff'); }
 
@@ -172,15 +172,18 @@ function cornerR(units) {
   const L = OIL_SCALE[units];
   corner(mirror(FUEL_ARC).reverse(), L.map(String), ['rgba(40,120,255,0.95)', 'rgba(232,30,36,0.95)'], 1,
     mirror(FUEL_LABELS).reverse().map(([x, y], i) => [x - [22, 16, 10][i], y]));
-  text(units === 'us' ? '°F' : '°C', 1806, 606, 20, '#e9edf1', 'center', 500);
 }
 
 /* ---------- the glyph atlas: white on transparent, one cell a glyph ---------- */
+// v2 (0.1.3): only the glyphs the cover draws (gear P R N D -, the small gear digit, the speed, the tachs' numerals),
+// plus one static cell: the centre's line, end caps and stack icon (CENTRE_CELL, panel px), drawn by the centre layer
 const STYLES = {
-  gear: { chars: '0123456789PRNDMS-', h: C.gearH, o: { box: true, w: C.gearW, sw: C.gearSW, glow: 'rgba(255,255,255,0.3)' } },
-  small: { chars: '12345678M', h: 38, o: { box: true, w: 30, sw: 7 } },
+  gear: { chars: 'PRND-', h: C.gearH, o: { box: true, w: C.gearW, sw: C.gearSW, glow: 'rgba(255,255,255,0.3)' } },
+  small: { chars: '12345678', h: 38, o: { box: true, w: 30, sw: 7 } },
   speed: { chars: '0123456789-', h: C.speedH, o: { box: true, w: C.speedW, sw: C.speedSW, glow: 'rgba(255,255,255,0.25)' } },
+  bar: { chars: '01234567', h: BARS.numH, o: { box: true, w: BARS.numW, sw: BARS.numSW, glow: 'rgba(255,255,255,0.35)' } },
 };
+const CENTRE_CELL = GEOM.CENTRE_CELL;
 const LABELS = { mph: [22, 500, 'left'], 'km/h': [22, 500, 'left'] };
 const TAGS = ['SPORT+', 'SPORT', 'COMFORT', 'ECO PRO'];
 function atlasLayout() {             // cells packed in rows, 1024 wide
@@ -209,17 +212,22 @@ function atlasLayout() {             // cells packed in rows, 1024 wide
     meta.tags[s] = { x: r.x, y: r.y, w, h };
     cells.push(() => text(s, r.x + w / 2, r.y + h / 2, 20, '#ffffff', 'center', 700));
   });
+  const cc = place(CENTRE_CELL.w, CENTRE_CELL.h);
+  meta.centre = { x: cc.x, y: cc.y, w: CENTRE_CELL.w, h: CENTRE_CELL.h, px: CENTRE_CELL.x, py: CENTRE_CELL.y };
+  cells.push(() => { ctx.save(); ctx.beginPath(); ctx.rect(cc.x, cc.y, CENTRE_CELL.w, CENTRE_CELL.h); ctx.clip(); ctx.translate(cc.x - CENTRE_CELL.x, cc.y - CENTRE_CELL.y); centreStatic(); ctx.restore(); });
   meta.h = y + rowH;
   return { meta, draw: () => cells.forEach((f) => f()) };
 }
 
 /* ---------- the items: name, format, rect (panel px), draw ---------- */
 const R = GEOM.RECTS, ATLAS = atlasLayout();
+// v2 (0.1.3): 'bg' is drawn whole and make-art.mjs keeps its right half at half resolution (bgR2: the tachs layer mirrors
+// it and samples it bilinear); the centre's line, caps and stack icon moved to the atlas (they are not mirror images);
+// one over-art (the right bar, no numerals): the tachs layer mirrors it for the left bar and draws the numerals itself
 const ITEMS = [
-  { name: 'lum', format: 'r8', from: 'luma', rect: R.base, sampling: 'nearest', draw: () => { base(); plate(-1); plate(1); centreStatic(); barUnder(-1); barUnder(1); } },
+  { name: 'bg', format: 'r8', from: 'luma', rect: R.tachs, sampling: 'bilinear', draw: () => { base(); plate(-1); plate(1); barUnder(-1); barUnder(1); } },
   { name: 'band', format: 'r8', from: 'alpha', rect: R.band, sampling: 'nearest', draw: () => bandMask(1) },
-  { name: 'overR', format: 'rgba8', rect: R.overR, sampling: 'nearest', draw: () => barOver(1) },
-  { name: 'overL', format: 'rgba8', rect: R.overL, sampling: 'nearest', draw: () => barOver(-1) },
+  { name: 'overR', format: 'rgba8', rect: R.overR, sampling: 'nearest', draw: () => barOver(1, false) },
   { name: 'atlas', format: 'r8', from: 'alpha', rect: { x: 0, y: 0, w: ATLAS.meta.w, h: ATLAS.meta.h }, sampling: 'nearest', draw: ATLAS.draw },
   { name: 'badge', format: 'rgba8', rect: R.badge, sampling: 'nearest', draw: () => badge(962.5, 250) },
   { name: 'cornerL', format: 'rgba8', rect: R.cornerL, sampling: 'nearest', draw: cornerL },

@@ -3,7 +3,8 @@
 // mode, Check Control, tyres, fuel, outside temperature, a speed stall) through the app's emu feed socket; BMW taking
 // the panel through the fake service's control socket. Every check reads the fake service's log (timestamps on the
 // same clock as this script) and the app's log; the cover is drawn from that log as the service would draw it
-// (composite.mjs) and saved as PNGs, the pull as an mp4. The hang and the crash are emulator-only steps.
+// (composite.mjs) and saved as PNGs, the pull as an mp4; 0.1.3: also drawn as a renderer that plays no animation would
+// (Adam's KOMBI with 0.1.1's dead-man), where the cover must still draw. The hang and the crash are emulator-only steps.
 // env: PORT, CR_LOG, FEED, CTL, DATA_DIR, OUT. Exit 1 on any failed check.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -116,7 +117,17 @@ const key = async (k, n) => { for (let i = 0; i < (n || 1); i++) { await page.ke
 // tab after Enter. So: all the way left, Enter (Home), then i turns right, Enter.
 const tab = async (i) => { await page.focus('#stage'); await key('[', 6); await key('Enter'); if (i) { await key(']', i); await key('Enter'); } await wait(500); };
 const COVER = 0.25 * 1920 * 720;          // a shown cover lights most of the panel; an empty one none
-const LAYERS = 8;
+const LAYERS = 4;                         // 0.1.3: tachs, panels, centre, slats (each stage confirmed by the renderer)
+/** The cover is shown: its live tachs layer (adam_mtrack, z build.z) got u_alive 1, which the build sends last. */
+function coverShown() {
+    const t = live().filter((m) => m.z === cfg.build.z && recs.some((h) => h.conn === m.conn && h.op === 'hello' && h.app === 'adam_mtrack'))[0];
+    return !!t && recs.some((m) => m.conn === t.conn && m.ref === t.ref && m.op === 'uniform' && m.name === 'u_alive' && m.v === '1');
+}
+async function untilShown(ms, what) {
+    for (const end = Date.now() + (ms || 5000); Date.now() < end; await wait(20)) if (coverShown()) return true;
+    console.log('  (timed out: ' + what + ', live ' + live().length + ')');
+    return false;
+}
 
 try {
     await sig({});
@@ -138,7 +149,7 @@ try {
     const t1b = Date.now();
     mode(2);
     await set('coverOn', true);
-    check(await untilLive((n) => n >= LAYERS, 6000, 'the cover without a popup signal'), '1b BMW popups = Use if sent, no popup signal: the cover shows');
+    check(await untilShown(6000, 'the cover without a popup signal'), '1b BMW popups = Use if sent, no popup signal: the cover shows');
     // logged once at start (the emulator's watch settles at once): read the whole log so far
     const lgStart = await appLog();
     check(lgStart.indexOf('BMW popup signal (CheckControlMaster): missing') >= 0 && lgStart.indexOf('BMW popup signal (CheckControlMaster): present') < 0,
@@ -162,24 +173,31 @@ try {
     let t = Date.now();
     await set('coverOn', true);
     await wait(2500);
-    check(since(t).some((m) => m.op === 'asset'), '2 cover on: connected and the assets uploaded');
+    check(since(t).some((m) => m.ev === 'connect') && !since(t).some((m) => m.op === 'asset'), '2 cover on: connected, nothing uploaded before the first build');
     check(!since(t).some((m) => m.op === 'layer'), '2 Comfort with Sport+ only: no layer');
-    const up = (await appLog(t)).filter((l) => /upload at arm: /.test(l));
-    results.upload = up;
-    check(up.length === 1 && Number(/(\d+) bytes/.exec(up[0])[1]) <= cfg.uploadBudgetBytes, '2 upload at arm within ' + cfg.uploadBudgetBytes + ': ' + up.join(' / '));
-    const assetFrames = since(t).filter((m) => m.op === 'frame');
 
     console.log('step 3 Sport+ idle in P');
     t = Date.now();
     mode(2);
-    check(await untilLive((n) => n >= LAYERS, 5000, 'cover'), '3 Sport+: the cover shows');
+    check(await untilShown(6000, 'cover'), '3 Sport+: the cover builds stage by stage and shows');
     const first = live()[0];
     results.showDelay = first ? first.t - t : null;
-    check(first && first.t - t >= 950, '3 shown after ' + results.showDelay + ' ms (every condition held 1 s first)');
-    check(first && first.exclusive === 1 && first.z === 900 && first.class === 'overlay', '3 base layer: overlay, z 900, exclusive');
+    check(first && first.t - t >= 950, '3 first layer after ' + results.showDelay + ' ms (every condition held 1 s first)');
+    check(live().length === LAYERS && live().every((m, i) => m.class === 'content' && m.z === cfg.build.z + i && m.exclusive === 0 && m.visible === 0), '3 four layers, content z 90 to 93, never exclusive, each made hidden');
+    const built = since(t).filter((m) => m.op === 'asset'), mem = built.reduce((b, a) => b + a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2, 0);
+    results.memory = mem;
+    check(built.length === 11 && mem <= cfg.memoryBudgetBytes, '3 11 assets, ' + (mem / 1048576).toFixed(2) + ' MiB of the renderer\'s 16 (budget ' + (cfg.memoryBudgetBytes / 1048576) + ')');
+    check((await appLog(t)).some((l) => /^cover: shown \(4 layers, 11 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), '3 the app logs the build: 4 layers, 11 assets, 2.9 MiB');
+    const assetFrames = since(t).filter((m) => m.op === 'frame');
     await wait(600);
     let r = await shot('mtrack-01-idle-P-0mph');
     check(r.lit > COVER, '3 idle composite drawn (' + r.lit + ' lit px)');
+    {   // the 0.1.1 fault: a renderer that plays no animation left every layer at the client's u_alive (0): nothing drawn
+        const t3 = Date.now(), x = await comp.render(replay.at(t3), t3, { anims: false });
+        fs.writeFileSync(path.join(OUT, 'mtrack-01-idle-no-renderer-animations.png'), x.png);
+        results.noAnimLit = x.lit;
+        check(x.lit > COVER && Math.abs(x.lit - r.lit) < 0.02 * r.lit, '3 drawn the same by a renderer that plays no animation (' + x.lit + ' vs ' + r.lit + ' lit px): u_alive is 1 while shown');
+    }
 
     console.log('step 4 pull to 7,000 rpm');
     const pull = { t0: Date.now(), at: {} };
@@ -215,7 +233,7 @@ try {
     async function backStep(name, cause) {
         const t0 = Date.now();
         await cause();
-        const ok = await untilLive((n) => n >= LAYERS, 5000, name);
+        const ok = await untilShown(6000, name);
         const m = live()[0], ms = m ? m.t - t0 : null;
         check(ok && ms >= 950, name + ': back ' + ms + ' ms later (after 1 s)');
     }
@@ -242,7 +260,7 @@ try {
     await set('whenToShow', 'sportplus');
     await untilLive((n) => n === 0, 1000, 'sportplus only');
     mode(2);
-    await untilLive((n) => n >= LAYERS, 3000, 'back');
+    await untilShown(5000, 'back');
 
     console.log('step 8 speed lost');
     await dropStep('8 speed lost', () => feed({ block: 'speed', on: true }), 1150, 900);
@@ -262,7 +280,7 @@ try {
         await ctl({ target: 'panel', state: 'shown' });
         await wait(2500);
         check(live().length === 0, '10 BMW gives it back: not asked for again within 2.5 s (the ' + B / 1000 + ' s backoff)');
-        const ok = await untilLive((n) => n >= LAYERS, B + 4000, '10 back after the backoff');
+        const ok = await untilShown(B + 5000, '10 back after the backoff');
         const m = live()[0], ms = m ? m.t - t0 : null;
         results['10 back after BMW'] = ms;
         check(ok && ms >= B - 500 && ms <= B + 2500, '10 BMW gives it back: back ' + ms + ' ms later (after the ' + B / 1000 + ' s backoff and the 1 s hold)');
@@ -273,8 +291,7 @@ try {
     await dropStep('11 DISABLE file', () => fs.writeFileSync(kill, ''), 250);
     await shot('mtrack-drop-kill-switch');
     fs.unlinkSync(kill);
-    await untilLive((n) => n >= LAYERS, 6000, 'after the kill file');
-    check(live().length >= LAYERS, '11 DISABLE removed: re-armed and shown again');
+    check(await untilShown(7000, 'after the kill file'), '11 DISABLE removed: re-armed and shown again');
 
     console.log('step 14 panel choices');
     await sig({ gLat: 0.35, gLong: -0.2 });
@@ -291,11 +308,11 @@ try {
 
     console.log('step 15 units');
     await set('units', 'metric');
-    await untilLive((n) => n >= LAYERS, 6000, 'metric');
+    await untilShown(7000, 'metric');
     await wait(1500);
     await shot('mtrack-metric');
     await set('units', 'us');
-    await untilLive((n) => n >= LAYERS, 6000, 'us');
+    await untilShown(7000, 'us');
     await wait(1500);
     await shot('mtrack-us');
     const quads = since(0).filter((m) => m.op === 'uniform' && m.name === 'u_src');
@@ -320,26 +337,33 @@ try {
     await uiShot('mtrack-page-safety-why-off');
     check((await appLog(tWhy)).some((l) => /^why off: Speed timeout: speed signal stale \(none for 1 s\)$/.test(l)), '17 why off logged: Speed timeout, speed signal stale');
     feed({ block: 'speed', on: false });
-    await untilLive((n) => n >= LAYERS, 5000, 'back after the Safety shot');
+    await untilShown(6000, 'back after the Safety shot');
     await tab(0);
 
     console.log('step 12 hang (SIGSTOP the app process)');
     const pid = execSync("pgrep -f 'hu-stub.js .*adam_mtrack' | head -1").toString().trim();
     await sig({ rpm: 3000, speed: 50, gear: 'D3' });
-    await untilLive((n) => n >= LAYERS, 3000, 'before the hang');
+    await untilShown(5000, 'before the hang');
     await wait(500);
     const tStop = Date.now();
     execFileSync('kill', ['-STOP', pid]);
     await wait(1300);
     r = await shot('mtrack-hang-1300ms', tStop + 1300);
     const dropsInHang = since(tStop).filter((m) => m.op === 'drop' || m.ev === 'close').length;
+    const fast = await comp.render(replay.at(tStop + 400), tStop + 400);
+    fs.writeFileSync(path.join(OUT, 'mtrack-hang-400ms.png'), fast.png);
+    // a renderer that plays no animation (Step 2 BAR tells on the car): the hung cover stays as it was until the app resumes or ends
+    const still = await comp.render(replay.at(tStop + 1300), tStop + 1300, { anims: false });
     execFileSync('kill', ['-CONT', pid]);
-    results.hang = { lit: r.lit, layers: r.layers, drops: dropsInHang };
-    check(r.layers >= LAYERS && dropsInHang === 0 && r.lit < 0.01 * 1920 * 720, '12 hang: layers still there, nothing dropped, yet the panel is blank by +1.3 s (u_alive 0; ' + r.lit + ' lit px)');
+    results.hang = { lit: r.lit, layers: r.layers, drops: dropsInHang, litAt400ms: fast.lit, litNoRendererAnimations: still.lit };
+    check(r.layers >= LAYERS && dropsInHang === 0 && r.lit < 0.01 * 1920 * 720 && fast.lit < 0.01 * 1920 * 720,
+        '12 hang: layers still there, nothing dropped, yet the panel is blank by +0.4 s when the renderer plays the dead-man (' + fast.lit + ' / ' + r.lit + ' lit px)');
     // resumed, the speed it saw last is over 1 s old: it drops (no speed), then shows again once a speed held 1 s
     const tCont = Date.now();
     await wait(300);
-    const back = await untilLive((n) => n >= LAYERS && since(tCont).some((m) => m.op === 'layer'), 4000, 'after the hang') || live().length >= LAYERS;
+    // either it rebuilt (a drop, then a new build) or the cover stayed and its re-arms resumed (the queued speed arrived fresh)
+    let back = false;
+    for (const end = Date.now() + 7000; Date.now() < end && !back; await wait(20)) back = coverShown() && (since(tCont).some((m) => m.op === 'layer') || !since(tCont).some((m) => m.op === 'drop'));
     await wait(300);
     r = await shot('mtrack-hang-resumed');
     results.hangResume = (await appLog(tCont)).filter((l) => /^cover: /.test(l));
