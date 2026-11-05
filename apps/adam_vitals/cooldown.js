@@ -27,7 +27,8 @@ const gentleOf = (rpm, kw) => rpm < C.GENTLE_RPM && kw < C.GENTLE_KW;
 function step(s, i, dtSec, monoMs) {
     const n = Object.assign({}, s);
     const dt = clamp(isNum(dtSec) ? dtSec : 0, 0, C.MAX_DT_S);     // a clock step back counts as no time
-    if (!isNum(i.rpm)) return n;
+    // no rpm signal: nothing to count, but "Cooled" still clears after its hold (KB-ANY-203)
+    if (!isNum(i.rpm)) return n.doneAt !== null && monoMs - n.doneAt > C.DONE_HOLD_MS ? init() : n;
     const kw = isNum(i.kw) ? i.kw : 0;
     if (i.rpm < C.OFF_RPM) {
         // engine off: no oil flow, so it does not count as cooling; off long enough, it has cooled anyway

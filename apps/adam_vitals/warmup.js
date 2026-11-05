@@ -6,22 +6,39 @@
  *   limit(oil, warmOil, redline, coldLimit)  safe rev limit: coldLimit at 30 deg C oil, redline once warm
  *   measured(hist, idx, windowMs)            deg C / min over the last ~3 min (or windowMs; least squares) and its span
  *   eta(key, temp, target, d, hist)          { state: none | ready | off | stalled | warming, min, rate, est }
- *   hist rows: [mono, oil, coolant, rpm, speed, boost] every 5 s
+ *   hist rows: [mono, oil, coolant, rpm, speed, boost, trans] every 5 s (COL: the column of each temperature)
  *
  * Takeover (immutable: every call returns a new state):
- *   init(), step(s, { oil, coolant, rpm, warmOil, warmCoolant, now }), dismiss(s), show(s, { enabled, page }),
- *   reason(s, enabled) -> 'shown' | 'dismissed' | 'warm' | 'setting off' | 'no temperature'
- * Cold = below either target before the engine has been warm this drive. Once warm it stays hidden for the
+ *   init(), step(s, { oil, coolant, trans, rpm, warmOil, warmCoolant, warmTrans, settled, now, wall }), dismiss(s),
+ *   show(s, { enabled, page }), reason(s, enabled) -> 'shown' | 'dismissed' | 'warm' | 'setting off' | 'no temperature'
+ * Cold = below any target before the engine has been warm this drive; a temperature that is null (no reading,
+ * or the transmission left out by its setting) neither blocks nor counts. Coolant and transmission also count as
+ * warm when settled ({ coolant, trans }: eta says stalled) within SETTLE_C under their mark: a thermostat holds
+ * them there (BMW's heat management targets ~95 deg C coolant under high load, the 8HP's cooler thermostat opens
+ * ~75 deg C), so the view never waits for good on a mark the car won't reach. Oil must reach its mark (it sets
+ * the rev limit). Once warm it stays hidden for the
  * drive (no flicker back when a temperature dips). Hide lasts for the drive. A new drive = engine off
  * (rpm < 300 or no rpm) for NEW_DRIVE_MS, then running (rpm > 400): auto start-stop at a light is not one.
+ * The time off is the larger of the steady clock (now) and the wall clock (wall, Date.now): the steady clock
+ * stops while the head unit sleeps (KB-ANY-203); a wall clock set back counts as no time off.
  */
 const isNum = (x) => typeof x === 'number' && isFinite(x);
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
 
-// typical warm-up rates (deg C / min) until enough has been measured (Warm-Up's)
-const TYPICAL = { oil: { drive: 4, idle: 1.5 }, coolant: { drive: 7, idle: 3 } };
+// typical warm-up rates (deg C / min) until enough has been measured (oil and coolant: Warm-Up's; trans: ours [U],
+// the ATF warms through the coolant heat exchanger, so slower than the coolant)
+const TYPICAL = { oil: { drive: 4, idle: 1.5 }, coolant: { drive: 7, idle: 3 }, trans: { drive: 3, idle: 1 } };
+const COL = { oil: 1, coolant: 2, trans: 6 };
 const NEW_DRIVE_MS = 600000;    // product rule: 10 min off is a new drive (start-stop stops are far shorter)
 const OFF_RPM = 300, RUN_RPM = 400;
+const SETTLE_C = 15;            // settled this close under its mark (27 F) counts as warm (coolant, transmission)
+/*
+ * The gauges' marks, deg C (README "Temperature marks" has the sources; pages.js colours by them). ready: the "is warm
+ * at" settings; oil's crit: the "Oil temp warning" setting. Warming: WARMING_C under ready.
+ */
+const WARMING_C = 20;
+const HOT = { oil: 129.4, coolant: 121.1, trans: 110 };        // 265 F, 250 F, 230 F: amber from here
+const CRIT = { coolant: 126.7, trans: 121.1 };                 // 260 F, 250 F: red from here
 
 function limit(oil, warmOil, redline, coldLimit) {
     if (!isNum(oil) || !isNum(redline)) return null;
@@ -47,7 +64,7 @@ function eta(key, temp, target, d, hist) {
     if (!isNum(temp)) return { state: 'none' };
     if (temp >= target) return { state: 'ready' };
     if (isNum(d.rpm) && d.rpm < OFF_RPM) return { state: 'off' };
-    const m = measured(hist, key === 'oil' ? 1 : 2);
+    const m = measured(hist, COL[key]);
     const typ = TYPICAL[key][isNum(d.speed) && d.speed > 10 ? 'drive' : 'idle'];
     const w = clamp(m.span / 120000, 0, 1);
     const rate = isNum(m.rate) ? w * m.rate + (1 - w) * typ : typ;
@@ -57,20 +74,25 @@ function eta(key, temp, target, d, hist) {
 }
 
 /* ---------- takeover ---------- */
-function init() { return { warmedRun: false, dismissed: false, offSince: null, cold: false, hasTemp: false }; }
+function init() { return { warmedRun: false, dismissed: false, offSince: null, offWall: null, cold: false, hasTemp: false }; }
 
 function step(s, i) {
     const n = Object.assign({}, s);
     const off = !isNum(i.rpm) || i.rpm < OFF_RPM, running = isNum(i.rpm) && i.rpm > RUN_RPM;
-    if (off) n.offSince = s.offSince === null ? i.now : s.offSince;
-    else if (running) {
-        if (s.offSince !== null && i.now - s.offSince >= NEW_DRIVE_MS) { n.dismissed = false; n.warmedRun = false; }
-        n.offSince = null;
+    if (off) {
+        n.offSince = s.offSince === null ? i.now : s.offSince;
+        n.offWall = s.offSince === null || !isNum(s.offWall) ? (isNum(i.wall) ? i.wall : null) : s.offWall;
+    } else if (running) {
+        const wallOff = isNum(i.wall) && isNum(s.offWall) ? i.wall - s.offWall : 0;     // negative: the clock was set back
+        if (s.offSince !== null && Math.max(i.now - s.offSince, wallOff) >= NEW_DRIVE_MS) { n.dismissed = false; n.warmedRun = false; }
+        n.offSince = null; n.offWall = null;
     }
-    const pairs = [[i.oil, i.warmOil], [i.coolant, i.warmCoolant]].filter((p) => isNum(p[0]));
+    const st = i.settled || {};
+    const pairs = [['oil', i.oil, i.warmOil], ['coolant', i.coolant, i.warmCoolant], ['trans', i.trans, i.warmTrans]].filter((p) => isNum(p[1]) && isNum(p[2]));
+    const warm = (p) => p[1] >= p[2] || (p[0] !== 'oil' && st[p[0]] === true && p[1] >= p[2] - SETTLE_C);
     n.hasTemp = pairs.length > 0;
-    if (n.hasTemp && pairs.every((p) => p[0] >= p[1])) n.warmedRun = true;
-    n.cold = !n.warmedRun && pairs.some((p) => p[0] < p[1]);
+    if (n.hasTemp && pairs.every(warm)) n.warmedRun = true;
+    n.cold = !n.warmedRun && pairs.some((p) => !warm(p));
     return n;
 }
 
@@ -84,4 +106,4 @@ function reason(s, enabled) {
     return 'shown';
 }
 
-module.exports = { TYPICAL, NEW_DRIVE_MS, limit, measured, eta, init, step, dismiss, show, reason };
+module.exports = { TYPICAL, COL, NEW_DRIVE_MS, SETTLE_C, WARMING_C, HOT, CRIT, limit, measured, eta, init, step, dismiss, show, reason };

@@ -97,6 +97,15 @@ module.exports = [
         run(c, 19.75, GENTLE);
         assert.strictEqual(Cd.advice(c.st, GENTLE).state, 'done', 'still within 20 s');
     }],
+    ['"cooled" clears after 20 s with the rpm signal gone too (KB-ANY-203: it stayed for good)', () => {
+        const c = fresh(); run(c, 20, HARD); run(c, 90, GENTLE);
+        assert.strictEqual(Cd.advice(c.st, GENTLE).state, 'done');
+        run(c, 19, { rpm: null });
+        assert.strictEqual(Cd.advice(c.st, IDLE).state, 'done', 'within its 20 s');
+        run(c, 1.5, { rpm: undefined });
+        assert.deepStrictEqual(c.st, Cd.init(), 'cleared without rpm');
+        assert.strictEqual(Cd.message(Cd.advice(c.st, { speed: 0 })), 'OK TO SHUT OFF');
+    }],
     ['moderate load (neither hard nor gentle) pauses the countdown: cool, need and hard time unchanged', () => {
         const c = fresh(); run(c, 20, HARD); run(c, 10, GENTLE);
         const before = Object.assign({}, c.st);            // cool 10, needS 90

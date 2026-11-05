@@ -9,7 +9,7 @@ const SPEC = JSON.parse(fs.readFileSync(path.join(APP, 'app.json'), 'utf8'));
 module.exports = [
     ['identity: id, version, loggingId, a title of its own', () => {
         assert.strictEqual(SPEC.id, path.basename(APP));
-        assert.strictEqual(SPEC.version, '0.1.0');
+        assert.strictEqual(SPEC.version, '0.2.0');
         assert.strictEqual(SPEC.loggingId, 'OAD2');
         assert(['M Vitals', 'Warm-Up'].indexOf(SPEC.title) < 0, SPEC.title);
         assert.strictEqual(SPEC.screens[0].title, SPEC.title);
@@ -25,6 +25,16 @@ module.exports = [
         const tabs = JSON.parse(src.match(/const TABS = (\[[^\]]*\]);/)[1].replace(/'/g, '"'));
         assert.strictEqual(tabs.length, 6);
         assert.deepStrictEqual(SPEC.settings.filter((s) => s.key === 'page')[0].options.map((o) => o[0]), pages);
+    }],
+    ['the transmission read is Transmission Config\'s (zf8hp): gearbox unit 0x18, 22 6000, 1 byte, deg C + 40, its timeouts; nothing unconfirmed', () => {
+        const e = SPEC.config.dme.egs;
+        assert.strictEqual(e.length, 1, 'one candidate: an unconfirmed DID could show a wrong number the warm-up counts');
+        assert.deepStrictEqual([e[0].ecu, e[0].did, e[0].bytes, e[0].at, e[0].factor, e[0].offset], [0x18, '6000', 1, 0, 1, -40]);
+        assert.strictEqual(e[0].timeoutMs, 1800);
+        assert.deepStrictEqual(e[0].diagOpts, { maxRetries: 0, callTimeoutMs: 2500, hardTimeoutMs: 6500, pendingTimeoutMs: 2500 });
+        assert.deepStrictEqual([e[0].min, e[0].max], [-40, 160]);
+        const id = SPEC.config.dme.egsId;
+        assert.deepStrictEqual([id.length, id[0].ecu, id[0].did, id[0].bytes], [1, 0x18, 'F150', 3]);
     }],
     ['NOTICE credits upstream', () => {
         const n = fs.readFileSync(path.join(APP, 'NOTICE'), 'utf8');

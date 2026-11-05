@@ -1,8 +1,8 @@
 {
   "id": "adam_vitals",
   "title": "Engine Vitals",
-  "description": "Boost, power, torque, gear, oil and coolant, with a warm-up guide and turbo cool-down",
-  "version": "0.1.0",
+  "description": "Boost, power, torque, gear, oil, coolant and transmission temperatures, with a warm-up guide and turbo cool-down",
+  "version": "0.2.0",
   "vendor": "custom",
   "loggingId": "OAD2",
   "iconGlyph": "gauge",
@@ -158,7 +158,7 @@
       "gearRatiosNote": "ZF 8HP, 1st..8th"
     },
     "dme": {
-      "comment": "Intake / fuel values from the engine unit (DME, ecu 18 = 0x12) with UDS 0x22. F4xx = the standard OBD PIDs (F40F = PID 0x0F); a candidate with \"obd\" instead of \"did\" asks for the same PID with OBD service 01 (some engine units refuse the F4xx identifiers with NRC 31). Candidates are tried in order; the first plausible one wins. value = raw * factor + offset (bar / deg C). If a tile says 'not available from this DME', add your engine's BMW-specific DID here. boost: tried in order when the sport display sends no boost (setting 'Boost from'); absolute pressure in kPa, the outside air pressure (baro) is subtracted. boostTarget / boostActual: boost pressure setpoint and actual (absolute kPa, baro subtracted), BMW DIDs first, then OBD PID 0x70; the tile only shows when the target answers. loadTarget / loadActual: requested and actual relative air charge in %. timing: OBD PID 0x0E, degrees before top dead centre. misfire: OBD service 06 monitor results (MID A2 = cylinder 1, A3 = cylinder 2 ...), tid 0C = misfires this driving cycle (0B = average of the last 10 cycles); engine units that only speak UDS are asked 0x22 F6A2... egs: gearbox temperature from the gearbox unit (EGS); give each candidate its \"ecu\".",
+      "comment": "Intake / fuel values from the engine unit (DME, ecu 18 = 0x12) with UDS 0x22. F4xx = the standard OBD PIDs (F40F = PID 0x0F); a candidate with \"obd\" instead of \"did\" asks for the same PID with OBD service 01 (some engine units refuse the F4xx identifiers with NRC 31). Candidates are tried in order; the first plausible one wins. value = raw * factor + offset (bar / deg C). If a tile says 'not available from this DME', add your engine's BMW-specific DID here. boost: tried in order when the sport display sends no boost (setting 'Boost from'); absolute pressure in kPa, the outside air pressure (baro) is subtracted. boostTarget / boostActual: boost pressure setpoint and actual (absolute kPa, baro subtracted), BMW DIDs first, then OBD PID 0x70; the tile only shows when the target answers. loadTarget / loadActual: requested and actual relative air charge in %. timing: OBD PID 0x0E, degrees before top dead centre. misfire: OBD service 06 monitor results (MID A2 = cylinder 1, A3 = cylinder 2 ...), tid 0C = misfires this driving cycle (0B = average of the last 10 cycles); engine units that only speak UDS are asked 0x22 F6A2... egs: transmission oil temperature from the gearbox unit (EGS, ecu 24 = 0x18); give each candidate its \"ecu\". Only a confirmed DID belongs here: the warm-up counts it (0.1.0's unconfirmed DA12 is gone).",
       "ecu": 18,
       "iat": [
         {
@@ -474,18 +474,34 @@
           "offset": -40,
           "min": -40,
           "max": 160,
-          "note": "ZF 8HP (GSZFBCE) _GETRIEBEOELTEMPERATUR, deg C + 40 (idrive7-apps PR #29, read on a G22)"
-        },
+          "note": "ZF 8HP (GSZFBCE) _GETRIEBEOELTEMPERATUR, deg C + 40: the read Transmission Config (upstream apps/zf8hp) makes (catalog.js 6000, reader.js physical 0x18 / 0x22, 1800 ms, the same options), read on a G22 (idrive7-apps PR #29). Asked every 5 s on every page (the warm-up uses it); its replies go to the log ('raw EGS 6000')",
+          "timeoutMs": 1800,
+          "diagOpts": {
+            "maxRetries": 0,
+            "callTimeoutMs": 2500,
+            "hardTimeoutMs": 6500,
+            "pendingTimeoutMs": 2500
+          }
+        }
+      ],
+      "egsId": [
         {
           "ecu": 24,
-          "did": "DA12",
-          "bytes": 1,
+          "did": "F150",
+          "bytes": 3,
           "at": 0,
           "factor": 1,
-          "offset": -48,
-          "min": -40,
-          "max": 160,
-          "note": "gearbox unit (EGS, 0x18) transmission oil temperature, deg C + 48 (from a forum report, not confirmed on a car: only shown once it changes; the replies go to the log, \"raw EGS\")"
+          "offset": 0,
+          "min": 0,
+          "max": 16777215,
+          "timeoutMs": 1800,
+          "diagOpts": {
+            "maxRetries": 0,
+            "callTimeoutMs": 2500,
+            "hardTimeoutMs": 6500,
+            "pendingTimeoutMs": 2500
+          },
+          "note": "the gearbox unit's identification (SGBD), read once with the first transmission reading and logged: Transmission Config decodes only 0F25D0 (G22) and 0F21E0 (G20 330e); here it is not a gate, only evidence for the car day"
         }
       ]
     }
@@ -578,35 +594,39 @@
       "key": "warmOil",
       "label": "Oil is warm at",
       "type": "choice",
-      "default": 80,
+      "default": 104.4,
       "options": [
-        [
-          60,
-          "140 °F (60 °C)"
-        ],
-        [
-          70,
-          "158 °F (70 °C)"
-        ],
-        [
-          75,
-          "167 °F (75 °C)"
-        ],
         [
           80,
           "176 °F (80 °C)"
         ],
         [
-          85,
-          "185 °F (85 °C)"
+          87.8,
+          "190 °F (88 °C)"
         ],
         [
-          90,
-          "194 °F (90 °C)"
+          93.3,
+          "200 °F (93 °C)"
         ],
         [
-          100,
-          "212 °F (100 °C)"
+          98.9,
+          "210 °F (99 °C)"
+        ],
+        [
+          101.7,
+          "215 °F (102 °C)"
+        ],
+        [
+          104.4,
+          "220 °F (104 °C)"
+        ],
+        [
+          107.2,
+          "225 °F (107 °C)"
+        ],
+        [
+          110,
+          "230 °F (110 °C)"
         ]
       ]
     },
@@ -614,31 +634,105 @@
       "key": "warmCoolant",
       "label": "Coolant is warm at",
       "type": "choice",
-      "default": 80,
+      "default": 104.4,
       "options": [
-        [
-          60,
-          "140 °F (60 °C)"
-        ],
-        [
-          70,
-          "158 °F (70 °C)"
-        ],
-        [
-          75,
-          "167 °F (75 °C)"
-        ],
         [
           80,
           "176 °F (80 °C)"
         ],
         [
-          85,
-          "185 °F (85 °C)"
+          87.8,
+          "190 °F (88 °C)"
         ],
         [
-          90,
-          "194 °F (90 °C)"
+          93.3,
+          "200 °F (93 °C)"
+        ],
+        [
+          98.9,
+          "210 °F (99 °C)"
+        ],
+        [
+          101.7,
+          "215 °F (102 °C)"
+        ],
+        [
+          104.4,
+          "220 °F (104 °C)"
+        ],
+        [
+          107.2,
+          "225 °F (107 °C)"
+        ],
+        [
+          110,
+          "230 °F (110 °C)"
+        ]
+      ]
+    },
+    {
+      "key": "warmTrans",
+      "label": "Transmission is warm at",
+      "type": "choice",
+      "default": 71.1,
+      "options": [
+        [
+          48.9,
+          "120 °F (49 °C)"
+        ],
+        [
+          54.4,
+          "130 °F (54 °C)"
+        ],
+        [
+          60,
+          "140 °F (60 °C)"
+        ],
+        [
+          65.6,
+          "150 °F (66 °C)"
+        ],
+        [
+          71.1,
+          "160 °F (71 °C)"
+        ],
+        [
+          76.7,
+          "170 °F (77 °C)"
+        ],
+        [
+          82.2,
+          "180 °F (82 °C)"
+        ],
+        [
+          87.8,
+          "190 °F (88 °C)"
+        ]
+      ]
+    },
+    {
+      "key": "transWarmup",
+      "label": "Include transmission in warm-up",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "key": "showEgs",
+      "label": "Transmission temp (EGS)",
+      "type": "choice",
+      "default": "auto",
+      "options": [
+        [
+          "auto",
+          "Auto (hide when not available)"
+        ],
+        [
+          "on",
+          "Show"
+        ],
+        [
+          "off",
+          "Hide (no gearbox reads)"
         ]
       ]
     },
@@ -652,7 +746,7 @@
       "key": "oilWarn",
       "label": "Oil temp warning",
       "type": "choice",
-      "default": 125,
+      "default": 135,
       "options": [
         [
           110,
@@ -905,26 +999,6 @@
     {
       "key": "showGearbox",
       "label": "Gearbox oil temperature",
-      "type": "choice",
-      "default": "auto",
-      "options": [
-        [
-          "auto",
-          "Auto"
-        ],
-        [
-          "on",
-          "Show"
-        ],
-        [
-          "off",
-          "Hide"
-        ]
-      ]
-    },
-    {
-      "key": "showEgs",
-      "label": "Gearbox temperature (EGS)",
       "type": "choice",
       "default": "auto",
       "options": [

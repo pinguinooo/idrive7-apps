@@ -16,11 +16,34 @@ const Cd = require('./cooldown');
 
 const PAGES = ['main', 'thermal', 'fuel', 'chassis', 'warmup', 'cooldown'];
 const TABS = ['Main', 'Thermals', 'Fuel & ign.', 'Chassis', 'Warm-up', 'Cool down'];
-const GO = '#2fd27a';
-const COOLANT_CRIT = 112;                       // deg C, the Thermals tile's red zone
+const GO = '#2fd27a', AMBER = '#ffb020', TRANS_C = '#c04cdc';      // TRANS_C: the transmission's trace
+/* Colours on every temperature gauge, by warmup.js's marks: cold (blue) under ready - WARMING_C, warming (amber) up to
+ * ready, ready (green) up to hot, hot (amber) up to crit, crit (red) above. */
+const WARMING_C = W.WARMING_C, HOT = W.HOT, CRIT = W.CRIT;
 
 function create(env) {
     const settings = env.settings, get = (k) => settings.get(k), isNum = G.isNum;
+    const READY = { oil: 'warmOil', coolant: 'warmCoolant', trans: 'warmTrans' };
+    const NAME = { oil: 'Oil', coolant: 'Coolant', trans: 'Transmission' };
+
+    /** { ready, hot, crit } of one temperature, deg C (a low "Oil temp warning" pulls oil's hot mark down with it). */
+    function marksOf(k) {
+        const crit = k === 'oil' ? get('oilWarn') : CRIT[k];
+        return { ready: get(READY[k]), hot: Math.min(HOT[k], crit), crit };
+    }
+    /** Colour zones of one temperature in shown units: cold, warming, ready, hot, crit (G.bar's fill, G.segBar's segments). */
+    function zonesOf(k, u) {
+        const m = marksOf(k), T = (c) => U.T(c, u), e = 1e-6;
+        return [{ from: -9999, to: T(m.ready - WARMING_C) - e, color: 'cold' }, { from: T(m.ready - WARMING_C), to: T(m.ready) - e, color: AMBER },
+            { from: T(m.ready), to: T(m.hot) - e, color: GO }, { from: T(m.hot), to: T(m.crit) - e, color: 'warn' }, { from: T(m.crit), to: 9999, color: 'crit' }];
+    }
+    /** The temperatures of the warm-up, with their values (deg C or null): trans only while its row is shown. */
+    function temps(d) {
+        return [['oil', d.oil], ['coolant', d.coolant]].concat(env.transShown() ? [['trans', env.trans(d)]] : [])
+            .map((p) => ({ k: p[0], v: isNum(p[1]) ? p[1] : null, ready: get(READY[p[0]]) }));
+    }
+    const label = (k) => (k === 'oil' && env.oilFromDme() ? 'Oil (engine unit)' : NAME[k]);
+    const whyOf = (k) => (env.usingDemo() ? 'no data' : k === 'trans' ? env.transWhy() : env.why(k));
 
     /**
      * { letter, num, est } for the gear readout, or null without any gear information (Car Vitals' gearText).
@@ -39,50 +62,53 @@ function create(env) {
         return { letter, num: String(g), est };
     }
 
-    /** The one-line engine status on the Gear card: cool-down first, then warm-up. */
+    /** The one-line engine status on the Gear card: too hot first, then cool-down, then warm-up. */
     function status(t, d) {
-        const a = env.coolAdvice(d), warm = get('warmOil');
+        const a = env.coolAdvice(d), tr = env.trans(d);
         if (isNum(d.oil) && d.oil > get('oilWarn')) return { text: 'OIL HOT - EASE OFF', color: t.crit };
+        if (isNum(d.coolant) && d.coolant >= CRIT.coolant) return { text: 'COOLANT HOT - EASE OFF', color: t.crit };
+        if (isNum(tr) && tr >= CRIT.trans) return { text: 'TRANS HOT - EASE OFF', color: t.crit };
         if (get('cooldown') && a.need > 0) {
             if (a.state === 'done') return { text: 'TURBO COOLED', color: GO };
             return { text: 'COOL-DOWN ' + Math.ceil(a.left) + ' s', color: t.warn };
         }
         const tk = env.takeover();
         if (tk.cold) {
-            const e = isNum(d.oil) ? W.eta('oil', d.oil, warm, d, env.hist5()) : W.eta('coolant', d.coolant, get('warmCoolant'), d, env.hist5());
+            // the longest wait of the temperatures the warm-up counts (trans with its setting on)
+            const mins = temps(d).filter((m) => m.k !== 'trans' || get('transWarmup') !== false)
+                .map((m) => W.eta(m.k, m.v, m.ready, d, env.hist5())).filter((e) => e.state === 'warming').map((e) => e.min);
             const lim = env.limit(d.oil);
-            return { text: e.state === 'warming' ? 'WARMING ~' + Math.max(1, Math.round(e.min)) + ' min' : 'WARMING UP', color: t.cold,
+            return { text: mins.length ? 'WARMING ~' + Math.max(1, Math.round(Math.max.apply(null, mins))) + ' min' : 'WARMING UP', color: t.cold,
                 sub: lim ? 'keep under ' + lim + ' rpm' : '' };
         }
         if (tk.hasTemp) return { text: 'READY', color: GO };
         return { text: 'NO TEMPERATURES', color: t.dim };
     }
 
-    /** Gear card (Car Vitals' speed card without the speed) with the engine status on its left. */
+    /** Gear card (Car Vitals' speed card without the speed) with the engine status on its left; 150 or 190 high. */
     function gearCard(cv, t, d, x, y, w, h) {
         G.panel(cv, t, x, y, w, h, 'Gear');
-        const gr = gearText(d), gy = y + 162, gz = 120;
+        const gr = gearText(d), gy = y + h - 28, gz = h < 190 ? 96 : 120;
         if (gr) {
             const nw = gr.num ? cv.text(gr.num, x + w - 24, gy, gz, t.text, { align: 'right', font: 'gear' }) : 0;
             cv.text(gr.letter, x + w - 28 - nw, gy, gz, gr.letter === 'M' ? t.crit : gr.letter === 'S' ? t.accent : t.dim, { align: 'right', font: 'gear' });
             if (gr.est) cv.text('EST.', x + w - 24, y + 36, 22, t.dim, { align: 'right', font: 'bold', spacing: 1 });
         } else cv.text('--', x + w - 24, gy, 64, t.dim, { align: 'right', font: 'num' });
-        const st = status(t, d);
-        cv.text(st.text, x + 22, y + 118, 24, st.color, { font: 'bold' });
-        if (st.sub) cv.text(st.sub, x + 22, y + 150, 20, t.dim);
-        const b = env.banner();
-        if (b) cv.text(b, x + 22, y + 178, 18, t.warn, { font: 'bold' });
+        const st = status(t, d), b = env.banner();
+        cv.text(st.text, x + 22, y + h - 72, 24, st.color, { font: 'bold' });
+        if (st.sub && !(b && h < 190)) cv.text(st.sub, x + 22, y + h - 40, 20, t.dim);
+        if (b) cv.text(b, x + 22, y + h - (h < 190 ? 40 : 12), 18, t.warn, { font: 'bold' });
     }
 
-    /** Oil / coolant bar in the power / torque style: cold colour under the warm target (green label), red from crit. */
-    function tempBar(cv, t, x, y, w, label, c, kind, warmC, critC) {
-        const u = env.units(), sc = U.tempScale(kind, u), tgt = U.T(warmC, u), marks = [];
+    /** One temperature as a bar in the power / torque style, coloured by its zones, its ready mark labelled green. */
+    function tempBar(cv, t, x, y, w, k, c) {
+        const u = env.units(), sc = U.tempScale(k, u), tgt = U.T(get(READY[k]), u), marks = [];
         for (let a = sc.min; a <= sc.max + 1e-9; a += sc.step) marks.push(a);
         const labels = marks.filter((a) => Math.abs(a - tgt) > sc.step * 0.4).map((a) => ({ value: a, text: String(Math.round(a)) }))
             .concat([{ value: tgt, text: String(Math.round(tgt)), color: GO }]);
         G.bar(cv, t, x, y, w, 92, {
-            label, value: U.T(c, u), unit: U.tU(u), decimals: 0, min: sc.min, max: sc.max, step: sc.step, ticks: marks, labels, color: GO,
-            zones: [{ from: -9999, to: tgt - 1e-6, color: 'cold' }, { from: U.T(critC, u), to: 9999, color: 'crit' }],
+            label: label(k), value: U.T(c, u), unit: U.tU(u), decimals: 0, min: sc.min, max: sc.max, step: sc.step, ticks: marks, labels, color: GO,
+            zones: zonesOf(k, u),
         });
     }
 
@@ -111,49 +137,74 @@ function create(env) {
             label: 'Torque', value: U.TQ(d.torque, u), unit: u.torque, decimals: 0, ramp: 'hot', max: U.TQ(900, u), niceMax: true,
             peak: showPk ? U.TQ(pk.torque, u) : null,
         });
-        gearCard(cv, t, d, 1110, G.TOP, 466, 190);
-        tempBar(cv, t, 1110, 272 + half, 466, env.oilFromDme() ? 'Oil (engine unit)' : 'Oil', d.oil, 'oil', get('warmOil'), get('oilWarn'));
-        tempBar(cv, t, 1110, 272 + half + 132 + room - half, 466, 'Coolant', d.coolant, 'coolant', get('warmCoolant'), COOLANT_CRIT);
+        // gear, then oil, coolant and (when shown) the transmission under it: with three the gear card is 150 high
+        const ts = temps(d);
+        if (ts.length > 2) {
+            gearCard(cv, t, d, 1110, G.TOP, 466, 150);
+            const top = G.TOP + 160, slot = (G.pageBottom(cv) - top) / 3;
+            ts.forEach((m, i) => tempBar(cv, t, 1110, top + i * slot, 466, m.k, m.v));
+        } else {
+            gearCard(cv, t, d, 1110, G.TOP, 466, 190);
+            tempBar(cv, t, 1110, 272 + half, 466, 'oil', d.oil);
+            tempBar(cv, t, 1110, 272 + half + 132 + room - half, 466, 'coolant', d.coolant);
+        }
     }
 
     /* ---------- Warm-up (apps/warmup 1.7.3) ---------- */
-    function gauge(cv, t, y, h, val, label, warm) {
-        const u = env.units(), T = (c) => U.T(c, u), st = u.temp === 'F' ? 18 : 10;
-        G.segBar(cv, t, 24, y, 880, h, {
-            label, value: T(val), unit: U.tU(u), decimals: 0, min: T(0), max: T(150), step: st, scale: { every: st * 2.5 },
-            zones: [{ from: T(120), to: T(135), color: 'warn' }, { from: T(135), to: T(160), color: 'crit' }],
-            ramp: 'hot', limit: T(120), marks: [{ value: T(warm), color: GO }],
+    /**
+     * One temperature's gauge panel: name, value, the bar filled in the colour of the zone the value is in (hot and crit
+     * also as bands), the zones as a strip under it, the ready mark (green tick); a reason when there's no value.
+     */
+    function gauge(cv, t, x, y, w, h, m) {
+        const u = env.units(), T = (c) => U.T(c, u), sc = U.warmScale(u), p = G.panel(cv, t, x, y, w, h, label(m.k));
+        const uw = cv.textWidth(' ' + U.tU(u), 24), z = zonesOf(m.k, u), v = T(m.v);
+        cv.text(G.fmt(v, 0), x + w - 24 - uw, y + 48, 48, isNum(v) ? t.text : t.dim, { align: 'right', font: 'num' });
+        cv.text(' ' + U.tU(u), x + w - 24, y + 48, 24, t.dim, { align: 'right' });
+        const bx = x + 24, bw = w - 48, y0 = y + 62, y1 = p.y + p.h - 52;      // its scale's labels end MARGIN over the panel's bottom
+        G.segBar(cv, t, bx, y0, bw, y1 - y0, {
+            panel: false, value: v, min: sc.min, max: sc.max, step: sc.step, scale: { every: sc.every, labelY: 30, size: 20, tick: 10 },
+            color: G.zoneColor(t, { zones: z }, v, GO), zones: z.filter((q) => q.color === 'warn' || q.color === 'crit'), marks: [{ value: T(m.ready), color: GO }],
         });
+        const X = (a) => bx + G.clamp((a - sc.min) / (sc.max - sc.min), 0, 1) * (bw - 18);     // (segBar's bottom edge)
+        z.forEach((q) => { const a = X(q.from), b = X(q.to); if (b - a > 0.5) cv.fillRect(a, y1 + 2, b - a, 4, withAlpha(t[q.color] || q.color, 0.85)); });
+        if (!isNum(v)) cv.text(whyOf(m.k), x + 48, (y0 + y1) / 2 + 8, 22, t.dim);
     }
-    function etaRow(cv, t, y, label, e, target) {
-        const u = env.units();
-        cv.text(label, 952, y, 22, t.dim, { font: 'bold', spacing: 1.5 });
-        let big, col = t.text, right = '', unit = '';
+    /** One "ready in" row of the table: name, minutes (or the state), target. */
+    function etaRow(cv, t, y, m, e) {
+        const u = env.units(), counted = m.k !== 'trans' || get('transWarmup') !== false;
+        cv.text(m.k === 'trans' ? 'TRANS' : NAME[m.k].toUpperCase(), 952, y, 22, t.dim, { font: 'bold', spacing: 1.5 });
+        let big, col = t.text, unit = '';
         if (e.state === 'ready') { big = 'READY'; col = GO; }
-        else if (e.state === 'off') { big = 'ENGINE OFF'; col = t.dim; right = 'not warming'; }
-        else if (e.state === 'stalled') { big = 'NOT WARMING'; col = t.warn; right = 'drive to warm up'; }
-        else if (e.state === 'warming') { big = e.min > 60 ? '>60' : '~' + Math.max(1, Math.round(e.min)); unit = 'min'; right = e.est ? 'EST.' : ''; }
+        else if (e.state === 'off') { big = 'ENGINE OFF'; col = t.dim; }
+        else if (isWarm(m, e)) { big = 'SETTLED'; col = GO; }          // stalled just under its mark: its thermostat holds it (warmup.js)
+        else if (e.state === 'stalled') { big = 'NOT WARMING'; col = t.warn; }
+        else if (e.state === 'warming') { big = e.min > 60 ? '>60' : '~' + Math.max(1, Math.round(e.min)); unit = ' min' + (e.est ? '  EST.' : ''); }
         else { big = '--'; col = t.dim; }
-        const bw = cv.text(big, 952, y + 50, unit ? 52 : 40, col, { font: unit || big === '--' ? 'num' : 'bold', spacing: unit ? 0 : 1 });
-        if (unit) cv.text(unit, 960 + bw, y + 50, 26, t.dim);
-        if (right) cv.text(right, 1552, y + 48, 24, t.dim, { align: 'right' });
-        cv.text('target ' + Math.round(U.T(target, u)) + U.tU(u), 1552, y, 22, t.dim, { align: 'right' });
+        const bw = cv.text(big, 1130, y + 2, 32, col, { font: unit || big === '--' ? 'num' : 'bold', spacing: unit ? 0 : 1 });
+        if (unit) cv.text(unit, 1130 + bw, y, 20, t.dim);
+        cv.text(counted ? Math.round(U.T(m.ready, u)) + U.tU(u) : 'not counted', 1552, y, 22, counted ? t.text : t.dim, { align: 'right' });
     }
-    /** takeover: drawn on Main in place of the vitals, with Hide. */
+    /** Warm as the takeover counts it (warmup.js step): at its mark, or coolant / trans settled just under it. */
+    const isWarm = (m, e) => e.state === 'ready' || (e.state === 'stalled' && m.k !== 'oil' && m.v >= m.ready - W.SETTLE_C);
+    /** The status pill: too hot, ready (every counted temperature warm), warming (all within WARMING_C of ready), cold. */
+    function warmStatus(t, d, ts, es) {
+        const counted = ts.map((m, i) => [m, es[i]]).filter((p) => isNum(p[0].v) && (p[0].k !== 'trans' || get('transWarmup') !== false));
+        const hot = ts.filter((m) => isNum(m.v) && m.k !== 'oil' && m.v >= marksOf(m.k).crit)[0];
+        if (isNum(d.oil) && d.oil > get('oilWarn')) return ['OIL HOT - EASE OFF', t.crit];
+        if (hot) return [(hot.k === 'trans' ? 'TRANS' : 'COOLANT') + ' HOT - EASE OFF', t.crit];
+        if (!counted.length) return ['NO TEMPERATURES', t.dim];
+        if (counted.every((p) => isWarm(p[0], p[1]))) return ['READY', GO];
+        if (counted.every((p) => p[0].v >= p[0].ready - WARMING_C)) return ['WARMING UP', t.warn];
+        return ['COLD', t.cold];
+    }
+    /** Warm-up: a gauge per temperature (trans when shown), the ready table, safe rev limit, trend; takeover: on Main with Hide. */
     function drawWarmup(cv, t, d, takeover) {
-        const u = env.units(), T = (c) => U.T(c, u), now = Date.now(), hist = env.hist5();
-        const warm = get('warmOil'), warmC = get('warmCoolant');
-        const room = G.pageBottom(cv) - G.BOTTOM, half = Math.round(room / 2);
-        gauge(cv, t, G.TOP, 225 + half, d.oil, env.oilFromDme() ? 'Oil (engine unit)' : 'Oil', warm);
-        gauge(cv, t, G.TOP + 242 + half, 225 - half, d.coolant, 'Coolant', warmC);
-        const sp = G.panel(cv, t, 928, 44, 648, 468, null);
-        const lim = env.limit(d.oil), ready = isNum(d.oil) && d.oil >= warm, hot = isNum(d.oil) && d.oil > get('oilWarn');
-        let st, col;
-        if (!isNum(d.oil)) { st = 'NO OIL TEMP'; col = t.dim; }
-        else if (hot) { st = 'OIL HOT - EASE OFF'; col = t.crit; }
-        else if (ready) { st = 'READY'; col = GO; }
-        else if (d.oil >= warm - 20) { st = 'WARMING UP'; col = t.warn; }
-        else { st = 'COLD'; col = t.cold; }
+        const u = env.units(), T = (c) => U.T(c, u), now = Date.now(), hist = env.hist5(), ts = temps(d), n = ts.length, gap = 12;
+        const room = G.pageBottom(cv) - G.BOTTOM, h0 = (G.BOTTOM - G.TOP - gap * (n - 1)) / n + room / n;
+        // (the last panel ends at BOTTOM: G.panel stretches it down by the room)
+        ts.forEach((m, i) => { const y = G.TOP + i * (h0 + gap); gauge(cv, t, 24, y, 880, i === n - 1 ? G.BOTTOM - y : h0, m); });
+        const sp = G.panel(cv, t, 928, 44, 648, 468, null), es = ts.map((m) => W.eta(m.k, m.v, m.ready, d, hist));
+        const warm = get('warmOil'), lim = env.limit(d.oil), ready = isNum(d.oil) && d.oil >= warm, sc = warmStatus(t, d, ts, es), st = sc[0], col = sc[1];
         const bw = takeover ? 368 : 600, bc = 952 + bw / 2;
         cv.roundRect(952, 70, bw, 60, 10, withAlpha(col, 0.22));
         if (st === 'READY') cv.roundRect(952, 70, bw, 60, 10, withAlpha(col, 0.15 + 0.1 * Math.sin(now / 400)));
@@ -162,34 +213,40 @@ function create(env) {
             G.button(cv, t, 1336, 78, 216, 44, 'Hide warm-up', env.dismiss, { key: 'BTN_HIDE_WARMUP' });
             cv.text('Engine not warm yet - Hide shows the vitals', 1552, 150, 18, t.dim, { align: 'right' });
         }
-        etaRow(cv, t, 176, 'OIL READY IN', W.eta('oil', d.oil, warm, d, hist), warm);
-        etaRow(cv, t, 261, 'COOLANT READY IN', W.eta('coolant', d.coolant, warmC, d, hist), warmC);
+        cv.text('READY IN', 952, 184, 18, t.dim, { font: 'bold', spacing: 1.5 });
+        cv.text('TARGET', 1552, 184, 18, t.dim, { align: 'right', font: 'bold', spacing: 1.5 });
+        ts.forEach((m, i) => etaRow(cv, t, 222 + i * 40, m, es[i]));
         // safe rev limit + trend
-        const red = env.redline(), fl = lim ? lim / red : 0;
-        cv.text('SAFE REV LIMIT', 952, 350, 22, t.dim, { font: 'bold', spacing: 1.5 });
-        cv.text(lim ? lim + ' rpm' : '---- rpm', 1552, 352, 26, ready ? GO : t.text, { align: 'right', font: 'bold' });
-        cv.roundRect(1160, 340, 230, 8, 4, t.track);
-        if (fl > 0) cv.roundRect(1160, 340, 230 * fl, 8, 4, ready ? GO : col);
-        // trend: last minutes on the steady clock + up to 5 min projected (Warm-Up's)
-        const gx = 952, gy = 398, gw = 600, gh = 90 + sp.h - 468, nowX = gx + gw - 90;
+        const ry = 222 + n * 40 + 16, red = env.redline(), fl = lim ? lim / red : 0;
+        cv.text('SAFE REV LIMIT', 952, ry, 22, t.dim, { font: 'bold', spacing: 1.5 });
+        cv.text(lim ? lim + ' rpm' : '---- rpm', 1552, ry + 2, 26, ready ? GO : t.text, { align: 'right', font: 'bold' });
+        cv.roundRect(1160, ry - 10, 230, 8, 4, t.track);
+        if (fl > 0) cv.roundRect(1160, ry - 10, 230 * fl, 8, 4, ready ? GO : col);
+        // trend: last minutes on the steady clock + up to 5 min projected (Warm-Up's), a line per temperature
+        const gx = 952, gy = ry + 52, gw = 600, gh = sp.y + sp.h - G.MARGIN - gy, nowX = gx + gw - 90;
         const now0 = hist.length ? hist[hist.length - 1][0] : env.mono();
         const span = G.clamp(hist.length ? now0 - hist[0][0] : 0, 300000, 1200000), ahead = 300000, lo = 0, hi = 140;
-        const X = (ts) => nowX - ((now0 - ts) / span) * (gw - 90), Y = (c) => gy + gh - (G.clamp(c, lo, hi) - lo) / (hi - lo) * gh;
-        cv.fillRect(gx, gy - 20, 22, 4, t.oil || t.accent); cv.text('OIL', gx + 30, gy - 11, 20, t.dim, { font: 'bold' });
-        cv.fillRect(gx + 100, gy - 20, 22, 4, t.cold); cv.text('COOLANT', gx + 130, gy - 11, 20, t.dim, { font: 'bold' });
-        cv.fillRect(gx, Y(warm), gw, 1, withAlpha(GO, 0.5));
-        cv.text(String(Math.round(T(warm))), gx + gw + 4, Y(warm) + 7, 20, GO);
+        const X = (ts0) => nowX - ((now0 - ts0) / span) * (gw - 90), Y = (c) => gy + gh - (G.clamp(c, lo, hi) - lo) / (hi - lo) * gh;
+        const COLOR = { oil: t.oil || t.accent, coolant: t.cold, trans: TRANS_C };
+        ts.forEach((m, i) => {
+            cv.fillRect(gx + i * 150, gy - 20, 22, 4, COLOR[m.k]);
+            cv.text(m.k === 'trans' ? 'TRANS' : NAME[m.k].toUpperCase(), gx + i * 150 + 30, gy - 11, 20, t.dim, { font: 'bold' });
+        });
+        ts.map((m) => m.ready).filter((r, i, a) => a.indexOf(r) === i).forEach((r) => {
+            cv.fillRect(gx, Y(r), gw, 1, withAlpha(GO, 0.5));
+            cv.text(String(Math.round(T(r))), gx + gw + 4, Y(r) + 7, 20, GO);
+        });
         cv.fillRect(nowX, gy, 1, gh, withAlpha(t.tick, 0.5));
-        [[1, t.oil || t.accent, 'oil', warm, d.oil], [2, t.cold, 'coolant', warmC, d.coolant]].forEach((s) => {
-            const pts = hist.filter((h) => isNum(h[s[0]])).map((h) => [X(h[0]), Y(h[s[0]])]).filter((p) => p[0] >= gx && p[0] <= nowX + 0.5);
-            if (pts.length > 1) cv.polyline(pts, 3, s[1]);
-            const e = W.eta(s[2], s[4], s[3], d, hist);
+        ts.forEach((m) => {
+            const c = W.COL[m.k], pts = hist.filter((h) => isNum(h[c])).map((h) => [X(h[0]), Y(h[c])]).filter((p) => p[0] >= gx && p[0] <= nowX + 0.5);
+            if (pts.length > 1) cv.polyline(pts, 3, COLOR[m.k]);
+            const e = W.eta(m.k, m.v, m.ready, d, hist);
             if (e.state === 'warming' && pts.length) {
-                const x0 = nowX, y0 = Y(s[4]), mins = Math.min(e.min, ahead / 60000);
-                const x1 = x0 + (mins * 60000 / ahead) * 90, y1 = Y(s[4] + e.rate * mins);
+                const x0 = nowX, y0 = Y(m.v), mins = Math.min(e.min, ahead / 60000);
+                const x1 = x0 + (mins * 60000 / ahead) * 90, y1 = Y(m.v + e.rate * mins);
                 for (let k = 0; k < 6; k++) {
                     const a = k / 6, b = (k + 0.5) / 6;
-                    cv.line(x0 + (x1 - x0) * a, y0 + (y1 - y0) * a, x0 + (x1 - x0) * b, y0 + (y1 - y0) * b, 2, withAlpha(s[1], 0.8));
+                    cv.line(x0 + (x1 - x0) * a, y0 + (y1 - y0) * a, x0 + (x1 - x0) * b, y0 + (y1 - y0) * b, 2, withAlpha(COLOR[m.k], 0.8));
                 }
             }
         });
@@ -219,23 +276,23 @@ function create(env) {
         cv.text('Estimate from recent load (rpm, power, boost), not a turbo temperature sensor', 48, yb - G.MARGIN, 18, t.dim);
         drawTrend(cv, t, d, 808, G.TOP, 768, G.BOTTOM - G.TOP);
     }
-    /** Oil and coolant over the last 10 min, and boost as a strip (hard boost in the warning colour). */
+    /** Oil, coolant and (when shown) the transmission over the last 10 min, and boost as a strip (hard boost in the warning colour). */
     function drawTrend(cv, t, d, x, y, w, h) {
         const u = env.units(), p = G.panel(cv, t, x, y, w, h, 'Last 10 min'), hist = env.hist5();
         const now0 = hist.length ? hist[hist.length - 1][0] : env.mono(), SPAN = 600000;
         const rows = hist.filter((r) => now0 - r[0] <= SPAN);
         const gx = x + 24, gw = w - 48, gy = y + 96, gh = 170;
-        const temps = [];
-        rows.forEach((r) => { if (isNum(r[1])) temps.push(r[1]); if (isNum(r[2])) temps.push(r[2]); });
-        let lo = temps.length ? Math.min.apply(null, temps) - 5 : 40, hi = temps.length ? Math.max.apply(null, temps) + 5 : 120;
+        const lines = [[W.COL.oil, t.oil || t.accent, 'OIL'], [W.COL.coolant, t.cold, 'COOLANT']].concat(env.transShown() ? [[W.COL.trans, TRANS_C, 'TRANS']] : []);
+        const vals = [];
+        rows.forEach((r) => lines.forEach((s) => { if (isNum(r[s[0]])) vals.push(r[s[0]]); }));
+        let lo = vals.length ? Math.min.apply(null, vals) - 5 : 40, hi = vals.length ? Math.max.apply(null, vals) + 5 : 120;
         if (hi - lo < 20) { const m = (hi + lo) / 2; lo = m - 10; hi = m + 10; }
         const X = (ts) => gx + gw - ((now0 - ts) / SPAN) * gw, Y = (c) => gy + gh - (G.clamp(c, lo, hi) - lo) / (hi - lo) * gh;
-        cv.fillRect(gx, y + 62, 22, 4, t.oil || t.accent); cv.text('OIL', gx + 30, y + 71, 20, t.dim, { font: 'bold' });
-        cv.fillRect(gx + 100, y + 62, 22, 4, t.cold); cv.text('COOLANT', gx + 130, y + 71, 20, t.dim, { font: 'bold' });
+        lines.forEach((s, i) => { cv.fillRect(gx + i * 150, y + 62, 22, 4, s[1]); cv.text(s[2], gx + i * 150 + 30, y + 71, 20, t.dim, { font: 'bold' }); });
         cv.text(Math.round(U.T(hi, u)) + U.tU(u), gx + gw, y + 71, 20, t.dim, { align: 'right' });
         cv.text(Math.round(U.T(lo, u)) + U.tU(u), gx + gw, gy + gh + 22, 20, t.dim, { align: 'right' });
         cv.fillRect(gx, gy + gh, gw, 1, withAlpha(t.tick, 0.5));
-        [[1, t.oil || t.accent], [2, t.cold]].forEach((s) => {
+        lines.forEach((s) => {
             const pts = rows.filter((r) => isNum(r[s[0]])).map((r) => [X(r[0]), Y(r[s[0]])]);
             if (pts.length > 1) cv.polyline(pts, 3, s[1]);
         });
@@ -293,16 +350,19 @@ function create(env) {
     }
 
     function drawThermal(cv, t, d) {
-        const u = env.units(), T = (c) => U.T(c, u), unit = U.tU(u), oilWarn = get('oilWarn'), hist = env.hist;
+        const u = env.units(), T = (c) => U.T(c, u), unit = U.tU(u), hist = env.hist;
         const tile = (k, label, zones, color, valueColor) => ({
             label, value: T(d[k]), unit, zones, color, valueColor, history: hist[k].map(T),
-            sub: d[k] == null ? (env.usingDemo() ? 'no data' : k === 'egs' && !isNum(env.live.egs) ? env.fuelWhy('egs') : env.why(k)) : mm(hist[k], T, 0),
+            sub: d[k] == null ? (env.usingDemo() ? 'no data' : k === 'egs' ? env.transWhy() : env.why(k)) : mm(hist[k], T, 0),
         });
+        // red from crit, amber from hot, blue under the warming band (README "Temperature marks")
+        const zones = (k) => { const m = marksOf(k); return [{ from: T(m.crit), to: 999, color: 'crit' }, { from: T(m.hot), to: T(m.crit) - 1e-6, color: 'warn' },
+            { from: -99, to: T(m.ready - WARMING_C) - 1e-6, color: 'cold', tintOnly: k === 'oil' }]; };
         drawTiles(cv, t, [
-            tile('coolant', 'Coolant', [{ from: T(COOLANT_CRIT), to: 999, color: 'crit' }, { from: -99, to: T(60), color: 'cold' }]),
-            tile('oil', env.oilFromDme() ? 'Engine oil (engine unit)' : 'Engine oil', [{ from: T(oilWarn), to: 999, color: 'crit' }, { from: -99, to: T(70), color: 'cold', tintOnly: true }], 'oil'),
-            env.shown('gearbox') && tile('gearbox', 'Gearbox oil', [{ from: T(120), to: 999, color: 'warn' }, { from: -99, to: T(50), color: 'cold' }]),
-            env.shown('egs') && tile('egs', 'Gearbox (EGS)', [{ from: T(120), to: 999, color: 'warn' }, { from: -99, to: T(50), color: 'cold' }]),
+            tile('coolant', 'Coolant', zones('coolant')),
+            tile('oil', env.oilFromDme() ? 'Engine oil (engine unit)' : 'Engine oil', zones('oil'), 'oil'),
+            env.shown('gearbox') && tile('gearbox', 'Gearbox oil', zones('trans')),
+            env.transShown() && tile('egs', 'Transmission (EGS)', zones('trans')),
             tile('ambient', 'Ambient', [{ from: -99, to: T(3), color: 'cold' }], GO, GO),
         ].filter(Boolean));
     }

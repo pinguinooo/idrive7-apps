@@ -58,6 +58,26 @@ module.exports = [
         assert.strictEqual(Math.abs((0 - b.min) / b.every % 1) < 1e-9, true, 'bar 0 is a label');
         assert.deepStrictEqual(U.tempScale('coolant', U.US), { min: 100, max: 260, step: 40 });
         assert.deepStrictEqual(U.tempScale('oil', U.US), { min: 100, max: 300, step: 50 });
+        assert.deepStrictEqual(U.tempScale('trans', U.US), { min: 60, max: 260, step: 40 });
         assert(U.tempScale('oil', U.METRIC).max >= 150);
+        // every mark the gauges colour by is on its scale: oil 220..275 F, coolant 220..260 F, trans 160..250 F
+        [['oil', 220, 275], ['coolant', 220, 260], ['trans', 160, 250]].forEach((x) => [U.US, U.METRIC].forEach((u) => {
+            const s = U.tempScale(x[0], u), lo = U.T(U.fToC(x[1]), u), hi = U.T(U.fToC(x[2]), u);
+            assert(s.min < lo && hi <= s.max + 1e-9, x[0] + ' ' + u.temp + ': ' + JSON.stringify(s) + ' vs ' + lo + '..' + hi);
+        }));
+    }],
+    ['warm-up scale: 40..280 F (labels 40, 100, 160, 220, 280), 0..140 C; the 220 F and 160 F marks sit on segment edges in F', () => {
+        const f = U.warmScale(U.US), c = U.warmScale(U.METRIC);
+        assert.deepStrictEqual(f, { min: 40, max: 280, step: 20, every: 60 });
+        assert.deepStrictEqual(c, { min: 0, max: 140, step: 10, every: 20 });
+        const labels = []; for (let a = f.min; a <= f.max; a += f.step) if ((a - f.min) % f.every === 0) labels.push(a);
+        assert.deepStrictEqual(labels, [40, 100, 160, 220, 280]);
+        [220, 160].forEach((x) => assert.strictEqual((x - f.min) % f.step, 0, x + ' F on an edge'));
+    }],
+    ['F and C points of the marks: 220 F = 104.4 C, 160 F = 71.1 C, 250 F = 121.1 C, 275 F = 135 C', () => {
+        [[220, 104.4], [160, 71.1], [250, 121.1], [265, 129.4], [275, 135], [230, 110], [260, 126.7]].forEach((p) => {
+            assert.strictEqual(Math.round(U.fToC(p[0]) * 10) / 10, p[1], p[0] + ' F');
+            assert.strictEqual(Math.round(U.cToF(p[1])), p[0], p[1] + ' C');
+        });
     }],
 ];

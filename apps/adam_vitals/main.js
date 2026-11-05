@@ -2,16 +2,19 @@
 /**
  * Engine Vitals - M Vitals (apps/car_vitals 2.25.0) and Warm-Up (apps/warmup 1.7.3) in one app.
  *
- * Pages (tabs, or "Next page"): Main (boost, power, torque, gear, oil, coolant; while the engine is cold the
- * warm-up view takes its place until Hide or warm), Thermals, Fuel & ignition, Chassis, Warm-up, Cool down; the
- * kit adds Settings. One signal layer, one draw loop, one settings store (checked at start: a bad saved value
- * falls back to its default, logged once). Drawing: pages.js. Pure logic: units.js, warmup.js, cooldown.js,
- * settings_check.js.
+ * Pages (tabs, or "Next page"): Main (boost, power, torque, gear, oil, coolant, transmission; while the engine
+ * is cold the warm-up view takes its place until Hide or warm), Thermals, Fuel & ignition, Chassis, Warm-up, Cool
+ * down; the kit adds Settings. One signal layer, one draw loop, one settings store (moved to this version once,
+ * then checked at start: a bad saved value falls back to its default, logged once). Drawing: pages.js. Pure
+ * logic: units.js, warmup.js, cooldown.js, settings_check.js.
  *
  * Every callback goes through safety.guard: nothing may throw out of the main loop (the kit exits on an
  * uncaught exception, and the car wipes then uninstalls an app that crashes). The only active car traffic is
- * the read-only engine unit poll (UDS 22 / OBD 01 / 06, as M Vitals): the DISABLE file (path logged at start)
- * or 5 errors in 10 s stop it. Nothing is sent to the cluster or HUD.
+ * the read-only poll of the engine unit (UDS 22 / OBD 01 / 06, as M Vitals) and of the gearbox unit (UDS 22 6000,
+ * the transmission oil temperature, as Transmission Config / zf8hp), one request at a time: the DISABLE file
+ * (path logged at start) or 5 errors in 10 s stop it. Nothing is sent to the cluster or HUD.
+ * Wall-clock ages go through since(): a time stamp ahead of the clock (it was set back) counts as long ago,
+ * so a reading is stale and a cadence runs at once (KB-ANY-204).
  */
 const fs = require('fs');
 const path = require('path');
@@ -25,7 +28,7 @@ const Demo = require('./demo');
 const U = require('./units');
 const Wu = require('./warmup');
 const Cd = require('./cooldown');
-const { clean } = require('./settings_check');
+const { clean, migrate } = require('./settings_check');
 const { createSafety } = require('./safety');
 const Pages = require('./pages');
 
@@ -34,6 +37,9 @@ const PAGES = Pages.PAGES;
 const FUEL = ['iat', 'hpfp', 'lpfp', 'timing', 'boostCtl', 'load'];   // engine unit values read fast on the Fuel & ignition page
 const PAIR = { boostCtl: ['boostTarget', 'boostActual'], load: ['loadTarget', 'loadActual'] };
 const HIST_SEC = 300, HIST5_MS = 5000, HIST5_N = 240, STATE_MS = 200, KILL_POLL_MS = 2000;
+/* Transmission oil temperature from the gearbox unit: asked every TRANS_MS (on every page, so the warm-up sees it);
+ * a reading older than TRANS_STALE_MS shows as no reading. 3 failed reads in a row: asked every 30 s (pollFuel). */
+const TRANS_MS = 5000, TRANS_STALE_MS = 20000;
 /* Plausible ranges (deg C / bar): a value outside is the car's "no data" marker, shown as no data. */
 const TYRE_T = [-40, 150], TYRE_P = [0.5, 6], TYRE_PT = [1, 6];
 const RANGE = {
@@ -53,6 +59,8 @@ const gearOf = (x) => (typeof x === 'number' ? (x >= 3 && x <= 12 ? x - 2 : x ==
 const STAGES = { P: 'P', R: 'R', N: 'N', D: 'D', 1: 'P', 2: 'R', 3: 'N', 4: 'D' };
 const PROGRAMS = { S_MINUS_PROGRAMM: 'S', M_MINUS_PROGRAMM: 'M', 1: 'S', 2: 'M' };
 const mono = () => { const h = process.hrtime(); return h[0] * 1000 + h[1] / 1e6; };
+/** ms since a Date.now() stamp; 0 (never) or a stamp ahead of the clock (set back) is long ago (KB-ANY-204). */
+const since = (t) => { const a = Date.now() - (t || 0); return a < 0 ? Infinity : a; };
 
 /** Selector programme (D / S / M / P / R / N) from the gearbox status (Car Vitals' modeOf). */
 function modeOf(o) {
@@ -79,9 +87,14 @@ mgu.run({
             const safety = createSafety({ cfg: { safety: { errorLimit: 5, errorWindowMs: 10000, killFile: 'DISABLE' } }, log });
             const guard = safety.guard, get = (k) => settings.get(k);
             const killPath = safety.killFile(ctx.dataDir);
-            log.info('kill switch file (stops engine unit reads): ' + killPath);
+            log.info('kill switch file (stops engine and gearbox unit reads): ' + killPath);
             let killed = safety.pollKill(fs, killPath);
 
+            // settings saved by an older version moved to this one, once (0.2.0: oil and coolant warm at 220 F)
+            migrate(settings.values, ctx.spec.settings).forEach((w) => {
+                log.info('settings: ' + w[0] + ' ' + JSON.stringify(settings.get(w[0])) + ' -> ' + JSON.stringify(w[1]) + ' (moved to this version)');
+                try { settings.set(w[0], w[1]); } catch (e) { log.warn('settings move ' + w[0] + ': ' + e); }
+            });
             // saved settings checked once, before anything listens: a bad value goes back to its default (saved)
             const checked = clean(ctx.spec.settings, settings.values);
             checked.bad.forEach((k) => {
@@ -118,7 +131,7 @@ mgu.run({
             /* g-force: the offset an axis reads at a standstill is learned and taken off (Car Vitals). */
             const G0 = 9.80665, G_ZERO_MAX = 1, gZero = { gLong: { z: 0, n: 0 }, gLat: { z: 0, n: 0 } };
             let stillSince = 0;
-            const standing = () => stillSince > 0 && Date.now() - stillSince > 2000;
+            const standing = () => stillSince > 0 && since(stillSince) > 2000;
             const putG = (k, raw) => {
                 const a = sc('accel', raw);
                 if (a === null) return;
@@ -130,12 +143,12 @@ mgu.run({
             /* ---------- live data ---------- */
             const live = {}, peak = {}, demoPeak = {}, hist = { coolant: [], oil: [], gearbox: [], egs: [], ambient: [], iat: [], hpfp: [], lpfp: [], iatRise: [], timing: [],
                 boostTarget: [], boostActual: [], loadTarget: [], loadActual: [] };
-            const hist5 = [];       // [mono, oil, coolant, rpm, speed, boost] every 5 s, 20 min (warm-up rate, cool-down trend)
+            const hist5 = [];       // [mono, oil, coolant, rpm, speed, boost, trans] every 5 s, 20 min (warm-up rate, cool-down trend)
             const peakAt = new Map();
             const raise = (o, k, v) => {
                 if (!G.isNum(v)) return;
-                const at = peakAt.get(o) || peakAt.set(o, {}).get(o), now = Date.now(), hold = get('peakHold') * 1000;
-                if (o[k] === undefined || v >= o[k] || (hold > 0 && now - (at[k] || 0) > hold)) { o[k] = v; at[k] = now; }
+                const at = peakAt.get(o) || peakAt.set(o, {}).get(o), hold = get('peakHold') * 1000;
+                if (o[k] === undefined || v >= o[k] || (hold > 0 && since(at[k]) > hold)) { o[k] = v; at[k] = Date.now(); }
             };
             const AWD_FILE = path.join(ctx.dataDir, 'awd.json'), SEEN_FILE = path.join(ctx.dataDir, 'seen.json');
             let awdSeen = false, seen = {};
@@ -284,13 +297,21 @@ mgu.run({
             demo.setRedline(engine.redline());
             engine.onChange(guard('engine', () => demo.setRedline(engine.redline())));
             const carPresent = () => lastCar > 0 || subs.some((s) => s.available);
-            const usingDemo = () => get('demo') === 'on' || (get('demo') === 'auto' && !carPresent() && Date.now() - startT > 5000);
+            const usingDemo = () => get('demo') === 'on' || (get('demo') === 'auto' && !carPresent() && since(startT) > 5000);
+            const transFresh = () => get(SHOW.egs) !== 'off' && !!fuelT.egs && since(fuelT.egs) < TRANS_STALE_MS;
             const data = () => {
                 if (usingDemo()) return demo.sample();
                 const v = Object.assign({}, live);
                 Object.keys(MOVE).forEach((k) => { if (!trusted(k)) v[k] = null; });
+                if (!transFresh()) v.egs = null;           // an old gearbox reading is no reading, never a stale number
                 return v;
             };
+            /* Transmission oil temperature (deg C) for the warm-up and the pages: the gearbox unit's 22 6000, fresh and changed
+             * once (MOVE; data() drops it when stale or set to Hide), or the demo's; null when there is none (shown as --, it
+             * then neither blocks nor counts). */
+            const trans = (d) => (G.isNum(d.egs) ? d.egs : null);
+            /** Shown on Warm-up / Main / Cool down: Show always; Auto once this car's gearbox answered (or in demo). */
+            const transShown = () => { const s = get(SHOW.egs); return s === 'on' || (s !== 'off' && (usingDemo() || !!seen.egs)); };
             function updBoost() {
                 const src = get('boostSource');
                 const fes = G.isNum(live.boostFes) ? live.boostFes : null, dmeB = G.isNum(live.boostDme) ? live.boostDme : null;
@@ -346,7 +367,20 @@ mgu.run({
                 return counts.length === misCyl ? counts : null;
             }
             async function freshBaro() {
-                if (Date.now() - baroT > 60000) { baroT = Date.now(); const b = await rd.value('baro', dme.baro); if (b !== null) baro = b; }
+                if (since(baroT) > 60000) { baroT = Date.now(); const b = await rd.value('baro', dme.baro); if (b !== null) baro = b; }
+            }
+            /** The gearbox unit's replies to the log (first 12 different ones per DID): what the car answers, for the car day. */
+            const logEgs = () => (dme.egs || []).forEach((c) => {
+                const r = rd.raws[rd.key(c)];
+                if (r) logRaw('EGS ' + DidReader.label(c), r.ok ? r.bytes : r.why + (r.bytes ? ' (' + r.bytes + ')' : ''));
+            });
+            /** Once, with the first transmission read: which gearbox unit this is (22 F150), logged, never a gate. */
+            let egsIdDone = !(dme.egsId || []).length;
+            async function logEgsId() {
+                egsIdDone = true;
+                const v = await rd.value('egsId', dme.egsId);
+                log.info('gearbox unit identification (22 F150): ' + (v === null ? 'no answer' : Math.round(v).toString(16).toUpperCase().padStart(6, '0'))
+                    + ' (Transmission Config decodes 0F25D0, G22, and 0F21E0)');
             }
             async function readBoost() {
                 await freshBaro();
@@ -378,23 +412,25 @@ mgu.run({
                 let fast = null;
                 try {
                     if (readsOff()) return;
-                    const now = Date.now(), needBoost = boostFromDme();
-                    const needOil = (dme.oil || []).length > 0 && now - oilCarT > 15000;     // oil from the engine unit while the car sends none
+                    const needBoost = boostFromDme();
+                    const needOil = (dme.oil || []).length > 0 && since(oilCarT) > 15000;     // oil from the engine unit while the car sends none
                     const want = (k) => get(SHOW[k]) !== 'off' && (k === 'misfire' ? !!dme.misfire : (dme[PAIR[k] ? PAIR[k][0] : k] || []).length > 0);
-                    const onFuelPage = now - fuelSeen < 1500;
-                    const onChassis = now - chassisSeen < 1500 && xcfg.front.length > 0 && get('xdrive') !== 'off' && !(G.isNum(live.splitRear) && now - splitAt < SPLIT_STALE);
-                    fast = onFuelPage ? FUEL.filter(want) : now - engineSeen < 1500 && needBoost ? ['boost'] : onChassis ? ['lmv'] : null;
+                    const onFuelPage = since(fuelSeen) < 1500;
+                    const onChassis = since(chassisSeen) < 1500 && xcfg.front.length > 0 && get('xdrive') !== 'off' && !(G.isNum(live.splitRear) && since(splitAt) < SPLIT_STALE);
+                    fast = onFuelPage ? FUEL.filter(want) : since(engineSeen) < 1500 && needBoost ? ['boost'] : onChassis ? ['lmv'] : null;
                     pollFuel.n = (pollFuel.n || 0) + 1;
                     const misNow = want('misfire') && (!fast || (onFuelPage && pollFuel.n % 4 === 0));
+                    const transNow = want('egs') && since(fuelTry.egs) >= TRANS_MS;      // the gearbox: every TRANS_MS, fast or slow
                     if (!link.available) return;
-                    const keys = (fast || FUEL.filter(want).concat(needBoost ? ['boost'] : [], needOil ? ['oil'] : [], want('egs') ? ['egs'] : [])).concat(misNow ? ['misfire'] : []);
+                    const keys = (fast || FUEL.filter(want).concat(needBoost ? ['boost'] : [], needOil ? ['oil'] : [])).concat(transNow ? ['egs'] : [], misNow ? ['misfire'] : []);
                     for (const k of keys) {
                         if (readsOff()) break;
-                        if ((fuelFail[k] || 0) >= 3 && Date.now() - (fuelTry[k] || 0) < 30000) continue;
+                        if ((fuelFail[k] || 0) >= 3 && since(fuelTry[k]) < 30000) continue;
                         fuelTry[k] = Date.now();
                         if (k === 'lmv') { await readLmv(); continue; }
                         const v = k === 'boost' ? await readBoost() : k === 'misfire' ? await readMisfire() : PAIR[k] ? await readPair(k) : await rd.value(k, dme[k]);
-                        if (k === 'oil' && v !== null && Date.now() - oilCarT < 15000) continue;
+                        if (k === 'egs') { logEgs(); if (!egsIdDone && !readsOff()) await logEgsId(); }
+                        if (k === 'oil' && v !== null && since(oilCarT) < 15000) continue;
                         if (v === null) { fuelFail[k] = (fuelFail[k] || 0) + 1; continue; }
                         fuelT[k] = Date.now(); fuelFail[k] = 0;
                         if (k === 'misfire') { logRaw('misfires', v); live.misfire = v; lastCar = Date.now(); remember(['misfire']); }
@@ -410,7 +446,7 @@ mgu.run({
             }
             const pollGuarded = guard('engine unit poll', pollFuel);
             fuelTimer = setTimeout(pollGuarded, 1000);
-            const kickFuel = () => { if (!readsOff() && !fuelBusy && Date.now() - fuelLast > 600) { clearTimeout(fuelTimer); fuelTimer = setTimeout(pollGuarded, 0); } };
+            const kickFuel = () => { if (!readsOff() && !fuelBusy && since(fuelLast) > 600) { clearTimeout(fuelTimer); fuelTimer = setTimeout(pollGuarded, 0); } };
             function fuelWhy(k) {
                 if (killed) return 'engine unit reads off (DISABLE file)';
                 if (safety.tripped()) return 'engine unit reads stopped after errors';
@@ -430,12 +466,18 @@ mgu.run({
                 if (src === 'dme') return dmeMsg;
                 return 'sport display: ' + (G.isNum(live.boostFes) ? 'not changing' : 'nothing') + '  ·  ' + dmeMsg;
             }
-            const fuelOk = (k) => usingDemo() || (fuelT[k] && Date.now() - fuelT[k] < 15000);
+            /** Why the transmission temperature shows as -- (Warm-up, Main, Thermals). */
+            function transWhy() {
+                if (get(SHOW.egs) === 'off') return 'off in Settings';
+                if (G.isNum(live.egs) && transFresh() && !trusted('egs')) return 'waiting for it to change';
+                if (fuelT.egs && !transFresh()) return 'gearbox unit: no reading for ' + Math.round(TRANS_STALE_MS / 1000) + ' s';
+                return fuelWhy('egs').replace('engine unit', 'gearbox unit');
+            }
+            const fuelOk = (k) => usingDemo() || (fuelT[k] && since(fuelT[k]) < 15000);
             const xdriveSplit = (d) => {
                 if (usingDemo()) return { rear: d.splitRear, from: null };
-                const now = Date.now();
-                if (G.isNum(live.splitRear) && now - splitAt < SPLIT_STALE) return { rear: live.splitRear, from: null };
-                if (G.isNum(live.lmvFront) && now - lmvAt < 3000) {
+                if (G.isNum(live.splitRear) && since(splitAt) < SPLIT_STALE) return { rear: live.splitRear, from: null };
+                if (G.isNum(live.lmvFront) && since(lmvAt) < 3000) {
                     const nm = live.lmvFront, ratio = xcfg.gearRatios[(live.gear || 0) - 1];
                     const input = G.isNum(live.torque) && ratio ? live.torque * ratio : null;
                     if (nm <= 5) return { rear: 100, from: 'transfer case: clutch open', nm };
@@ -462,9 +504,9 @@ mgu.run({
                     if (k === 'iatRise') v = fuelOk('iat') && G.isNum(d.iat) && G.isNum(d.ambient) ? d.iat - d.ambient : null;
                     hist[k].push(v); if (hist[k].length > HIST_SEC) hist[k].shift();
                 });
-                const m = mono();
-                if (m - last5 >= HIST5_MS && (G.isNum(d.oil) || G.isNum(d.coolant))) {
-                    last5 = m; hist5.push([m, d.oil, d.coolant, d.rpm, d.speed, d.boost]);
+                const m = mono(), tr = trans(d);
+                if (m - last5 >= HIST5_MS && (G.isNum(d.oil) || G.isNum(d.coolant) || G.isNum(tr))) {
+                    last5 = m; hist5.push([m, d.oil, d.coolant, d.rpm, d.speed, d.boost, tr]);
                     while (hist5.length > HIST5_N) hist5.shift();
                 }
             }), 1000);
@@ -484,7 +526,13 @@ mgu.run({
             function stepState() {
                 const d = data(), m = mono(), dt = lastStep ? (m - lastStep) / 1000 : 0;
                 lastStep = m;
-                take = Wu.step(take, { oil: d.oil, coolant: d.coolant, rpm: d.rpm, warmOil: get('warmOil'), warmCoolant: get('warmCoolant'), now: m });
+                // the transmission counts only with its setting on and a reading (none: it neither blocks nor counts)
+                const tr = get('transWarmup') !== false ? trans(d) : null;
+                const settled = (k, v, mark) => Wu.eta(k, v, mark, d, hist5).state === 'stalled';
+                take = Wu.step(take, { oil: d.oil, coolant: d.coolant, trans: tr, rpm: d.rpm,
+                    warmOil: get('warmOil'), warmCoolant: get('warmCoolant'), warmTrans: get('warmTrans'),
+                    settled: { coolant: settled('coolant', d.coolant, get('warmCoolant')), trans: settled('trans', tr, get('warmTrans')) },
+                    now: m, wall: Date.now() });
                 cool = Cd.step(cool, { rpm: d.rpm, kw: power(d).kw, boost: d.boost, speed: d.speed }, dt, m);
                 logTakeover();
                 const a = Cd.advice(cool, { rpm: d.rpm, speed: d.speed, kw: power(d).kw });
@@ -506,14 +554,15 @@ mgu.run({
             const trail = [];
             const pages = Pages.create({
                 settings, live, hist, peak, demoPeak, trail, raise, units, usingDemo, shown, why, fuelWhy, boostWhy, power, xdriveSplit, mono,
+                trans, transShown, transWhy,
                 awdSeen: () => awdSeen, hist5: () => hist5, takeover: () => take, dismiss: guard('hide warm-up', dismiss),
                 takeoverShown: () => Wu.show(take, { enabled: enabled(), page: PAGES[page] }),
                 coolAdvice: (d) => Cd.advice(cool, { rpm: d.rpm, speed: d.speed, kw: power(d).kw }),
                 limit: (oil) => Wu.limit(oil, get('warmOil'), engine.redline(), engine.value('coldLimit', { diesel: 3000, petrol: 3500 })),
                 redline: () => engine.redline(),
-                oilFromDme: () => !usingDemo() && Date.now() - oilCarT > 15000 && !!fuelT.oil && Date.now() - fuelT.oil < 15000,
+                oilFromDme: () => !usingDemo() && since(oilCarT) > 15000 && !!fuelT.oil && since(fuelT.oil) < 15000,
                 fuelVal: (d) => (k) => (fuelOk(GROUP[k] && PAIR[GROUP[k]] ? GROUP[k] : k) ? d[k] : null),
-                misfires: (d) => (usingDemo() ? d.misfire : fuelT.misfire && Date.now() - fuelT.misfire < 30000 ? live.misfire : null),
+                misfires: (d) => (usingDemo() ? d.misfire : fuelT.misfire && since(fuelT.misfire) < 30000 ? live.misfire : null),
                 banner: () => (killed ? 'Engine unit reads off (DISABLE file)' : safety.tripped() ? 'Engine unit reads stopped after errors' : ''),
                 onEngine: () => { engineSeen = Date.now(); if (boostFromDme()) kickFuel(); },
                 onFuel: () => { fuelSeen = Date.now(); kickFuel(); },
@@ -540,7 +589,7 @@ mgu.run({
                 if (k === 'maxPower' || k === 'powerSource') { delete peak.power; delete demoPeak.power; }
                 if (k === 'boostSource') { delete peak.boost; updBoost(); }
                 if (k === 'page') page = Math.max(0, PAGES.indexOf(get('page')));
-                if (k === 'showWarmup' || k === 'warmOil' || k === 'warmCoolant') { stepState(); logTakeover(); }
+                if (['showWarmup', 'warmOil', 'warmCoolant', 'warmTrans', 'transWarmup', SHOW.egs].indexOf(k) >= 0) { stepState(); logTakeover(); }
             }));
             stepState();
             log.info('started: units ' + get('units') + ' -> ' + JSON.stringify(units()) + ', page ' + PAGES[page]);

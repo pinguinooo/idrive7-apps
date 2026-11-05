@@ -1,6 +1,8 @@
 // Engine Vitals in the idrive7-apps emulator (test/adam_vitals/emu-run.sh runs it): cold start -> warm-up takeover
 // -> Hide -> warm, a start-stop stop, the setting, hard driving -> Cool down (drive, idle, done), every page in
-// demo data, the Settings tab, metric and car units, a corrupt settings.json, the DISABLE file.
+// demo data, the Settings tab, metric and car units, a corrupt settings.json, the DISABLE file; 0.2.0: the transmission
+// gauge with no gearbox answer (the emulator answers no UDS: a car that never sends it) under Auto / Show / Hide at idle,
+// a settings.json saved by 0.1.0 moved once, then a demo cold start warming oil, coolant and transmission past their marks.
 // Signals and settings go through a second WebSocket the page opens to /ws; checks read the app's log lines.
 // env: PORT, DATA_DIR, OUT, APP_DIR. Output: OUT/*.png, OUT/raw (video, log). Exit 1 on any failed check.
 import fs from 'node:fs';
@@ -161,7 +163,7 @@ check(await untilLog(/settings: bad saved units/, s0, 15000) && await untilLog(/
 await wait(6000);                                     // demo Auto starts 5 s on with no car
 await shot('19-corrupt-settings');
 const after = JSON.parse(fs.readFileSync(sf, 'utf8'));
-check(after.units === 'us' && after.warmOil === 80, '11 settings.json fixed: units ' + after.units + ', warmOil ' + after.warmOil);
+check(after.units === 'us' && after.warmOil === 104.4, '11 settings.json fixed: units ' + after.units + ', warmOil ' + after.warmOil);
 await quiet(s0, '11');
 
 // 12. the DISABLE file
@@ -173,6 +175,72 @@ check(await untilLog(/kill file found/, s0, 3500), '12 DISABLE: kill file found 
 await send({ t: 'click', id: 'BTN_HIDE_WARMUP' });
 await shot('20-disable');
 await quiet(0, 'whole run');
+
+// 13. the transmission with no gearbox answer (no UDS here), parked at idle: Auto hides it, Show draws -- and why, Hide
+// (KB-ANY-206: a car that never sends it; KB-ANY-201: each value of a visual setting proved at idle by a screenshot diff)
+console.log('step 13 transmission without a gearbox answer');
+fs.rmSync(path.join(DATA_DIR, 'DISABLE'), { force: true });
+await wait(2500);
+s0 = Date.now();
+await send({ t: 'sig', mode: 'manual', v: sigV });
+await sig({ rpm: 800, speed: 0, gear: 'P', oil: 40, coolant: 45 });
+await set('page', 'warmup');
+const shots13 = {};
+for (const v of ['auto', 'on', 'off']) { await set('showEgs', v); await shot('21-warmup-trans-' + v); shots13[v] = fs.readFileSync(path.join(OUT, '21-warmup-trans-' + v + '.png')); }
+check(!shots13.auto.equals(shots13.on), '13 Show draws the transmission gauge (Auto does not: never answered)');
+check(!(await logs(s0)).some((l) => /^raw EGS/.test(l)), '13 no gearbox reply in the emulator (nothing answers UDS)');
+await set('showEgs', 'auto');
+await quiet(s0, '13');
+
+// 14. settings.json as 0.1.0 saved it (warm marks 80 C, oil warning 125 C, no version), demo on: a restart moves them once
+console.log('step 14 settings from 0.1.0');
+// demo signals first: the emulator re-sends its signal mode to the restarted app (manual would set demo back to auto)
+await send({ t: 'sig', mode: 'demo' });
+await wait(2500);                                     // (the app saves settings.json on that set: written over below)
+const v010 = Object.assign(JSON.parse(fs.readFileSync(sf, 'utf8')), { warmOil: 80, warmCoolant: 80, oilWarn: 125, page: 'main', demo: 'on', showEgs: 'auto' });
+['_settingsV', 'warmTrans', 'transWarmup'].forEach((k) => { delete v010[k]; });
+fs.writeFileSync(sf, JSON.stringify(v010));
+s0 = Date.now();
+await send({ t: 'restart' });
+await untilRunning(s0, 120000);
+check(await untilLog(/settings: warmOil 80 -> 104\.4 \(moved to this version\)/, s0, 15000), '14 warmOil 80 moved to 104.4 (220 F)');
+check(await untilLog(/settings: oilWarn 125 -> 135 /, s0, 2000), '14 oilWarn moved to 135 (275 F)');
+const moved = JSON.parse(fs.readFileSync(sf, 'utf8'));
+check(moved.warmOil === 104.4 && moved.warmCoolant === 104.4 && moved.oilWarn === 135 && moved._settingsV === 2 && moved.page === 'main',
+    '14 settings.json: ' + JSON.stringify([moved.warmOil, moved.warmCoolant, moved.oilWarn, moved._settingsV, moved.page]));
+const t14 = Date.now();
+
+// 15. the demo's cold start (its clock starts with the app): all three cold, then warming, then past their marks
+console.log('step 15 demo cold -> warm (about 5 min)');
+check(await untilLog(/warm-up view shown/, s0, 15000), '15 demo cold start: the warm-up view');
+await wait(2000);
+await shot('22-demo-cold-takeover');
+await set('page', 'warmup'); await shot('23-demo-cold-warmup');
+await set('page', 'cooldown'); await shot('24-demo-cold-cooldown');
+await set('page', 'main');
+while (Date.now() - t14 < 150000) await wait(1000);
+await shot('25-demo-warming-takeover');
+await set('page', 'warmup'); await shot('26-demo-warming-warmup');
+check(await untilLog(/warm-up view hidden: warm/, t14, 240000), '15 demo: oil, coolant and transmission past their marks: warm');
+marks.demoWarm = (Date.now() - t14) / 1000;
+await wait(3000);
+await shot('27-demo-warm-warmup');
+await set('page', 'main'); await shot('28-demo-warm-main');
+await set('page', 'thermal'); await shot('29-demo-warm-thermals');
+await set('page', 'cooldown'); await shot('30-demo-warm-cooldown');
+// the transmission mark at 160 F against 180 F, warm (a visual setting proved by a diff)
+await set('page', 'warmup');
+await set('warmTrans', 82.2); await shot('31-warmup-trans-mark-180');
+await set('warmTrans', 71.1); await shot('32-warmup-trans-mark-160');
+check(!fs.readFileSync(path.join(OUT, '31-warmup-trans-mark-180.png')).equals(fs.readFileSync(path.join(OUT, '32-warmup-trans-mark-160.png'))), '15 the transmission mark moves with its setting');
+await set('page', 'main');
+await send({ t: 'click', id: 'BTN_SETTINGS' });
+await shot('33-settings');
+for (let i = 0; i < 8; i++) { await page.keyboard.press(']'); await wait(180); }      // the knob down to the transmission rows
+await shot('34-settings-transmission');
+await send({ t: 'click', id: 'BTN_SETTINGS' });
+await quiet(t14, '14-15');
+await quiet(0, 'whole run with 0.2.0 steps');
 
 const all = await logs(0);
 fs.writeFileSync(path.join(RAW, 'app.log'), all.join('\n') + '\n');

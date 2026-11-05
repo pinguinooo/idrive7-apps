@@ -49,14 +49,19 @@ function boostScale(u) {
         ? { min: -10, max: 30, step: 2, every: 10, decimals: 1, scaleDecimals: 0, warn: 25 }
         : { min: -1, max: 2, step: 0.125, every: 0.5, decimals: 2, scaleDecimals: 1, warn: 1.7 };
 }
-/** Oil / coolant bar scale on Main. */
+/** Oil / coolant / transmission bar scale on Main (shown units). */
 function tempScale(kind, u) {
     const f = u.temp === 'F';
     if (kind === 'oil') return f ? { min: 100, max: 300, step: 50 } : { min: 30, max: 150, step: 30 };
-    return f ? { min: 100, max: 260, step: 40 } : { min: 40, max: 120, step: 20 };
+    if (kind === 'trans') return f ? { min: 60, max: 260, step: 40 } : { min: 10, max: 130, step: 30 };
+    return f ? { min: 100, max: 260, step: 40 } : { min: 40, max: 140, step: 20 };
+}
+/** The Warm-up gauges' scale (one for all three, shown units): segments of step, a label every `every`. */
+function warmScale(u) {
+    return u.temp === 'F' ? { min: 40, max: 280, step: 20, every: 60 } : { min: 0, max: 140, step: 10, every: 20 };
 }
 
 module.exports = {
     US, METRIC, isNum, resolve, cToF, fToC, dCToF, barToPsi, psiToBar, kwToHp, hpToKw, nmToLbft, lbftToNm,
-    T, dT, P, PW, TQ, tU, boostScale, tempScale,
+    T, dT, P, PW, TQ, tU, boostScale, tempScale, warmScale,
 };
