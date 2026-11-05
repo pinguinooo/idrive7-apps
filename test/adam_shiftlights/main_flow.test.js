@@ -253,6 +253,40 @@ module.exports = [
         assert.deepStrictEqual([r.settings.get('hudOn'), r.settings.get('clusterOn')], [false, false]);
         await r.done();
     }],
+    ['0.4.2: at the shift point every effect layer on both targets gets flash 1 and all lights in one step, every HUD style; 1 rpm under none; off 50 under', async () => {
+        const r = await start({ _settingsV: 3, hudOn: true, clusterOn: true, bothMode: 'map', driveMode: 'sportplus', leadMs: 0 });
+        const key = (m) => m.conn + ':' + m.ref, ops = (op, l) => r.msgs.filter((m) => m.op === op && key(m) === key(l));
+        const effects = () => r.layers().filter((m) => m.kind === 'effect');
+        const st = (l) => { const u = ops('uniform', l).filter((m) => m.name === 'u_st').pop(); return u ? u.v.split(' ').map(Number) : []; };
+        const fill = (l) => /u_path/.test(l.fs), n = (l) => (l.target === 'hud' ? 8 : 10), reds = (l) => (l.target === 'hud' ? 1 : 2);
+        // flash 1: every light (cluster large 10, HUD bar 8); flash 0 here: all but the reds (just under the shift point, or
+        // just after the flash ended); the fill's end is past 0 once the rpm got there; one running animation per flashing layer
+        const settled = (flash) => effects().length && effects().every((l) => st(l)[1] === flash && ops('animate', l).length - ops('stop', l).length === flash &&
+            (fill(l) ? st(l)[0] > 0 : st(l)[0] === (flash ? n(l) : n(l) - reds(l))));
+        const at = async (rpm, flash, what) => { r.sample(rpm); await until(() => settled(flash), 3000, what + ': flash ' + flash); };
+        /** a setting that makes new layers: wait until every live effect layer is a new one */
+        const swap = async (k, v) => { const old = effects().map(key); r.settings.set(k, v); await until(() => effects().length && effects().every((l) => old.indexOf(key(l)) < 0), 3000, k + ' ' + v); };
+        await at(6799, 0, 'large / large at 6799');
+        assert.deepStrictEqual(effects().map((l) => l.target).sort(), ['hud', 'hud', 'map']);
+        await at(6800, 1, 'large / large at 6800');
+        assert.ok(r.msgs.filter((m) => m.op === 'animate').every((a) => a.keys === '0:1 125:0 250:1'), 'the 4 Hz step animation');
+        await at(6750, 1, 'held at 6750');
+        await at(6749, 0, 'off at 6749');
+        for (const h of ['classic', 'bar', 'bracket']) {
+            await swap('hudStyle', h);
+            await at(6799, 0, h + ' at 6799');
+            await at(6800, 1, h + ' at 6800');
+            await at(6749, 0, h + ' off at 6749');      // under the hysteresis before the next style (a new style starts from off)
+        }
+        await swap('hudOn', false);             // the cluster alone, on its own panel target
+        await at(6799, 0, 'panel at 6799');
+        assert.deepStrictEqual(effects().map((l) => l.target), ['panel']);
+        await at(6800, 1, 'panel at 6800');
+        const states = r.lines.filter((l) => /^state /.test(l));
+        assert.ok(states.some((l) => /"red":true,"flash":true/.test(l)) && !states.some((l) => /"red":true,"flash":false|"red":false,"flash":true/.test(l)), states.join('\n'));
+        assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
+        await r.done();
+    }],
     ['a 0.3.1 save with every key (garbage too) and a 0.2.x save start without an ERR and draw every page', async () => {
         const saved031 = { _settingsV: 3, hudOn: 'yes', clusterOn: true, bothMode: 'x', hudStyle: {}, hudSize: 999, hudBright: 'x', hudNight: null, hudX: 'far', hudY: 7,
             clusterStyle: 'classic', clusterSize: -1, clusterX: 3, clusterY: 'x', onlySportPlus: 'x', autoStart: 0, leadMs: 'fast', rpmPoll: 'x', driveMode: 9,

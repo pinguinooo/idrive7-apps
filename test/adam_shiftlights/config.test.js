@@ -27,7 +27,15 @@ module.exports = [
         assert.strictEqual(r.cfg.colors.y, L.DEFAULTS.colors.y);
         assert.strictEqual(r.cfg.colors.a, L.DEFAULTS.colors.a);
     }],
-    ['flashHz 0 and 3 fall back to 4 (the limiter flash at least 4 Hz); 20 is fine', () => {
+    ['hudStyles.smallBar (the Small style\'s bar share) outside 0.4 to 1, or not a number, falls back to 0.7', () => {
+        [0, 0.39, 1.01, '0.7', null, undefined].forEach((v) => {
+            const r = bad((c) => { c.hudStyles.smallBar = v; });
+            hasError(r, /^hudStyles\.smallBar: /);
+            assert.strictEqual(r.cfg.hudStyles.smallBar, 0.7, String(v));
+        });
+        [0.4, 1].forEach((v) => assert.deepStrictEqual(bad((c) => { c.hudStyles.smallBar = v; }).errors, [], String(v)));
+    }],
+    ['flashHz 0 and 3 fall back to 4 (the shift flash at least 4 Hz); 20 is fine', () => {
         [0, 3, 3.9, 21, '8'].forEach((v) => {
             const r = bad((c) => { c.flashHz = v; });
             hasError(r, /^flashHz: must be 4 to 20/);
@@ -124,7 +132,7 @@ module.exports = [
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
-        assert.strictEqual(spec.version, '0.4.1');
+        assert.strictEqual(spec.version, '0.4.2');
         assert.strictEqual(spec.mguAppStartType, 'autostart');
         // in page order (Home, HUD, Cluster, Behavior, About): the HMI's settings list reads the same way
         assert.deepStrictEqual(spec.settings.map((s) => s.key),
@@ -137,7 +145,7 @@ module.exports = [
         assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[0]), L.CLUSTER_STYLES);
         assert.deepStrictEqual(item('hudStyle').options.map((o) => o[0]), L.HUD_STYLES);
         assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[1]), ['Large M slats', 'Small M slats', 'Centre row (12 lights)', 'Stock look (one block per dial)']);
-        assert.deepStrictEqual(item('hudStyle').options.map((o) => o[1]), ['Large: shift bar + rev bracket', 'Small: shift bar + rev bracket', 'Shift bar only', 'Rev bracket + gear only']);
+        assert.deepStrictEqual(item('hudStyle').options.map((o) => o[1]), ['Large: shift bar + rev bracket', 'Small: smaller shift bar + rev bracket', 'Shift bar only', 'Rev bracket + gear only']);
         // plain names: no version jargon or "classic" in what Adam reads
         spec.settings.forEach((s) => [s.label].concat((s.options || []).map((o) => o[1])).forEach((t) => assert.ok(!/\bv\d|classic/i.test(t), t)));
         ['cluster', 'hud'].forEach((w) => {

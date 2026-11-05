@@ -9,7 +9,7 @@ const box = (g) => [g.bar.x0, g.bar.y0, g.bar.x1 - g.bar.x0, g.bar.y1 - g.bar.y0
 const bar = (name, scale) => G.slatBar(cfg.clusterStyles[name], scale || 1, 'panel');
 const hudBar = (scale) => G.slatBar(cfg.hudStyles.bar, scale || 1, 'hud');
 const sel = (c, h, cs, hs, x, y) => ({ cluster: { style: c, size: cs || 100, bright: 100, night: false }, hud: { style: h, size: hs || 100, bright: 100, night: false, x: x || 0, y: y || 0 } });
-const HUD_ROLES = { large: ['slats', 'bracketImg', 'bracketFill'], classic: ['bracketImg', 'bracketFill'], bar: ['slats'], bracket: ['bracketImg', 'bracketFill'] };
+const HUD_ROLES = { large: ['slats', 'bracketImg', 'bracketFill'], classic: ['slats', 'bracketImg', 'bracketFill'], bar: ['slats'], bracket: ['bracketImg', 'bracketFill'] };
 const hudSpecs = (h, size, x, y) => G.layersFor(cfg, 'hud', sel('large', h, 100, size, x, y));
 const rectsOf = (specs) => specs.map((s) => [s.role, s.rect.x, s.rect.y, s.rect.w, s.rect.h].join(' '));
 
@@ -100,7 +100,7 @@ module.exports = [
         assert.deepStrictEqual([b.rect.x, b.rect.y, b.rect.w, b.rect.h, b.target], [711, 103, 498, 144, 'panel']);
     }],
     ['bracket: 10-point path 0 to 7 centred on x 400 at top 152, the same for every HUD style; gear box inside the rect', () => {
-        const lg = hudSpecs('large')[1].geom, cl = hudSpecs('classic')[0].geom, bk = hudSpecs('bracket')[0].geom;
+        const lg = hudSpecs('large')[1].geom, cl = hudSpecs('classic')[1].geom, bk = hudSpecs('bracket')[0].geom;
         assert.deepStrictEqual([lg.pts.length, lg.origin, cl.origin, bk.origin].map(JSON.stringify), ['10', '[201.4,152]', '[201.4,152]', '[201.4,152]']);
         assert.deepStrictEqual([lg.rect, cl.rect], [bk.rect, bk.rect]);
         near(lg.L, cl.L, 1e-9, 'same length');
@@ -139,7 +139,7 @@ module.exports = [
                     const b = s1[i];
                     if (a.role === 'slats') {
                         near(b.geom.bar.x1 - b.geom.bar.x0, (a.geom.bar.x1 - a.geom.bar.x0) * k, 1e-6, h + ' bar w ' + size);
-                        near(b.geom.bar.y1 - b.geom.bar.y0, 52 * k, 1e-6, h + ' bar h ' + size);
+                        near(b.geom.bar.y1 - b.geom.bar.y0, 52 * k * (h === 'classic' ? cfg.hudStyles.smallBar : 1), 1e-6, h + ' bar h ' + size);
                         near(cfg.hud.anchorY - b.geom.bar.y1, (cfg.hud.anchorY - a.geom.bar.y1) * k, 1e-6, h + ' bar grows up ' + size);
                     } else {
                         near(b.geom.L, a.geom.L * k, 1e-6, h + ' bracket length ' + size);
@@ -156,12 +156,14 @@ module.exports = [
         assert.deepStrictEqual(sp.map((s) => s.role), ['slats']);
         assert.ok(sp[0].geom.style.idle, 'the HUD bar shows at idle');
     }],
-    ['large vs small: the bracket does not move (same rect, origin, gear); they differ in the shift bar (slats vs cells)', () => {
+    ['large vs small: the bracket does not move (same rect, origin, gear); small is the same slat bar at 70 %, no cells', () => {
         const lg = hudSpecs('large'), sm = hudSpecs('classic');
         const br = (sp) => sp.filter((s) => s.role === 'bracketImg')[0].geom;
         assert.deepStrictEqual([br(lg).rect, br(lg).origin, br(lg).gear], [br(sm).rect, br(sm).origin, br(sm).gear]);
-        assert.deepStrictEqual([lg.map((s) => s.role), sm.map((s) => s.role)], [['slats', 'bracketImg', 'bracketFill'], ['bracketImg', 'bracketFill']]);
-        assert.deepStrictEqual([lg[2].cells, sm[1].cells], [false, true]);
+        assert.deepStrictEqual([lg.map((s) => s.role), sm.map((s) => s.role)], [['slats', 'bracketImg', 'bracketFill'], ['slats', 'bracketImg', 'bracketFill']]);
+        assert.deepStrictEqual([sm[0].geom.style.palette, sm[0].geom.style.idle], [cfg.hudStyles.bar.palette, true], 'the HUD bar\'s slats, unlit ones showing at idle');
+        near(sm[0].geom.dims.h, lg[0].geom.dims.h * 0.7, 1e-9, 'small bar height');
+        assert.ok(sm.concat(lg).every((s) => s.cells === undefined && s.flash === undefined), 'no cells, no per-style flash flag');
     }],
     ['HUD move: x +40 moves every HUD rect 40 right, y -30 moves them 30 up; off the scene falls back with one warning', () => {
         L.HUD_STYLES.forEach((h) => {

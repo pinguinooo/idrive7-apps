@@ -27,8 +27,10 @@ module.exports = [
         const lit = (r) => raw(r, t).lit;
         assert.deepStrictEqual([800, 5900, 6000].map(lit), [0, 0, 0]);
         assert.deepStrictEqual([6001, 6160, 6161, 6400, 6799].map(lit), [1, 1, 2, 3, 5]);
-        assert.deepStrictEqual(raw(6800, t), { lit: 6, red: true, flashing: false });
-        assert.deepStrictEqual(raw(6899, t), { lit: 6, red: true, flashing: false });
+        // 0.4.2: the whole bar turns red and flashes at the shift point (before: solid red there, flashing from 6900)
+        assert.deepStrictEqual(raw(6799, t), { lit: 5, red: false, flashing: false });
+        assert.deepStrictEqual(raw(6800, t), { lit: 6, red: true, flashing: true });
+        assert.deepStrictEqual(raw(6899, t), { lit: 6, red: true, flashing: true });
         assert.strictEqual(raw(6900, t).flashing, true);
         assert.strictEqual(raw(7000, t).flashing, true);
     }],
@@ -40,7 +42,8 @@ module.exports = [
         const t = th('sportplus', 40);
         assert.deepStrictEqual([t.limit, t.shift, t.start, t.capped], [5000, 4850, 4050, true]);
         assert.deepStrictEqual([4050, 4100, 4600, 4849].map((r) => raw(r, t).lit), [0, 1, 4, 5]);
-        assert.deepStrictEqual(raw(4850, t), { lit: 6, red: true, flashing: false });
+        assert.deepStrictEqual(raw(4849, t), { lit: 5, red: false, flashing: false });
+        assert.deepStrictEqual(raw(4850, t), { lit: 6, red: true, flashing: true });
         assert.strictEqual(raw(4900, t).flashing, true);
     }],
     ['cold limits at oil 55, 30, 10, unknown; comfort at 40', () => {
@@ -71,14 +74,70 @@ module.exports = [
         assert.strictEqual(changes, 1);
         assert.deepStrictEqual([lits[0], lits[39]], [1, 2]);
     }],
-    ['hysteresis: red holds at 6751, clears at 6749; flash holds at 6851, clears at 6849', () => {
+    ['hysteresis: red and the flash hold at 6751 and clear together at 6749 (50 under the shift point)', () => {
         const t = th('sportplus', 95);
-        const red = run([6800, 6751, 6749], t);
-        assert.deepStrictEqual(red.map((s) => s.red), [true, true, false]);
-        assert.deepStrictEqual(red.map((s) => s.lit), [6, 6, 5]);
-        const fl = run([6900, 6851, 6849], t);
-        assert.deepStrictEqual(fl.map((s) => s.flashing), [true, true, false]);
-        assert.strictEqual(fl[2].red, true);
+        const s = run([6800, 6751, 6749], t);
+        assert.deepStrictEqual(s.map((x) => [x.red, x.flashing, x.lit]), [[true, true, 6], [true, true, 6], [false, false, 5]]);
+        assert.deepStrictEqual(s.map((x) => x.flashT0), [0, 0, null], 'flashT0 kept while it lasts, cleared when it ends');
+        // from the limiter it falls the same way: no solid red step on the way down
+        const fl = run([7000, 6851, 6760, 6749], t);
+        assert.deepStrictEqual(fl.map((x) => [x.red, x.flashing]), [[true, true], [true, true], [true, true], [false, false]]);
+    }],
+    ['flash at the shift point in every style: just under it no flash, at it red + flash + every light together, flashT0 set', () => {
+        const t = th('sportplus', 95), styles = [['hud', 'large'], ['hud', 'classic'], ['hud', 'bar']].concat(L.CLUSTER_STYLES.map((c) => ['cluster', c]));
+        styles.forEach((x) => {
+            const lt = L.lightsOf(cfg, x[0], x[1]), name = x.join(' ');
+            const under = L.step(null, 6799, t, lt.count, cfg, 1000, lt.reds);
+            assert.deepStrictEqual([under.red, under.flashing, under.flashT0], [false, false, null], name);
+            assert.ok(under.lit < lt.count, name + ' lit ' + under.lit);
+            const at = L.step(under, 6800, t, lt.count, cfg, 1040, lt.reds);
+            assert.deepStrictEqual([at.red, at.flashing, at.lit, at.flashT0], [true, true, lt.count, 1040], name);
+            // with a light-up lead the predicted rpm decides, and it goes off lead + 50 under the shift point
+            const lead = L.step(null, 6800, t, lt.count, cfg, 0, lt.reds, 120);
+            assert.deepStrictEqual([6630, 6629].map((r) => L.step(lead, r, t, lt.count, cfg, 1, lt.reds, 120).flashing), [true, false], name + ' lead');
+        });
+    }],
+    ['the flash never runs without red or every light: lit = n and red = flashing on any rpm path (default config)', () => {
+        const t = th('sportplus', 95);
+        let seed = 11;
+        const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+        [3, 6, 8, 10].forEach((n) => {
+            let s = null, rpm = 6000;
+            for (let i = 0; i < 3000; i++) {
+                rpm = Math.max(5500, Math.min(7100, rpm + Math.round((rnd() - 0.48) * 120)));
+                s = L.step(s, rpm, t, n, cfg, i * 20, n === 10 ? 2 : 1, i % 3 ? 0 : 60);
+                assert.strictEqual(s.red, s.flashing, n + ' at ' + rpm);
+                if (s.flashing) assert.strictEqual(s.lit, n, n + ' at ' + rpm);
+                else assert.ok(s.lit < n && s.flashT0 === null, n + ' at ' + rpm);
+            }
+        });
+    }],
+    ['shift clamp (cold oil): the flash starts at the clamped shift point (4,850), not at the limiter band (4,900)', () => {
+        const t = th('sportplus', 40);
+        assert.deepStrictEqual([t.limit, t.shift, t.capped], [5000, 4850, true]);
+        assert.deepStrictEqual([4849, 4850, 4899].map((r) => raw(r, t).flashing), [false, true, true]);
+        const s = run([4850, 4801, 4799], t);
+        assert.deepStrictEqual(s.map((x) => x.flashing), [true, true, false]);
+    }],
+    ['limit - band under the shift point (an edited config): the flash starts at the band, red joins at the shift point', () => {
+        const c = L.validateConfig(Object.assign({}, config, { engine: Object.assign({}, config.engine, { shiftBelowLimit: 50 }) }));
+        assert.deepStrictEqual(c.errors, []);
+        const t = L.thresholds(c.cfg, L.modeThresholds(c.cfg, none, 'sportplus'), 40);
+        assert.deepStrictEqual([t.limit, t.shift], [5000, 4950]);
+        const r = (rpm) => L.rawState(rpm, t, N, c.cfg.engine.limiterBand);
+        assert.deepStrictEqual([r(4899), r(4900), r(4950)], [{ lit: 5, red: false, flashing: false }, { lit: 6, red: false, flashing: true }, { lit: 6, red: true, flashing: true }]);
+        let s = null;
+        const seq = [4900, 4950, 4899, 4851, 4849].map((x, i) => (s = L.step(s, x, t, N, c.cfg, i * 10)));
+        assert.deepStrictEqual(seq.map((x) => [x.red, x.flashing]), [[false, true], [true, true], [false, true], [false, true], [false, false]]);
+        assert.deepStrictEqual(seq.map((x) => x.flashT0), [0, 0, 0, 0, null]);
+    }],
+    ['the flash colour is red in every style: each palette ends in a red, and the bracket fill flashes in colors.R', () => {
+        const red = (hex) => { const v = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)); return v[0] >= 0xd0 && v[1] <= 0x40 && v[2] <= 0x40; };
+        const pals = L.CLUSTER_STYLES.map((k) => cfg.clusterStyles[k].palette).concat([cfg.hudStyles.bar.palette]);
+        pals.forEach((p) => assert.ok(red(cfg.colors[p[p.length - 1]]), p + ' ends in ' + cfg.colors[p[p.length - 1]]));
+        assert.ok(red(cfg.colors.R), 'bracket flash ' + cfg.colors.R);
+        const fl = { lit: 8, red: true, flashing: true };
+        pals.forEach((p) => assert.ok(red(L.fieldColor(fl, p, 0, cfg.colors, true)), p));
     }],
     ['flash timing at 4 Hz and 8 Hz', () => {
         const t0 = 1000;
@@ -137,9 +196,10 @@ module.exports = [
         const lit = (r) => L.rawState(r, t, lt.count, 100, lt.reds).lit;
         assert.deepStrictEqual([5999, 6001, 6400, 6401, 6799, 6800].map(lit), [0, 1, 1, 2, 2, 3]);
     }],
-    ['classic HUD cells: 8 at the shift point; bracket and off have no lights', () => {
+    ['Small (classic) HUD: the same bar lights as Large (0.4.2: no in-bracket cells); bracket and off have no lights', () => {
         const t = th('sportplus', 95), lt = L.lightsOf(cfg, 'hud', 'classic');
-        assert.deepStrictEqual([lt.palette, lt.count], ['yyyyyoor', 8]);
+        assert.deepStrictEqual(lt, L.lightsOf(cfg, 'hud', 'large'));
+        assert.deepStrictEqual([lt.palette, lt.count], ['YYYYYOOR', 8]);
         assert.deepStrictEqual([6799, 6800].map((r) => L.rawState(r, t, 8, 100, 1).lit), [7, 8]);
         assert.strictEqual(L.lightsOf(cfg, 'hud', 'bracket'), null);
         assert.strictEqual(L.lightsOf(cfg, 'hud', 'off'), null);       // an old saved 'off' draws nothing, never throws

@@ -110,12 +110,15 @@ mgu.run({
                 r.warnings.forEach((w) => { if (!warned[w]) { warned[w] = true; log.warn('settings: ' + w); } });
                 return r;
             }
-            /** A display's next state for its style's lights (none: all off); a new style starts from off. p: lead(). */
+            /**
+             * A display's next state for its style's lights; a new style starts from off. p: lead(). The bracket style has
+             * no lights: one stand-in light, so its fill still turns red and flashes at the shift point (0.4.2).
+             */
             function next(which, now, p) {
-                const lights = L.lightsOf(cfg, which, sel[which].style);
+                const lights = L.lightsOf(cfg, which, sel[which].style) || { count: 1, reds: 1 };
                 const prev = sel[which].style === lastStyles[which] ? states[which] : null;
                 lastStyles[which] = sel[which].style;
-                return lights ? L.step(prev, p.rpm, th, lights.count, cfg, now, lights.reds, p.add) : OFF;
+                return L.step(prev, p.rpm, th, lights.count, cfg, now, lights.reds, p.add);
             }
 
             const eff = () => L.effectiveMode(carMode, get, cfg);

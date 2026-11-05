@@ -26,7 +26,7 @@ const SHORT = {
     demo: { auto: 'Auto', on: 'Always', off: 'Never' },
 };
 const STYLE_DESC = {
-    hudStyle: { large: 'Shift bar + rev bracket, large', classic: 'Shift bar + rev bracket, small', bar: 'Shift bar only', bracket: 'Rev bracket + gear only' },
+    hudStyle: { large: 'Shift bar + rev bracket, large', classic: 'Smaller shift bar + rev bracket', bar: 'Shift bar only', bracket: 'Rev bracket + gear only' },
     clusterStyle: { large: 'M slats, large', classic: 'M slats, small', row: 'Centre row, 12 lights', stock: 'Stock look, one block per dial' },
 };
 const DISPLAY = {
@@ -120,8 +120,8 @@ function display(m, which) {
     else if (which === 'cluster' && ds.display === 'both') note = 'Showing in the cluster centre area (experimental)';
     const dim = Math.round(m.cfg.nightDim * 100);
     const barStyle = which === 'hud' && (s.style === 'large' || s.style === 'bar');
-    // the shift bar is held inside the visible area: say so when that moved it (pure geometry, no drawing)
-    const held = on && barStyle && G.hudLayout(m.cfg, s).barShift.clamped;
+    // the shift bar (Small's too) is held inside the visible area: say so when that moved it (pure geometry, no drawing)
+    const held = on && which === 'hud' && G.hudLayout(m.cfg, s).barShift.clamped;
     if (held) note = 'Shift bar held inside the visible area (it was past the edge)';
     const rows = [
         row(k('Style'), 'pills', 'Style', STYLE_DESC[k('Style')][s.style], pills(m, page, k('Style'), s.style), { value: SHORT[k('Style')][s.style] }),
@@ -186,13 +186,6 @@ function about(m) {
         note: 'Shift Lights ' + (m.version || ''),
         noteTone: 'dim',
         blocks: [
-            { title: 'Not proven on this car yet', lines: [
-                'These pages on the real screen (0.4.1)',
-                'Night dim: manual, the car\'s light signal is not read',
-                'Both on, centre area: blank on the M cluster so far',
-                'Stock look: where the blocks sit is a guess',
-                'Light-up lead and Fast RPM timing',
-            ] },
             { title: 'Remove safely', lines: ['Store > Shift Lights > Remove.', 'Never kill or restart it by hand: three crashes', 'in about 30 s wipe every app.'] },
             { title: 'Kill switch', lines: ['Home > All off, or a file named ' + m.cfg.safety.killFile, 'in the app\'s data folder.'] },
         ],

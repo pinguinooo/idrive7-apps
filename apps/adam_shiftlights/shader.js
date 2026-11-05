@@ -5,9 +5,10 @@
  * unknown): test/shader_check.mjs counts them.
  *
  *   FS_SLATS     a slat bar (geom.slatBar): mirrored or '/' lean, centre gap or centre slat, glow, up to a
- *                10-letter palette, stage mode (stock blocks), limiter flash over the hull or the slats.
- *   FS_BRACKET   the HUD bracket's cream fill up to the rpm (1000-rpm cells, red while flashing) and the
- *                classic style's shift cells; the rail, ticks and numerals are a static image (hudart.js).
+ *                10-letter palette, stage mode (stock blocks), the shift flash over the hull or the slats.
+ *   FS_BRACKET   the HUD bracket's cream fill up to the rpm (1000-rpm cells, red while flashing); its shift-cell code
+ *                is unused since 0.4.2 (u_cells count 0; config.js hudStyles.cells says why it stays); the rail,
+ *                ticks and numerals are a static image (hudart.js).
  *
  * Sent only when they change: u_st (lit, flash, brightness, ...). While the flash is on, the renderer itself
  * steps u_on 1/0 at the flash rate (an `animate` started at the flash's start, output.js).

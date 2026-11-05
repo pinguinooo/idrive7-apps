@@ -14,8 +14,7 @@ needs no change to `mgu-repo.json`.
 
 ## Status
 
-**Untested on a real car.** The apps have only run in the upstream idrive7-apps emulator and in Node 8 unit
-tests. Read each app's Safety section before you install it.
+Each app's README says what has run on a car so far. Read each app's Safety section before you install it.
 
 ## Install an app
 

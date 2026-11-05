@@ -10,10 +10,8 @@ something changes: there is no live preview, so nothing on that screen competes 
 
 ## Status
 
-Proven on a 2024 X3 M40i (G01 LCI) in a car test: the HUD shift lights and "Only in Sport+" work. Still only proven in
-the upstream idrive7-apps emulator (a fake cluster-render service) and in Node 8 unit tests: the settings pages on the car's
-screen (0.4.x), the cluster styles, night dim and the shift bar's left / right move. Read the
-Safety section before you install it.
+Proven on a 2024 X3 M40i (G01 LCI) in a car test: the HUD shift lights and "Only in Sport+" work. Read the Safety
+section before you install it.
 
 ## Requirements
 
@@ -44,7 +42,7 @@ Every page fits one screen. The pill in colour is the value in use; a greyed row
 | Home | Instrument cluster | on / off (big card) | off |
 | Home | When both are on | HUD, Cluster, Both (experimental centre area) | HUD |
 | Home | All off | turns both off (the kill switch) | |
-| HUD | Style | Large, Small (shift bar + rev bracket), Bar only, Bracket (rev bracket + gear) | Large |
+| HUD | Style | Large (shift bar + rev bracket), Small (the same with a 70 % shift bar), Bar only, Bracket (rev bracket + gear) | Large |
 | HUD | Size | 70 to 120 % | 110 % |
 | HUD | Brightness | 20 to 100 % | 100 % |
 | HUD | Night dim | on / off | off |
@@ -71,9 +69,25 @@ bar's three buttons: HUD on/off, Cluster on/off and Settings, which opens the HM
 (in the same order as the pages).
 
 A new install starts with both displays off. Settings saved by 0.2.x move over on the first start: a display
-that was showing stays on. 0.4.0 keeps every saved setting as it was (and so does 0.4.1: it only adds the Shift bar move, and its start values for fresh installs).
+that was showing stays on. 0.4.0 keeps every saved setting as it was (and so does 0.4.1: it only adds the Shift bar move, and its start values for fresh installs; and 0.4.2: it changes only what the lights and the Small style show).
 
 "Default" uses the built-in thresholds for that mode.
+
+### The shift flash
+
+Since 0.4.2 the whole bar turns red and starts flashing the moment the rpm reaches the drive mode's shift point (the
+"Shift (all red)" rpm, or the lower one cold oil sets): on the cluster and the HUD, in every style. In the Bracket style,
+which has no shift bar, the bracket's fill turns red and flashes. It stops once the rpm drops 50 rpm under the shift point
+(plus the light-up lead while the rpm was climbing), so it does not flicker on a steady rpm. Before 0.4.2 the bar stayed
+solid red at the shift point and flashed only in the last 100 rpm under the limiter. The flash rate stays 4 Hz (`flashHz`
+in config.js, 4 to 20): the slowest allowed, as the flash now comes at every shift, and its first half is lit, so the bar
+shows red at once.
+
+### HUD styles
+
+Large: the shift bar over the rev bracket and gear. Small (0.4.2): the same layout with the shift bar at 70 % of its size
+(`hudStyles.smallBar` in config.js), on the same base line and centred over the bracket; before 0.4.2 Small drew small
+shift cells inside the bracket. Bar only: the shift bar alone. Bracket: the rev bracket and gear alone.
 
 ### HUD and cluster together
 
@@ -119,8 +133,9 @@ The shift bar is wide (578 px at 100 %, 636 at 110 %), and the HUD shows a pictu
 800 x 480 scene (wider is cut off). With the HUD moved 80 px left the bar's left end sat at x 2, outside that box. The bar
 now has its own Shift bar left / right move on top of the HUD move (default +70 px: the smallest 5 px step that keeps its
 left end 8 px inside the box), and it is always held inside the box left and right, whatever the settings (the HUD page
-says so when it did). Too wide for the box (120 %): centred. The box is assumed centred in the scene and has not been
-measured on the car (`hud.visible` in config.js). Up / down is not clamped.
+says so when it did). Too wide for the box (120 %): centred. The box is assumed centred in the scene (`hud.visible` in
+config.js). Up / down is not clamped. The Small style's bar is narrower and stays centred over the bracket (the Shift bar
+move is for Large and Bar only); it is held inside the box the same way, which only 120 % moved 90 px or more needs.
 
 The gear spot shows 1 to 9 in D, and P, R or N from the selector; a value it does not know shows nothing.
 
@@ -129,7 +144,7 @@ size grows upward, away from the speed. The app draws no speed or unit: the stoc
 
 ## Screens
 
-From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down). Not yet seen on the car's own screen (these are 0.4.0).
+From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down; 0.4.2).
 
 | Home | HUD | Cluster |
 |---|---|---|

@@ -42,6 +42,7 @@ const DEFAULTS = {
     hudStyles: {
         bar: { palette: 'YYYYYOOR', reds: 1, fill: 'inward', lean: 'same', perSide: 7, slat: 30, pitch: 36, inner: 33.6, centre: 30.6, h: 52, shear: 18.72, cx: 390.64, cy: 118, glow: 13, dim: 0.16, idle: true },
         cells: { palette: 'yyyyyoor', reds: 1, gap: 0.14, pad: 1.8 },
+        smallBar: 0.7,
         bracket: {
             path: [[0, 52], [73, 0], [331, 0]], round: 14, rail: 3.6, gapRail: 0.8, bar: 9, numH: 11, numOff: 24,
             tickMajor: 6, cellGap: 1.5, scale: 1.2, top: 152, scaleMax: 7000,
@@ -185,6 +186,7 @@ function validateConfig(input) {
             if (!(num(c.gap) && c.gap >= 0 && c.gap < 0.5) || !(num(c.pad) && c.pad >= 0)) return 'gap must be 0 to 0.5 and pad >= 0';
             return null;
         }, DEFAULTS.hudStyles.cells),
+        smallBar: check('hudStyles.smallBar', hs.smallBar, (v) => (!(num(v) && v >= 0.4 && v <= 1) ? 'must be 0.4 to 1' : null), DEFAULTS.hudStyles.smallBar),
     };
     out.hudStyles.bracket = check('hudStyles.bracket', hs.bracket, (B) => {
         const p = bracketProblem(B);
@@ -259,10 +261,14 @@ const fillLit = (rpm, th, n, reds) => {
     return Math.ceil(clamp((rpm - th.start) * m / (th.shift - th.start), 0, m));
 };
 
+// the whole bar turns red and flashes from the shift point (0.4.2; before: solid red there, flashing only in the limiter
+// band), or from the limiter band if that sits lower (a config whose shift is closer to the limit than the band)
+const flashFrom = (th, band) => Math.min(th.shift, th.limit - band);
+
 /** Without hysteresis: { lit, red, flashing }. Invalid or undefined rpm: all off. */
 function rawState(rpm, th, n, band, reds) {
     if (!validRpm(rpm)) return { lit: 0, red: false, flashing: false };
-    const flashing = rpm >= th.limit - band, red = rpm >= th.shift;
+    const flashing = rpm >= flashFrom(th, band), red = rpm >= th.shift;
     return { lit: red || flashing ? n : fillLit(rpm, th, n, reds), red, flashing };
 }
 
@@ -277,7 +283,7 @@ function step(prev, rpm, th, n, cfg, nowMs, reds, leadAdd) {
     const H = cfg.engine.hysteresisRpm + (num(leadAdd) && leadAdd > 0 ? leadAdd : 0), band = cfg.engine.limiterBand;
     const p = prev || { lit: 0, red: false, flashing: false, flashT0: null };
     const raw = rawState(rpm, th, n, band, reds);
-    const flashing = raw.flashing || (p.flashing && rpm >= th.limit - band - H);
+    const flashing = raw.flashing || (p.flashing && rpm >= flashFrom(th, band) - H);
     const red = raw.red || (p.red && rpm >= th.shift - H);
     let lit;
     if (red || flashing) lit = n;
@@ -384,8 +390,7 @@ function gearGlyph(stage, gear) {
 function lightsOf(cfg, which, style) {
     let s = null;
     if (which === 'cluster') s = CLUSTER_STYLES.indexOf(style) >= 0 ? cfg.clusterStyles[style] : null;
-    else if (style === 'large' || style === 'bar') s = cfg.hudStyles.bar;
-    else if (style === 'classic') s = cfg.hudStyles.cells;
+    else if (style === 'large' || style === 'bar' || style === 'classic') s = cfg.hudStyles.bar;   // classic: the same bar, smaller
     return s ? { palette: s.palette, count: s.palette.length, reds: s.reds } : null;
 }
 

@@ -143,24 +143,28 @@ function pull(a0, a1, lo, hi, m, want) {
  * The HUD style's art (hudSel = logic.readStyle(..., 'hud')): { k, size, x, y, bar, bracket, barShift, fits }. Every point
  * of the design goes through T(x, y) = [C + (x - 400) k, A + y' + (y - A) k], C = hud.centerX + the move
  * x, A = hud.anchorY, y' = the move y, k = size / 100: centred on the stock speed, the bottom fixed while the size
- * grows upward. bar: the slat bar (large, bar), bracket: the tach bracket and gear (large, classic, bracket).
- * The bar alone also moves by hudSel.barX (px, right; default 0) and is then held inside the visible box
- * (cfg.hud.visible.x0 / x1, less cfg.hud.barMargin; left and right only: up / down is the HUD move's job, and a bar pulled down
- * would sit on the bracket): barShift = { x (px actually moved from T), asked (barX), clamped }.
+ * grows upward. bar: the slat bar (large, bar; classic: at cfg.hudStyles.smallBar of its size, on the Large bar's base
+ * line and middle), bracket: the tach bracket and gear (large, classic, bracket).
+ * The bar alone also moves by hudSel.barX (px, right; default 0; Large and Bar only, the Small bar stays centred) and is then
+ * held inside the visible box (cfg.hud.visible.x0 / x1, less cfg.hud.barMargin; left and right only: up / down is the HUD
+ * move's job, and a bar pulled down would sit on the bracket): barShift = { x (px actually moved), asked, clamped }.
  * Art off the scene falls back to size 100, then to no move, each with one warn(text).
  */
 function hudLayout(cfg, hudSel, warn) {
     const say = typeof warn === 'function' ? warn : () => {}, hs = hudSel.style, st = cfg.hudStyles.bar, H = cfg.hud;
-    const V = H.visible || { x0: 0, y0: 0, x1: TARGETS.hud[0], y1: TARGETS.hud[1] }, m = H.barMargin || 0, barX = hudSel.barX || 0;
+    const V = H.visible || { x0: 0, y0: 0, x1: TARGETS.hud[0], y1: TARGETS.hud[1] }, m = H.barMargin || 0;
+    const small = hs === 'classic', s = small ? cfg.hudStyles.smallBar : 1, barX = small ? 0 : hudSel.barX || 0;
     const at = (size, x, y) => {
         const k = size / 100, C = H.centerX + x, A = H.anchorY;
         const T = (p) => [C + (p[0] - HUD_CX) * k, A + y + (p[1] - A) * k];
         const c = T([st.cx, st.cy]);
         let bar = null, barShift = { x: 0, asked: barX, clamped: false };
-        if (hs === 'large' || hs === 'bar') {
-            const mk = (dx) => slatBar(Object.assign({}, st, { cx: c[0] + dx, cy: c[1] }), k, 'hud');
-            const b0 = mk(0).bar, dx = pull(b0.x0, b0.x1, V.x0, V.x1, m, barX);
-            bar = mk(dx);
+        if (hs === 'large' || hs === 'bar' || small) {
+            const mk = (kk, dx, dy) => slatBar(Object.assign({}, st, { cx: c[0] + dx, cy: c[1] + dy }), kk, 'hud');
+            const big = mk(k, 0, 0).bar, b0 = mk(k * s, 0, 0).bar;
+            const ox = (big.x0 + big.x1 - b0.x0 - b0.x1) / 2, oy = big.y1 - b0.y1;      // Small: the Large bar's middle and base
+            const dx = pull(b0.x0 + ox, b0.x1 + ox, V.x0, V.x1, m, barX);
+            bar = mk(k * s, ox + dx, oy);
             barShift = { x: dx, asked: barX, clamped: Math.abs(dx - barX) > 0.01 };
         }
         const br = hs === 'large' || hs === 'classic' || hs === 'bracket' ? bracket(cfg.hudStyles, T, k) : null;
@@ -176,7 +180,8 @@ function hudLayout(cfg, hudSel, warn) {
 /**
  * The layer specs for a display mode ('off' | 'cluster' | 'hud' | 'both', logic.readDisplays) and the two
  * style selections (logic.readStyle results):
- * [{ key, which, role: 'slats' | 'bracketImg' | 'bracketFill', target, rect, z, geom, style, cells, flash }].
+ * [{ key, which, role: 'slats' | 'bracketImg' | 'bracketFill', target, rect, z, geom, style }]. Every effect layer flashes
+ * with its display's state (the bracket fill too, in every style: 0.4.2).
  * 'both' puts the cluster on the map target (panel and hud share one scene: never up at once). The cluster bar is
  * moved by sel.cluster.x, y; a size, then a move, that does not fit its target falls back (100 %, then the default
  * place) with a warn(text); the HUD: hudLayout.
@@ -205,8 +210,7 @@ function layersFor(cfg, display, sel, warn) {
         if (hl.bracket) {
             const b = hl.bracket;
             out.push({ key: 'hud:bracketImg', which: 'hud', role: 'bracketImg', target: 'hud', rect: b.rect, z: 0, geom: b, style: hs });
-            out.push({ key: 'hud:bracketFill', which: 'hud', role: 'bracketFill', target: 'hud', rect: b.rect, z: 1, geom: b, style: hs,
-                cells: hs === 'classic', flash: hs !== 'bracket' });
+            out.push({ key: 'hud:bracketFill', which: 'hud', role: 'bracketFill', target: 'hud', rect: b.rect, z: 1, geom: b, style: hs });
         }
     }
     return out;

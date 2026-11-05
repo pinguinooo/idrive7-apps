@@ -14,7 +14,7 @@
  * renderer-side step animation of u_on, started when the flash starts, so nothing is sent per frame.
  * The bracket image is drawn once (hudart.js) and sent whole; a gear change sends only the digit's box.
  */
-const { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, cellUniform, unlitAlpha } = require('./shader');
+const { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, unlitAlpha } = require('./shader');
 const geom = require('./geom');
 const hudart = require('./hudart');
 const L = require('./logic');
@@ -80,7 +80,7 @@ function createOutput(o) {
         const u = isFill ? bracketUniforms(spec, cfg.colors, level, a.th, cfg.hudStyles.cells) : slatUniforms(spec, cfg.colors, level);
         u.forEach((x) => cr.uniform(ref, x[0], x[1], x[2]));
         const st = u.filter((x) => x[0] === 'u_st')[0][1];
-        return Object.assign(base, { ref, st: st.join(' '), cellKey: isFill ? cellUniform(spec, cfg.hudStyles.cells, a.th).join(' ') : '' });
+        return Object.assign(base, { ref, st: st.join(' ') });
     }
 
     function startFlash(l, flash) {
@@ -123,14 +123,10 @@ function createOutput(o) {
             startFlash(l, flash);
             return;
         }
-        // bracketFill: the fill up to the rpm (10 rpm steps), the cells' place when the thresholds move
-        const flash = l.spec.flash && st.flashing ? 1 : 0, b = l.spec.geom;
+        // bracketFill: the fill up to the rpm (10 rpm steps), red and flashing with the display's shift flash (every style)
+        const flash = st.flashing ? 1 : 0, b = l.spec.geom;
         const rpm = typeof a.rpm === 'number' && isFinite(a.rpm) ? Math.round(a.rpm / 10) * 10 : 0;
-        if (l.spec.cells) {
-            const ck = cellUniform(l.spec, cfg.hudStyles.cells, a.th);
-            if (ck.join(' ') !== l.cellKey) { l.cellKey = ck.join(' '); cr.uniform(l.ref, 'u_cells', ck); }
-        }
-        sendSt(l, [Math.round(b.sOf(rpm) * 100) / 100, flash, level, l.spec.cells ? st.lit : 0]);
+        sendSt(l, [Math.round(b.sOf(rpm) * 100) / 100, flash, level, 0]);
         startFlash(l, flash);
     }
 

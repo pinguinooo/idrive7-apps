@@ -62,7 +62,7 @@ module.exports = [
         await until(() => r.out.status().layers['panel slats'] === 'shown', 3000, 'layer shown');
         await r.done();
     }],
-    ['every style makes its own layer set: cluster 1 each; HUD large 3, classic 2, bar 1, bracket 2; both off closes', async () => {
+    ['every style makes its own layer set: cluster 1 each; HUD large 3, classic 3, bar 1, bracket 2; both off closes', async () => {
         const r = rig();
         for (const c of L.CLUSTER_STYLES) {
             const n0 = r.msgs.length;
@@ -75,7 +75,7 @@ module.exports = [
         for (const h of L.HUD_STYLES) {
             const n0 = r.msgs.length, specs = G.layersFor(cfg, 'hud', SEL('large', h));
             r.out.apply(A('hud', 'large', h));
-            assert.strictEqual(specs.length, { large: 3, classic: 2, bar: 1, bracket: 2 }[h]);
+            assert.strictEqual(specs.length, { large: 3, classic: 3, bar: 1, bracket: 2 }[h]);
             await until(() => r.ops('layer', n0).length === specs.length, 3000, h);
             assert.deepStrictEqual(r.ops('layer', n0).map(rectOf).sort(), specs.map(want).sort(), h);
             if (h !== 'bar') await until(() => r.ops('frame', n0).length === 1, 3000, h + ' image');
@@ -204,7 +204,7 @@ module.exports = [
         assert.deepStrictEqual(r.ops('uniform', n1).map((m) => [m.name, m.v.split(' ')[0]]), [['u_st', '3'], ['u_st', '3']]);
         await r.done();
     }],
-    ['flash: one step animation of u_on at the flash rate per lit layer, stopped when the flash ends; the bracket style never flashes', async () => {
+    ['flash: one step animation of u_on at the flash rate per effect layer, stopped when the flash ends; the bracket style flashes its fill', async () => {
         const r = rig();
         r.out.apply(A('both', 'large', 'large', S(10)));
         await until(() => r.out.status().link === 'ready', 3000, 'ready');
@@ -219,22 +219,25 @@ module.exports = [
         r.out.apply(A('both', 'large', 'large', S(10)));
         await until(() => r.ops('stop', n1).length === 3, 3000, 'stop');
         const n2 = r.msgs.length;
-        r.out.apply(A('hud', 'off', 'bracket', S(0, true)));
-        await until(() => r.ops('layer', n2).length === 2, 3000, 'bracket');
+        r.out.apply(A('hud', 'off', 'bracket', S(0, true), { rpm: 6800 }));
+        await until(() => r.ops('layer', n2).length === 2 && r.ops('animate', n2).length === 1, 3000, 'bracket flash');
         await wait(100);
-        assert.strictEqual(r.ops('animate', n2).length, 0);
+        // 0.4.2: the fill turns red and flashes at the shift point in the bracket style too (u_st flash 1 on the fill)
+        const fill = r.ops('layer', n2).filter((m) => /u_path/.test(m.fs))[0];
+        assert.ok(fill && r.ops('animate', n2)[0].ref === fill.ref, 'the animation is the fill\'s');
+        assert.strictEqual(r.ops('uniform', n2).filter((m) => m.ref === fill.ref && m.name === 'u_st').pop().v.split(' ')[1], '1');
         await r.done();
     }],
     ['active false (kill, demo, tripped) drops every layer and closes', async () => {
         const r = rig();
         r.out.apply(A('both', 'stock', 'classic', S(1)));
-        await until(() => r.ops('layer').length === 3 && r.out.status().link === 'ready', 3000, 'layers');
+        await until(() => r.ops('layer').length === 4 && r.out.status().link === 'ready', 3000, 'layers');
         const n0 = r.msgs.length;
         r.out.apply(A('both', 'stock', 'classic', S(1), { active: false }));
         await until(() => r.msgs.slice(n0).some((m) => m.ev === 'close'), 3000, 'closed');
-        assert.strictEqual(r.ops('drop', n0).length, 3);
+        assert.strictEqual(r.ops('drop', n0).length, 4);
         r.out.apply(A('both', 'stock', 'classic', S(1)));
-        await until(() => r.ops('layer', n0).length === 3, 3000, 'layers back');
+        await until(() => r.ops('layer', n0).length === 4, 3000, 'layers back');
         await r.done();
     }],
     ['service restart: the client reconnects and replays every layer, the image whole and the last uniforms', async () => {

@@ -22,7 +22,7 @@ module.exports = Object.freeze({
         oilCold: 30,            // at or below this oil temperature (C) the limit is limitCold
         oilWarm: 80,            // at or above this oil temperature (C) the limit is limitWarm; linear in between
         shiftBelowLimit: 150,   // a shift point never sits closer than this to the current limit (rpm)
-        limiterBand: 100,       // the whole bar flashes red from this far under the limit (rpm)
+        limiterBand: 100,       // the whole bar flashes red from the shift point, or from this far under the limit if lower (rpm)
         hysteresisRpm: 50,      // a light, red or flash goes off only this far under where it came on (no flicker)
     },
     modes: {                    // per drive mode: first light at `start`, all red at `shift` (rpm)
@@ -35,7 +35,7 @@ module.exports = Object.freeze({
     sizeSteps: [70, 80, 90, 100, 110, 120],       // "size" setting steps (%): the cluster bar about its centre, the HUD art about (hud.centerX, hud.anchorY)
     brightSteps: [20, 40, 60, 80, 100],           // "brightness" setting steps (%)
     nightDim: 0.35,             // "night dim" on: brightness x this [U] (no lights-on signal yet)
-    flashHz: 4,                 // limiter flash, on half / off half per cycle (4 to 20) [U]
+    flashHz: 4,                 // the shift flash (0.4.2: from the shift point on), on half / off half per cycle (4 to 20) [U]
     brightness: 1.0,            // 0..1, multiplies every lit colour on the cluster and HUD (with the settings)
     // the HUD art (hudStyles, drawn centred on scene x 400) goes centred on the stock speed block: centerX = its
     // centre, anchorY = the bottom of our art (the stock speed sits under it). A bigger size grows upward. [U]
@@ -83,8 +83,12 @@ module.exports = Object.freeze({
         // idle: the unlit slats always show at dim (an idle car shows the bar, not nothing)
         bar: { palette: 'YYYYYOOR', reds: 1, fill: 'inward', lean: 'same', perSide: 7, slat: 30, pitch: 36, inner: 33.6,
             centre: 30.6, h: 52, shear: 18.72, cx: 390.64, cy: 118, glow: 13, dim: 0.16, idle: true },   // 578 x 52 at 111,92
-        cells: { palette: 'yyyyyoor', reds: 1, gap: 0.14, pad: 1.8 },   // small style: cells in the bracket's bar between start
-                                                                        // and shift; gap = share of a cell, pad = u past the bar
+        // shortcut: no style draws these in-bracket cells since 0.4.2 (Small was them); pad still sizes the bracket's rect
+        // and FS_BRACKET keeps its cell code unused, so the GPU program the car compiled is unchanged. Drop both with
+        // the next FS_BRACKET change. gap = share of a cell, pad = u past the bar
+        cells: { palette: 'yyyyyoor', reds: 1, gap: 0.14, pad: 1.8 },
+        smallBar: 0.7,          // the Small style (0.4.2): the Large layout with the shift bar at this share of its size
+                                // (0.4 to 1), on the Large bar's base line and middle, so it sits centred over the bracket
         bracket: {              // the M tach bracket 0 to 7, in u (reference px), drawn x scale, centred on x 400, its top at y top
             path: [[0, 52], [73, 0], [331, 0]], round: 14, rail: 3.6, gapRail: 0.8, bar: 9, numH: 11, numOff: 24,
             tickMajor: 6, cellGap: 1.5, scale: 1.2, top: 152, scaleMax: 7000,      // top: under the bar, the same for every style

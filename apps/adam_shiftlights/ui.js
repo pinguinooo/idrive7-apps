@@ -150,10 +150,10 @@ function aboutPage(cv, t, v, act) {
     const lw = 760, h = 5 * PITCH - 8;
     cv.roundRect(X0, ROW_Y, lw, h, 14, withAlpha('#ffffff', 0.05));
     let y = ROW_Y + 34;
-    v.blocks.forEach((b, i) => {
-        txt(cv, b.title, X0 + 24, y, 22, i === 0 ? t.warn : t.text, { font: 'bold' });
+    v.blocks.forEach((b) => {
+        txt(cv, b.title, X0 + 24, y, 22, t.text, { font: 'bold' });
         y += 26;
-        b.lines.forEach((l) => { txt(cv, (i === 0 ? '- ' : '') + l, X0 + 24, y, 18, t.dim); y += 22; });
+        b.lines.forEach((l) => { txt(cv, l, X0 + 24, y, 18, t.dim); y += 22; });
         y += 14;
     });
     const rx = X0 + lw + 20, rw = W - lw - 20;
