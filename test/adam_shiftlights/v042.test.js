@@ -51,9 +51,10 @@ module.exports = [
         near(mid(l.bar.bar), cfg.hud.centerX, 1, 'bar middle');
         near((b.pts[0][0] + b.pts[b.pts.length - 1][0]) / 2, cfg.hud.centerX, 1, 'bracket middle');
         near(b.gear.x, cfg.hud.centerX, 1e-9, 'gear');
-        // 577.9 x 52 -> 404.5 x 36.4 at 100 %
-        near(l.bar.bar.x1 - l.bar.bar.x0, 404.54, 0.01, 'small bar width at 100 %');
-        near(l.bar.dims.h, 36.4, 1e-9, 'small bar height at 100 %');
+        // 0.7 of the Large bar at 100 % (0.4.3: the cluster's M slats at 0.9, 394.2 x 74.52 -> 275.9 x 52.2)
+        const big = lay('large', 100, 0, 0, 0).bar;
+        near(l.bar.bar.x1 - l.bar.bar.x0, (big.bar.x1 - big.bar.x0) * cfg.hudStyles.smallBar, 1e-9, 'small bar width at 100 %');
+        near(l.bar.dims.h, cfg.hudStyles.bar.h * cfg.hudStyles.smallBar, 1e-9, 'small bar height at 100 %');
     }],
     ['Small ignores the Large bar\'s own move (centred over the bracket) but is held inside the visible box like it', () => {
         cfg.sizeSteps.forEach((size) => cfg.nudge.x.forEach((x) => {
@@ -68,11 +69,14 @@ module.exports = [
         const adam = lay('classic', 110, -80, 60, 70);
         assert.strictEqual(adam.barShift.clamped, false);
         near(mid(adam.bar.bar), cfg.hud.centerX - 80, 1, 'centred on the moved HUD');
-        // only 120 % moved 90 px or more reaches the box: pulled in, and the HUD page says so
-        assert.strictEqual(lay('classic', 120, -100, 60, 0).barShift.clamped, true);
-        assert.strictEqual(lay('classic', 120, -80, 60, 0).barShift.clamped, false);
+        // 0.4.3: the Small bar (276 px at 100 %, 331 at 120 %) never reaches the box's margin at any size or HUD move; the
+        // clamp stays for a config with a wider bar (the page note when it pulls: hud041)
+        cfg.sizeSteps.forEach((size) => cfg.nudge.x.forEach((x) => assert.strictEqual(lay('classic', size, x, 60, 0).barShift.clamped, false, [size, x].join(' '))));
+        const wide = JSON.parse(JSON.stringify(cfg));
+        wide.hudStyles.smallBar = 1;
+        assert.strictEqual(G.hudLayout(wide, { style: 'classic', size: 120, x: -100, y: 60, barX: 0 }, () => {}).barShift.clamped, true);
         const held = P.view(1, model({ hudOn: true, hudStyle: 'classic', hudSize: 120, hudX: -100 }));
-        assert.ok(/held inside the visible area/.test(held.note) && held.noteTone === 'warn', held.note);
+        assert.ok(!/held/.test(held.note), held.note);
         const fine = P.view(1, model({ hudOn: true, hudStyle: 'classic', hudSize: 110, hudX: -80, hudY: 60, hudBarX: 70 }));
         assert.ok(!/held/.test(fine.note), fine.note);
         // the Shift bar left / right row stays the Large and Bar only styles' (off for Small, no controls)
@@ -93,12 +97,12 @@ module.exports = [
     ['About page and README: no "not proven / untested on a car" text; About shows the version from app.json', () => {
         const untested = /not proven|unproven|untested|not tested|not yet (seen|tested|proven)|on (a|the|this) car yet/i;
         const about = P.view(4, model({}));
-        assert.strictEqual(about.note, 'Shift Lights 0.4.2');
+        assert.strictEqual(about.note, 'Shift Lights ' + SPEC.version);
         assert.deepStrictEqual(about.blocks.map((b) => b.title), ['Remove safely', 'Kill switch']);
         const text = JSON.stringify(about);
         assert.ok(!untested.test(text), text.match(untested));
         const readme = fs.readFileSync(path.join(APP, 'README.md'), 'utf8');
         assert.ok(!untested.test(readme), String(readme.match(untested)));
-        assert.ok(/0\.4\.2/.test(readme), 'the README names 0.4.2');
+        assert.ok(readme.indexOf(SPEC.version) >= 0, 'the README names ' + SPEC.version);
     }],
 ];

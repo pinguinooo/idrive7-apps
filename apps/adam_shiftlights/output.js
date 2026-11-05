@@ -2,16 +2,21 @@
 /**
  * output.js - the cluster / HUD side: the cluster-render layers the display mode and the two styles want.
  *
- *   const out = createOutput({ ClusterRender, socketPath, log, cfg, guard, makeCanvas });
- *   out.apply({ display, active, sel, states, rpm, th, gear });   // on every sample or setting change;
- *       // sel: { cluster, hud } (logic.readStyle), states: { cluster, hud } (logic.step for each style's count)
- *   out.status() -> { link: 'none' | 'connecting' | 'ready', layers: { 'target role': state }, targets: { name: state } }
+ *   const out = createOutput({ ClusterRender, socketPath, log, cfg, guard, makeCanvas, timers? });
+ *   out.apply({ display, active, sel, states, rpm, th, gear, flashMode });   // on every sample or setting change;
+ *       // sel: { cluster, hud } (logic.readStyle), states: { cluster, hud } (logic.step for each style's count),
+ *       // flashMode: 'app' (default) | 'renderer' (logic.readFlashMode)
+ *   out.status() -> { link: 'none' | 'connecting' | 'ready', layers: { 'target role': state }, targets: { name: state }, flash }
  *
- * The plan (geom.layersFor) is keyed on every layer's place and style, not its brightness: a new key drops
- * the old layers and makes the new ones on the open connection (a style switch is live); nothing active
+ * The plan (geom.layersFor) is keyed on every layer's place and style and the flash mode, not its brightness: a new key
+ * drops the old layers and makes the new ones on the open connection (a style switch is live); nothing active
  * (off, kill switch, tripped, demo data) drops every layer and closes the connection. Uniforms go only when
- * they change; brightness is u_st on the effects and `opacity` on the bracket image. The flash is a
- * renderer-side step animation of u_on, started when the flash starts, so nothing is sent per frame.
+ * they change; brightness is u_st on the effects and `opacity` on the bracket image.
+ * The flash (u_st.y 1) shows the hull when u_on is 1 and nothing when it is 0. Flash mode App (0.4.3 default): the app
+ * sends u_on 1 / 0 every half cycle (at most 8 times a second a layer), u_on 1 before the first u_st with the flash, every
+ * flashing layer in step, and stops the moment no layer flashes. Renderer (0.4.2): one step animation of u_on that the
+ * renderer plays, nothing sent per frame; on Adam's G01 it never ran (the KOMBI plays animations on its own clock), so
+ * u_on kept its 1 and the bar stayed solid red.
  * The bracket image is drawn once (hudart.js) and sent whole; a gear change sends only the digit's box.
  */
 const { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, unlitAlpha } = require('./shader');
@@ -19,11 +24,15 @@ const geom = require('./geom');
 const hudart = require('./hudart');
 const L = require('./logic');
 
+// Flash mode App: never more than 8 sends a second a layer (4 Hz), whatever flashHz says
+const APP_HALF_MIN_MS = 125;
+
 function createOutput(o) {
-    const cfg = o.cfg, log = o.log, guard = o.guard;
-    let cr = null, planKey = '[]', layers = [], linkState = 'none';
+    const cfg = o.cfg, log = o.log, guard = o.guard, T = o.timers || { setInterval, clearInterval };
+    let cr = null, planKey = '[]', layers = [], linkState = 'none', ticker = null, phase = 1, skipped = 0;
     const layerStates = Object.create(null), targetStates = Object.create(null), warned = Object.create(null);
     const warn = (text) => { if (!warned[text]) { warned[text] = true; log.warn(text); } };
+    const appHalf = Math.max(APP_HALF_MIN_MS, Math.round(500 / cfg.flashHz));
 
     function client() {
         if (cr) return cr;
@@ -48,6 +57,7 @@ function createOutput(o) {
     }
 
     function dropAll() {
+        stopTicker();
         layers.forEach((l) => { delete layerStates[l.ref]; if (cr) cr.drop(l.ref); });
         layers = [];
     }
@@ -61,7 +71,7 @@ function createOutput(o) {
 
     function make(spec, a) {
         const r = spec.rect, level = L.levelOf(cfg, a.sel[spec.which]);
-        const base = { spec, role: spec.role, which: spec.which, target: r.target, st: '', flash: -1, anim: 0, level };
+        const base = { spec, role: spec.role, which: spec.which, target: r.target, st: '', flash: -1, anim: 0, on: 1, mode: a.flashMode === 'renderer' ? 'renderer' : 'app', level };
         if (spec.role === 'bracketImg') {
             const cv = o.makeCanvas(r.w, r.h), b = spec.geom;
             hudart.drawBracketStatic(cv, b, cfg.colors, -r.x, -r.y, 1);
@@ -83,14 +93,42 @@ function createOutput(o) {
         return Object.assign(base, { ref, st: st.join(' ') });
     }
 
+    const sendOn = (l, v) => { if (l.on !== v) { l.on = v; cr.uniform(l.ref, 'u_on', [v]); } };
+    const appFlashing = () => layers.filter((l) => l.flash === 1 && l.mode === 'app');
+
+    function stopTicker() {
+        if (ticker) { T.clearInterval(ticker); ticker = null; }
+    }
+    /** Every App-flashing layer to its on half now, then a toggle every half cycle (one clock: all in step). */
+    function startTicker() {
+        stopTicker();
+        phase = 1;
+        appFlashing().forEach((l) => sendOn(l, 1));
+        ticker = T.setInterval(guard('flash', flashTick), appHalf);
+    }
+    function flashTick() {
+        const on = appFlashing();
+        if (!on.length || !cr) { stopTicker(); return; }
+        // the socket is backed up (an image upload, a stalled service): skip this toggle rather than queue it
+        if (cr.blocked) { skipped++; return; }
+        phase = phase ? 0 : 1;
+        on.forEach((l) => sendOn(l, phase));
+    }
+
+    /** Before the layer's u_st: a flash starts in its on half (App: u_on 1 goes first), the animation (Renderer) or the ticker. */
     function startFlash(l, flash) {
         if (flash === l.flash) return;
         l.flash = flash;
         if (l.anim) { cr.stop(l.ref, l.anim); l.anim = 0; }
-        if (flash) {
-            const half = Math.round(500 / cfg.flashHz);
-            l.anim = cr.animate(l.ref, { property: 'uniform', name: 'u_on', keys: '0:1 ' + half + ':0 ' + (2 * half) + ':1', loop: true, interp: 'step' });
+        if (l.mode === 'renderer') {
+            if (flash) {
+                const half = Math.round(500 / cfg.flashHz);
+                l.anim = cr.animate(l.ref, { property: 'uniform', name: 'u_on', keys: '0:1 ' + half + ':0 ' + (2 * half) + ':1', loop: true, interp: 'step' });
+            }
+            return;
         }
+        if (flash) startTicker();
+        else if (!appFlashing().length) stopTicker();
     }
 
     function sendSt(l, v) {
@@ -117,22 +155,21 @@ function createOutput(o) {
             return;
         }
         l.level = level;
+        const flash = st.flashing ? 1 : 0;
+        startFlash(l, flash);           // first: App's u_on 1 goes before the u_st that starts the flash
         if (l.role === 'slats') {
-            const flash = st.flashing ? 1 : 0;
             sendSt(l, [st.lit, flash, level, unlitAlpha(l.spec.geom.style)]);
-            startFlash(l, flash);
             return;
         }
         // bracketFill: the fill up to the rpm (10 rpm steps), red and flashing with the display's shift flash (every style)
-        const flash = st.flashing ? 1 : 0, b = l.spec.geom;
+        const b = l.spec.geom;
         const rpm = typeof a.rpm === 'number' && isFinite(a.rpm) ? Math.round(a.rpm / 10) * 10 : 0;
         sendSt(l, [Math.round(b.sOf(rpm) * 100) / 100, flash, level, 0]);
-        startFlash(l, flash);
     }
 
     function apply(a) {
         const want = a.active && a.sel ? geom.layersFor(cfg, a.display, a.sel, warn) : [];
-        const key = JSON.stringify(want.map((p) => [p.key, p.rect, p.style]));
+        const key = JSON.stringify([a.flashMode === 'renderer' ? 'renderer' : 'app'].concat(want.map((p) => [p.key, p.rect, p.style])));
         if (key !== planKey) {
             dropAll();
             planKey = key;
@@ -155,7 +192,7 @@ function createOutput(o) {
         layers.forEach((l) => { out[l.target + ' ' + l.role] = layerStates[l.ref] || 'sent'; });
         const targets = {};
         Object.keys(targetStates).forEach((k) => { targets[k] = targetStates[k]; });
-        return { link: linkState, layers: out, targets };
+        return { link: linkState, layers: out, targets, flash: { ticking: !!ticker, skipped } };
     }
 
     return { apply, status };

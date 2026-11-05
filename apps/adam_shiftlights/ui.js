@@ -9,6 +9,9 @@
  * Drawn only on a change (main.js), never per frame: no live numbers. Only roundRect, strokeRoundRect, circle, text
  * and fillRect (the GPU Recorder and the software Canvas both have them; KB-ANY-198). ASCII text only.
  * act(writes) -> the function a press runs (main.js saves the writes inside safety.guard).
+ * A control with confirm (Reset HUD to defaults) asks first, as the kit's G.button confirm does: the first press turns it into
+ * "Confirm reset" for ARM_MS, a second press then runs it. The kit's own confirm redraws through a render loop this app does
+ * not have, so the pages keep that state and ask main.js for a draw (createUi(redraw)).
  */
 const { withAlpha } = require('./kit/canvas');
 const G = require('./kit/gauges');
@@ -16,6 +19,7 @@ const P = require('./pages');
 
 const X0 = 40, W = 1520, NOTE_Y = 76, ROW_Y = 92, ROW_H = 62, PITCH = 70, CTL_H = 44;
 const PILL_OPT = { font: 'bold', spacing: 1.5 };
+const ARM_MS = 5000;        // a confirm control's second press must come within this (the kit's G.button: 5 s)
 
 const toneOf = (t, tone) => (tone === 'warn' ? t.warn : tone === 'crit' ? t.crit : tone === 'on' ? t.text : t.dim);
 const txt = (cv, s, x, y, size, c, o) => cv.text(String(s), x, y, size, c, Object.assign({ literal: true }, o));
@@ -78,13 +82,14 @@ function drawRow(cv, t, r, x, y, w, act, h) {
     if (r.kind === 'toggle' && r.enabled && cv.own) cv.target(x, y, w, rh, act(r.controls[0].writes), r.controls[0].key, 14);
 }
 
-/** The line under the tabs; a button at its right (e.g. "Turn HUD on"). */
-function noteLine(cv, t, v, act) {
+/** The line under the tabs; a button at its right (e.g. "Turn HUD on", or a confirm control: arm(a) runs its presses). */
+function noteLine(cv, t, v, act, arm) {
     if (!v.note) return;
     txt(cv, v.note, X0 + 4, NOTE_Y, 22, toneOf(t, v.noteTone), { font: 'bold' });
     if (v.noteAction && cv.own) {
-        const a = v.noteAction, bw = pillWidths(cv, [a.text])[0];
-        G.button(cv, t, X0 + W - bw, NOTE_Y - 34, bw, 40, a.text, act(a.writes), { key: a.key, primary: true });
+        const a = v.noteAction, c = a.confirm && arm ? arm(a) : null, text = c ? c.text : a.text, bw = pillWidths(cv, [text])[0];
+        const opts = c ? { key: a.key, primary: c.armed, color: t.crit, busy: !!a.busy } : { key: a.key, primary: true, busy: !!a.busy };
+        G.button(cv, t, X0 + W - bw, NOTE_Y - 34, bw, 40, text, c ? c.run : act(a.writes), opts);
     }
 }
 
@@ -119,8 +124,8 @@ function homePage(cv, t, v, act, own) {
     } else txt(cv, 'Buttons below: HUD on/off, Cluster on/off, Settings (every setting)', X0 + W - 18, sy + 43, 18, t.dim, { align: 'right' });
 }
 
-function displayPage(cv, t, v, act) {
-    noteLine(cv, t, v, act);
+function displayPage(cv, t, v, act, arm) {
+    noteLine(cv, t, v, act, arm);
     const n = v.rows.length, h = n > 6 ? 54 : ROW_H, pitch = n > 6 ? 60 : PITCH;   // seven rows (HUD) must still end above the screen's bottom
     v.rows.forEach((r, i) => drawRow(cv, t, r, X0, ROW_Y + i * pitch, W, act, h));
 }
@@ -157,14 +162,34 @@ function aboutPage(cv, t, v, act) {
         y += 14;
     });
     const rx = X0 + lw + 20, rw = W - lw - 20;
-    txt(cv, 'Screen (rarely needed)', rx + 4, ROW_Y + 30, 22, t.text, { font: 'bold' });
+    txt(cv, 'Rarely needed', rx + 4, ROW_Y + 30, 22, t.text, { font: 'bold' });
     v.rows.forEach((r, i) => drawRow(cv, t, r, rx, ROW_Y + 44 + i * PITCH, rw, act));
-    txt(cv, v.rowsNote, rx + 4, ROW_Y + 44 + 3 * PITCH + 20, 18, t.dim);
+    txt(cv, v.rowsNote, rx + 4, ROW_Y + 44 + v.rows.length * PITCH + 14, 18, t.dim);
 }
 
-/** One screen's pages: tab(i) picks a page, draw(cv, t, m, act) draws it. */
-function createUi() {
-    let page = 0;
+/**
+ * One screen's pages: tab(i) picks a page, draw(cv, t, m, act) draws it. redraw(): main.js's coalesced draw, asked when a
+ * confirm control arms and when its ARM_MS run out.
+ */
+function createUi(redraw) {
+    let page = 0, armed = null;            // armed: { key, at } of a confirm control pressed once
+    const again = typeof redraw === 'function' ? redraw : () => {};
+    // a clock set back counts as run out (one more press asks again)
+    const live = (key) => { const now = Date.now(); return !!armed && armed.key === key && now >= armed.at && now - armed.at < ARM_MS; };
+    /** A confirm control's look and press: { text, armed, run }. */
+    const arm = (act) => (a) => {
+        const on = live(a.key);
+        return {
+            text: on ? 'Confirm reset' : a.text, armed: on,
+            run: () => {
+                if (live(a.key)) { armed = null; again(); return act(a.writes)(); }
+                armed = { key: a.key, at: Date.now() };
+                again();
+                setTimeout(again, ARM_MS + 50);
+                return null;
+            },
+        };
+    };
     return {
         page: () => page,
         /** Header tab i (from ctx.onTab); anything out of range is ignored. */
@@ -177,7 +202,7 @@ function createUi() {
             if (v.id === 'home') homePage(cv, t, v, a, true);
             else if (v.id === 'behavior') behaviorPage(cv, t, v, a);
             else if (v.id === 'about') aboutPage(cv, t, v, a);
-            else displayPage(cv, t, v, a);
+            else displayPage(cv, t, v, a, arm(a));
         },
     };
 }

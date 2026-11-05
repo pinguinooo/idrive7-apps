@@ -127,7 +127,7 @@ module.exports = [
         await until(() => r.ops('layer').length === 2 && r.ops('uniform').filter((m) => m.name === 'u_st').length === 2, 3000, 'layers');
         const st = {};
         r.ops('uniform').filter((m) => m.name === 'u_st').forEach((m) => { st[r.ops('layer').filter((l) => l.ref === m.ref)[0].target] = m.v; });
-        assert.deepStrictEqual(st, { map: '0 0 1 0.2', hud: '0 0 1 -0.16' });
+        assert.deepStrictEqual(st, { map: '0 0 1 0.2', hud: '0 0 1 ' + (-cfg.hudStyles.bar.dim) });
         await r.done();
     }],
     ['a live style change drops the old layers and makes the new ones on the same connection', async () => {
@@ -204,22 +204,23 @@ module.exports = [
         assert.deepStrictEqual(r.ops('uniform', n1).map((m) => [m.name, m.v.split(' ')[0]]), [['u_st', '3'], ['u_st', '3']]);
         await r.done();
     }],
-    ['flash: one step animation of u_on at the flash rate per effect layer, stopped when the flash ends; the bracket style flashes its fill', async () => {
-        const r = rig();
-        r.out.apply(A('both', 'large', 'large', S(10)));
+    ['flash, Renderer mode: one step animation of u_on at the flash rate per effect layer, stopped when the flash ends; the bracket style flashes its fill', async () => {
+        const r = rig(), R = { flashMode: 'renderer' };
+        r.out.apply(A('both', 'large', 'large', S(10), R));
         await until(() => r.out.status().link === 'ready', 3000, 'ready');
         const n0 = r.msgs.length;
-        for (let i = 0; i < 5; i++) r.out.apply(A('both', 'large', 'large', S(10, true)));
+        for (let i = 0; i < 5; i++) r.out.apply(A('both', 'large', 'large', S(10, true), R));
         await until(() => r.ops('animate', n0).length === 3, 3000, 'animate');
         await wait(100);
         const a = r.ops('animate', n0);
         assert.strictEqual(a.length, 3);              // cluster slats, HUD slats, HUD fill
         a.forEach((x) => assert.deepStrictEqual([x.property, x.name, x.keys, x.loop, x.interp], ['uniform', 'u_on', '0:1 125:0 250:1', 1, 'step']));
         const n1 = r.msgs.length;
-        r.out.apply(A('both', 'large', 'large', S(10)));
+        r.out.apply(A('both', 'large', 'large', S(10), R));
         await until(() => r.ops('stop', n1).length === 3, 3000, 'stop');
+        assert.strictEqual(r.ops('uniform', n0).filter((m) => m.name === 'u_on').length, 0, 'Renderer: the app sends no u_on');
         const n2 = r.msgs.length;
-        r.out.apply(A('hud', 'off', 'bracket', S(0, true), { rpm: 6800 }));
+        r.out.apply(A('hud', 'off', 'bracket', S(0, true), { rpm: 6800, flashMode: 'renderer' }));
         await until(() => r.ops('layer', n2).length === 2 && r.ops('animate', n2).length === 1, 3000, 'bracket flash');
         await wait(100);
         // 0.4.2: the fill turns red and flashes at the shift point in the bracket style too (u_st flash 1 on the fill)
@@ -240,11 +241,11 @@ module.exports = [
         await until(() => r.ops('layer', n0).length === 4, 3000, 'layers back');
         await r.done();
     }],
-    ['service restart: the client reconnects and replays every layer, the image whole and the last uniforms', async () => {
+    ['service restart: the client reconnects and replays every layer, the image whole and the last uniforms (Renderer: its animations)', async () => {
         const r = rig();
-        r.out.apply(A('both', 'large', 'large', S(4)));
+        r.out.apply(A('both', 'large', 'large', S(4), { flashMode: 'renderer' }));
         await until(() => r.out.status().link === 'ready' && r.ops('frame').length === 1, 3000, 'ready');
-        r.out.apply(A('both', 'large', 'large', S(5, true), { gear: 2 }));
+        r.out.apply(A('both', 'large', 'large', S(5, true), { gear: 2, flashMode: 'renderer' }));
         await wait(50);
         const n0 = r.msgs.length;
         await new Promise((res) => r.fake.restart(res));

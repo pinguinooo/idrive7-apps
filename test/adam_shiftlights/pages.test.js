@@ -118,7 +118,11 @@ module.exports = [
         assert.ok(off.rows.every((r) => !r.enabled));
         assert.deepStrictEqual(P.controlsOf(off).map((c) => c.key), ['hud:turnon']);
         assert.ok(P.view(2, model({ hudOn: true })).rows.every((r) => !r.enabled));
-        assert.ok(P.view(1, model({ hudOn: true })).rows.every((r) => r.enabled) && !P.view(1, model({ hudOn: true })).noteAction);
+        assert.ok(P.view(1, model({ hudOn: true })).rows.every((r) => r.enabled));
+        // 0.4.3: with the HUD on the note's button is Reset HUD to defaults: dimmed (no control) while everything is at its default
+        const reset = P.view(1, model({ hudOn: true })).noteAction;
+        assert.deepStrictEqual([reset.key, reset.busy, reset.writes, reset.confirm], ['hud:reset', true, [], true]);
+        assert.ok(P.controlsOf(P.view(1, model({ hudOn: true }))).every((c) => c.key !== 'hud:reset'));
         const b = P.view(3, model({ onlySportPlus: true }));
         assert.deepStrictEqual(b.modes.map((x) => x.enabled), [false, false, true]);
         assert.ok(P.controlsOf(b).every((c) => !/:(comfort|sport)(Start|Shift):/.test(c.key)), P.controlsOf(b).map((c) => c.key).join(' '));

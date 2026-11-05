@@ -23,6 +23,8 @@ const { createUi } = require('./ui');
 const RATE_LOG_MS = 30000;
 const FES = 'de.bmw.infotainment.drivingexcitement.FES';
 const CDS = 'de.bmw.infotainment.vehicle.CDS';
+const VEHICLE = 'de.bmw.infotainment.vehicle.Vehicle';     // statusDayNightChangeOver: the car's day / night (Night dim Auto)
+const DN_LOG_MAX = 50;      // day / night log lines at most (one per new value)
 
 mgu.run({
     async start(ctx) {
@@ -40,20 +42,21 @@ mgu.run({
             log.info('kill switch file: ' + killPath);
 
             const get = (k) => settings.get(k);
-            // 0.2.x saved "enabled" + "display": move them to the two on/off settings once (before any listener)
-            const moves = L.migrateSettings(get);
+            // 0.2.x saved "enabled" + "display": move them to the two on/off settings once; 0.4.3: a saved old HUD default
+            // to today's, a manual night dim that was on to Night dim On (before any listener)
+            const moves = L.migrateSettings(get, cfg);
             moves.forEach((w) => { try { settings.set(w[0], w[1]); } catch (e) { log.warn('settings migration ' + w[0] + ': ' + e); } });
             if (moves.length) log.info('settings migrated to v' + L.SETTINGS_V + ': ' + JSON.stringify(moves));
 
             // the settings pages: drawn on a change only (a setting, a tab, the layout, a status event), coalesced
             // into one guarded draw; never from refresh() or the rpm path. The kit resends the last frame by itself.
-            const pages = createUi();
+            const pages = createUi(() => changed());
             let drawQueued = false;
             const draw = guard('draw', () => {
                 drawQueued = false;
                 if (!ui.isVisible('MAIN')) return;
                 const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);
-                pages.draw(cv, t, { get, schema: settings.schema || (ctx.spec && ctx.spec.settings) || [], cfg, carMode, offReason: offReason(), version: (ctx.spec && ctx.spec.version) || '' }, act);
+                pages.draw(cv, t, { get, schema: settings.schema || (ctx.spec && ctx.spec.settings) || [], cfg, carMode, offReason: offReason(), version: (ctx.spec && ctx.spec.version) || '', night: nightInfo() }, act);
                 return ui.image('MAIN_GFX', cv);
             });
             function changed() { if (!drawQueued) { drawQueued = true; setTimeout(draw, 0); } }
@@ -64,6 +67,20 @@ mgu.run({
             // "Fast RPM": Car's own rpm handler, counted on the subscription and fed by the getter when the car's
             // updates are slow, so the polled rpm goes through Car (data(), gear guess, onSample) like any other
             const poll = createRpmPoll({ cfg: cfg.rpm, log, enabled: () => L.readLead(cfg, get).poll && !offReason() && !d.demo });
+            // the car's day / night for Night dim Auto: st = logic.nightStep's state, raw = the last value seen (for the pages),
+            // sub = the watch's result (an error: this unit has no such signal; the installer drops it, app.json _optional)
+            const dn = { st: null, raw: undefined, sub: null, last: '', logged: 0 };
+            /** A day / night word ('night' | 'day', or null from the timer) through the hold; a change refreshes at once. */
+            function dayNight(seen) {
+                const before = dn.st ? dn.st.night : null;
+                dn.st = L.nightStep(dn.st, seen, Date.now(), cfg.nightHoldMs);
+                if (dn.st.night === before) return;
+                log.info('night dim auto: the car says ' + (dn.st.night ? 'night' : 'day') + ' (' + JSON.stringify(dn.raw) + ')');
+                refreshNow();
+                changed();
+            }
+            const carNight = () => (dn.st ? dn.st.night : null);
+            const nightInfo = () => ({ night: carNight(), raw: dn.raw, sub: !dn.sub ? 'waiting' : dn.sub.error ? 'missing' : 'present' });
             const watched = [];
             const signals = ctx.signals && Object.assign({}, ctx.signals, {
                 watch(iface, inst, handlers, lg, opts) {
@@ -71,6 +88,7 @@ mgu.run({
                     const p = Promise.resolve(ctx.signals.watch(iface, inst, own ? Object.assign({}, handlers, { statusEngineSpeed2: poll.wrap(own) }) : handlers, lg, opts));
                     watched.push(p);
                     if (own) p.then(guard('rpm poll attach', (res) => poll.attach(res, own)), () => {});
+                    if (iface === VEHICLE) p.then(guard('day night watch', (res) => { dn.sub = res || null; changed(); }), () => {});
                     return p;
                 },
             });
@@ -83,6 +101,18 @@ mgu.run({
                         log.info('car drive mode ' + JSON.stringify(v && v.actualValueModeDrivingExperience) + ' -> ' + (m || 'none: using the setting'));
                         refreshNow();
                         changed();
+                    }),
+                },
+                [VEHICLE]: {
+                    statusDayNightChangeOver: guard('day night', (v) => {
+                        const raw = L.dayNightRaw(v), seen = L.dayNightOf(v), txt = JSON.stringify(v);
+                        dn.raw = raw === undefined ? null : raw;
+                        if (txt !== dn.last) {
+                            dn.last = txt;
+                            if (dn.logged < DN_LOG_MAX) { dn.logged++; log.info('car day/night ' + txt + ' -> ' + (seen || 'no day / night word')); }
+                            changed();
+                        }
+                        dayNight(seen);
                     }),
                 },
             });
@@ -100,7 +130,7 @@ mgu.run({
 
             /** Both displays' style settings, checked (a bad saved value falls back, logged once per value). */
             function readSel() {
-                const s = { cluster: L.readStyle(cfg, get, 'cluster'), hud: L.readStyle(cfg, get, 'hud') };
+                const s = { cluster: L.readStyle(cfg, get, 'cluster', carNight()), hud: L.readStyle(cfg, get, 'hud', carNight()) };
                 s.cluster.warnings.concat(s.hud.warnings).forEach((w) => { if (!warned[w]) { warned[w] = true; log.warn('settings: ' + w); } });
                 return s;
             }
@@ -145,7 +175,7 @@ mgu.run({
                 if (!before.cluster || !before.hud || before.cluster.lit !== states.cluster.lit || before.hud.lit !== states.hud.lit) litChanges++;
                 const active = !offReason();
                 const display = L.readDisplays(get).display;
-                output.apply({ display, active, sel, states, rpm: p.rpm, th, gear: L.gearGlyph(d.stage, d.gear) });
+                output.apply({ display, active, sel, states, rpm: p.rpm, th, gear: L.gearGlyph(d.stage, d.gear), flashMode: L.readFlashMode(get) });
                 const s = states.cluster, h = states.hud;
                 // no lit counts here: a log line is a synchronous file write, and the lights change many times a second
                 const line = { cluster: sel.cluster.style, hud: sel.hud.style, red: s.red || h.red, flash: s.flashing || h.flashing, display, active };
@@ -184,6 +214,7 @@ mgu.run({
             setInterval(guard('kill', () => {
                 const k = safety.pollKill(fs, killPath);
                 if (k !== killed) { killed = k; log.warn(k ? 'kill file found: output off' : 'kill file gone: output allowed'); refreshNow(); changed(); }
+                if (dn.st && dn.st.want !== null && dn.st.want !== dn.st.night) dayNight(null);    // Night dim Auto: a change that held
             }), cfg.safety.killPollMs);
             ui.onClick('BTN_HUD', guard('hud on/off', () => settings.cycle('hudOn')));
             ui.onClick('BTN_CLUSTER', guard('cluster on/off', () => settings.cycle('clusterOn')));
@@ -199,7 +230,9 @@ mgu.run({
             refreshNow();
             changed();
             const lr = readLead();
-            log.info('started: show ' + L.readDisplays(get).display + ', mode ' + JSON.stringify(eff()) + ', cluster ' + (sel || readSel()).cluster.style + ', hud ' + (sel || readSel()).hud.style +
+            const s0 = sel || readSel();
+            log.info('started: show ' + L.readDisplays(get).display + ', mode ' + JSON.stringify(eff()) + ', cluster ' + s0.cluster.style + ', hud ' + s0.hud.style +
+                ', flash ' + L.readFlashMode(get) + ', night dim hud ' + s0.hud.nightMode + ' cluster ' + s0.cluster.nightMode +
                 ', lead ' + lr.leadMs + ' ms, rpm poll ' + (lr.poll ? 'on' : 'off'));
         } catch (e) {
             log.error('start: ' + (e && e.stack || e));

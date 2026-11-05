@@ -20,9 +20,10 @@ const DEFAULTS = {
     sizeSteps: [70, 80, 90, 100, 110, 120],
     brightSteps: [20, 40, 60, 80, 100],
     nightDim: 0.35,
+    nightHoldMs: 5000,
     flashHz: 4,
     brightness: 1,
-    hud: { centerX: 400, anchorY: 260, visible: { x0: 60, y0: 90, x1: 740, y1: 390 }, barMargin: 8, defaults: { size: 110, x: -80, y: 60, barX: 70 } },
+    hud: { centerX: 400, anchorY: 260, visible: { x0: 60, y0: 90, x1: 740, y1: 390 }, barMargin: 8, defaults: { size: 110, x: -80, y: 60, barX: 0 } },
     nudge: {
         x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100], y: [-60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60],
         barX: [-100, -95, -90, -85, -80, -75, -70, -65, -60, -55, -50, -45, -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
@@ -40,7 +41,7 @@ const DEFAULTS = {
         stock: { palette: 'yoC', reds: 1, fill: 'inward', lean: 'mirror', stage: true, perSide: 1, slat: 40, pitch: 40, inner: 205.3, centre: 0, h: 92, shear: 50.6, cx: 960, cy: 185, glow: 14, dim: 0 },
     },
     hudStyles: {
-        bar: { palette: 'YYYYYOOR', reds: 1, fill: 'inward', lean: 'same', perSide: 7, slat: 30, pitch: 36, inner: 33.6, centre: 30.6, h: 52, shear: 18.72, cx: 390.64, cy: 118, glow: 13, dim: 0.16, idle: true },
+        bar: { palette: 'aaaaaaaacc', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 14.04, pitch: 16.74, inner: 32.4, centre: 0, h: 74.52, shear: 26.829, cx: 400, cy: 106.74, glow: 13, dim: 0.2, idle: true },
         cells: { palette: 'yyyyyoor', reds: 1, gap: 0.14, pad: 1.8 },
         smallBar: 0.7,
         bracket: {
@@ -61,7 +62,10 @@ const BOTH_MODES = ['hud', 'cluster', 'map'];
 const MODES = ['comfort', 'sport', 'sportplus'];
 const CLUSTER_STYLES = ['large', 'classic', 'row', 'stock'];
 const HUD_STYLES = ['large', 'classic', 'bar', 'bracket'];
-const SETTINGS_V = 3;   // settings.json shape: 3 = hudOn / clusterOn (0.3.0); before: enabled + display
+// settings.json: 3 = hudOn / clusterOn (0.3.0; before: enabled + display); 4 = 0.4.3's one-time moves (migrateSettings)
+const SETTINGS_V = 4;
+const NIGHT_MODES = ['auto', 'on', 'off'];   // "Night dim" per display (0.4.3; before: a manual on / off)
+const FLASH_MODES = ['app', 'renderer'];     // "Flash mode" (0.4.3): who switches the shift flash on and off
 const SHIFT_STEP = 100;   // the shift (all red) settings go in these rpm steps (0.4.1; before: 6,800 and 6,900 were odd ones out)
 /** A saved shift rpm as used: down to a whole SHIFT_STEP (6,850 -> 6,800); 0 or none stays 0 (the mode's default). */
 const shiftRpm = (v) => (num(v) && v > 0 ? Math.floor(v / SHIFT_STEP) * SHIFT_STEP : 0);
@@ -154,6 +158,7 @@ function validateConfig(input) {
     take('sizeSteps', steps(50, 200, 100));
     take('brightSteps', steps(1, 100, 100));
     take('nightDim', (v) => (!(num(v) && v > 0 && v <= 1) ? 'must be > 0 and <= 1' : null));
+    take('nightHoldMs', (v) => (!(isInt(v, 0, 60000)) ? 'must be a whole number 0 to 60000 (ms)' : null));
     take('flashHz', (v) => (!(num(v) && v >= 4 && v <= 20) ? 'must be 4 to 20 (the limiter flash at least 4 Hz)' : null));
     take('brightness', (v) => (!(num(v) && v >= 0 && v <= 1) ? 'must be 0 to 1' : null));
     take('nudge', (v) => (!isObj(v) || steps(-400, 400, 0)(v.x) || steps(-400, 400, 0)(v.y) || steps(-400, 400, 0)(v.barX)
@@ -341,13 +346,14 @@ function fieldColor(state, palette, i, colors, on) {
 
 const KEYS = { cluster: 'cluster', hud: 'hud' };
 /**
- * One display's persisted settings, checked: { style, size, bright, night, warnings, x, y [, barX] } (x, y: the display's
- * "move" settings, HUD scene px or cluster panel px; barX: the HUD's shift bar move). A missing or bad value falls
- * back to the HUD's config.hud.defaults (a fresh install), the cluster's 100 % / 0. get(key) reads a
- * setting (kit Settings.get, which never validates settings.json). A value outside its list (missing, null,
+ * One display's persisted settings, checked: { style, size, bright, nightMode, night, warnings, x, y [, barX] } (x, y: the
+ * display's "move" settings, HUD scene px or cluster panel px; barX: the HUD's shift bar move). nightMode: 'auto' | 'on' |
+ * 'off'; night: dimmed now (on, or auto while carNight, the car's day / night from nightStep, is true; none: not dimmed).
+ * A missing or bad value falls back to the HUD's config.hud.defaults (a fresh install), the cluster's 100 % / 0. get(key)
+ * reads a setting (kit Settings.get, which never validates settings.json). A value outside its list (missing, null,
  * a typo, a wrong type) gives config's default and a warning naming the key. Never throws.
  */
-function readStyle(cfg, get, which) {
+function readStyle(cfg, get, which, carNight) {
     const w = KEYS[which] || 'cluster', warnings = [];
     const read = (key) => { try { return get(key); } catch (e) { return undefined; } };
     const pick = (key, list, def) => {
@@ -360,9 +366,9 @@ function readStyle(cfg, get, which) {
     const D = w === 'hud' ? cfg.hud.defaults : { size: 100, x: 0, y: 0 };   // what a missing or bad value falls back to
     const size = pick(w + 'Size', cfg.sizeSteps, D.size);
     const bright = pick(w + 'Bright', cfg.brightSteps, 100);
-    const nv = read(w + 'Night');
-    if (nv !== true && nv !== false) warnings.push(w + 'Night: ' + (nv === undefined ? 'missing' : JSON.stringify(nv)) + ' is not true or false (using false)');
-    const out = { style, size, bright, night: nv === true, warnings, x: 0, y: 0 };
+    const nightMode = pick(w + 'NightMode', NIGHT_MODES, 'auto');
+    const night = nightMode === 'on' || (nightMode === 'auto' && carNight === true);
+    const out = { style, size, bright, nightMode, night, warnings, x: 0, y: 0 };
     const nudge = w === 'hud' ? cfg.nudge : cfg.clusterNudge;
     out.x = pick(w + 'X', nudge.x, D.x);
     out.y = pick(w + 'Y', nudge.y, D.y);
@@ -414,24 +420,76 @@ function readDisplays(get) {
     return { hud, cluster, both, display };
 }
 
+// 0.4.3: a saved value equal to an earlier default was never chosen, so it moves to today's default (config.hud.defaults): the
+// HUD's place and size from before 0.4.1, the 0.4.1 / 0.4.2 shift bar move (0.4.3's narrower bar needs none). [key, old default]
+const OLD_DEFAULTS = [['hudSize', 100], ['hudX', 0], ['hudY', 0], ['hudBarX', 70]];
+const NOW_KEY = { hudSize: 'size', hudX: 'x', hudY: 'y', hudBarX: 'barX' };
+
 /**
- * The writes ([[key, value], ...]) that move settings saved by 0.2.x (a master "enabled" switch, "display"
- * off | cluster | hud | both, a style of 'off') to the two on/off settings; [] once done (_settingsV 3).
- * A display stays on only if the old master switch, "display" and its style all showed it (a style that is not
- * 'off' showed: an unknown one fell back to large). An unknown "display" counts as off; a style of 'off' goes
- * back to large. Never throws.
+ * The writes ([[key, value], ...]) that bring a saved settings.json to SETTINGS_V; [] once done. Before 3 (0.2.x: a master
+ * "enabled" switch, "display" off | cluster | hud | both, a style of 'off'): the two on/off settings; a display stays on only
+ * if the old master switch, "display" and its style all showed it (a style that is not 'off' showed: an unknown one fell back
+ * to large); an unknown "display" counts as off; a style of 'off' goes back to large. Then 4 (0.4.3): OLD_DEFAULTS to today's,
+ * and a manual night dim that was on ("hudNight" / "clusterNight" true) becomes Night dim On (else Auto, the default).
+ * cfg: the checked config (its hud.defaults). Never throws.
  */
-function migrateSettings(get) {
-    const g = safeGet(get);
-    if (g('_settingsV') === SETTINGS_V) return [];
-    const master = g('enabled') !== false, display = DISPLAYS.indexOf(g('display')) >= 0 ? g('display') : 'off';
-    const on = (which, style) => master && (display === which || display === 'both') && style !== 'off';
-    const writes = [['clusterOn', on('cluster', g('clusterStyle'))], ['hudOn', on('hud', g('hudStyle'))]];
-    if (g('clusterStyle') === 'off') writes.push(['clusterStyle', 'large']);
-    if (g('hudStyle') === 'off') writes.push(['hudStyle', 'large']);
+function migrateSettings(get, cfg) {
+    const g = safeGet(get), v = g('_settingsV');
+    if (v === SETTINGS_V) return [];
+    const writes = [];
+    if (v !== 3) {
+        const master = g('enabled') !== false, display = DISPLAYS.indexOf(g('display')) >= 0 ? g('display') : 'off';
+        const on = (which, style) => master && (display === which || display === 'both') && style !== 'off';
+        writes.push(['clusterOn', on('cluster', g('clusterStyle'))], ['hudOn', on('hud', g('hudStyle'))]);
+        if (g('clusterStyle') === 'off') writes.push(['clusterStyle', 'large']);
+        if (g('hudStyle') === 'off') writes.push(['hudStyle', 'large']);
+    }
+    const D = (cfg && cfg.hud && cfg.hud.defaults) || DEFAULTS.hud.defaults;
+    OLD_DEFAULTS.forEach((o) => { if (g(o[0]) === o[1] && D[NOW_KEY[o[0]]] !== o[1]) writes.push([o[0], D[NOW_KEY[o[0]]]]); });
+    ['hud', 'cluster'].forEach((w) => { if (g(w + 'Night') === true) writes.push([w + 'NightMode', 'on']); });
     writes.push(['_settingsV', SETTINGS_V]);
     return writes;
 }
+
+/**
+ * The car's day / night from Vehicle statusDayNightChangeOver (its member dayNightChangeOver, the light sensor's call; the
+ * binding hands an enum over as its name or its number, seen as "TAG" on a G05): 'night' (NACHT, 2), 'day' (TAG, 1), else
+ * null (KEINE_AENDERUNG 0 = no change, SIGNAL_UNGUELTIG 3 = invalid, anything unknown). v: the field's value, however
+ * wrapped. Never throws.
+ */
+const DAY_NIGHT = { KEINE_AENDERUNG: 0, TAG: 1, NACHT: 2, SIGNAL_UNGUELTIG: 3 };
+function dayNightRaw(v, depth) {
+    if (v === null || v === undefined || typeof v !== 'object') return v;
+    if ((depth || 0) > 4) return undefined;
+    if ('dayNightChangeOver' in v) return v.dayNightChangeOver;
+    for (const k of Object.keys(v)) { const r = dayNightRaw(v[k], (depth || 0) + 1); if (r !== undefined) return r; }
+    return undefined;
+}
+function dayNightOf(v) {
+    let c;
+    try { c = dayNightRaw(v); } catch (e) { return null; }
+    if (typeof c === 'string') c = c.trim() in DAY_NIGHT ? DAY_NIGHT[c.trim()] : /^\d+$/.test(c.trim()) ? Number(c.trim()) : c;
+    return c === 2 ? 'night' : c === 1 ? 'day' : null;
+}
+
+/**
+ * Night with a hold (no flicker): prev = { night (true / false / null: nothing yet), want, since } (or null), seen = what the
+ * car said now ('night' | 'day' | null: no new word), nowMs. The first word applies at once; a later change only once it held
+ * holdMs (a clock set back counts as held). Returns the next state; night is what the brightness follows.
+ */
+function nightStep(prev, seen, nowMs, holdMs) {
+    const p = prev || { night: null, want: null, since: null };
+    let want = p.want, since = p.since;
+    const w = seen === 'night' ? true : seen === 'day' ? false : null;
+    if (w !== null && w !== want) { want = w; since = nowMs; }
+    let night = p.night;
+    if (want !== null && night === null) night = want;
+    else if (want !== null && want !== night && (nowMs - since >= holdMs || nowMs < since)) night = want;
+    return { night, want, since };
+}
+
+/** The "Flash mode" setting: 'app' (default) or 'renderer'; anything else: 'app'. Never throws. */
+const readFlashMode = (get) => { const v = safeGet(get)('flashMode'); return FLASH_MODES.indexOf(v) >= 0 ? v : 'app'; };
 
 /**
  * The car's drive mode from FES statusFESVehicleDynamicSwitchHMI.actualValueModeDrivingExperience (an enum
@@ -469,4 +527,5 @@ module.exports = {
     DEFAULTS, TARGETS, DISPLAYS, BOTH_MODES, MODES, CLUSTER_STYLES, HUD_STYLES, SETTINGS_V, validateConfig, modeThresholds, thresholds,
     rawState, step, flashOn, fieldColor, readStyle, lightsOf, levelOf, fillLit, readDisplays, migrateSettings, driveModeOf,
     effectiveMode, holdForSportPlus, LEAD_STEPS, makeLead, readLead, MIN_SPAN, SHIFT_STEP, shiftRpm, gearGlyph,
+    NIGHT_MODES, FLASH_MODES, OLD_DEFAULTS, dayNightOf, dayNightRaw, nightStep, readFlashMode,
 };

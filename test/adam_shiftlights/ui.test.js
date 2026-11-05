@@ -84,7 +84,7 @@ module.exports = [
     ['knob order: tabs, then each page\'s targets top to bottom, left to right ("-" before "+")', () => {
         const on = model({ hudOn: true, clusterOn: true });
         assert.deepStrictEqual(own(0, on).keys, ['home:hudOn', 'home:clusterOn'].concat(pm('home', 'bothMode', ['hud', 'cluster', 'map']), ['home:alloff']));
-        const disp = (p, styles) => pm(p, p + 'Style', styles).concat(st(p, p + 'Size'), st(p, p + 'Bright'), [p + ':' + p + 'Night'], st(p, p + 'X'), st(p, p + 'Y'), p === 'hud' ? st(p, 'hudBarX') : []);
+        const disp = (p, styles) => pm(p, p + 'Style', styles).concat(st(p, p + 'Size'), st(p, p + 'Bright'), pm(p, p + 'NightMode', ['auto', 'on', 'off']), st(p, p + 'X'), st(p, p + 'Y'), p === 'hud' ? st(p, 'hudBarX') : []);
         assert.deepStrictEqual(own(1, on).keys, disp('hud', ['large', 'classic', 'bar', 'bracket']));
         assert.deepStrictEqual(own(2, on).keys, disp('cluster', ['large', 'classic', 'row', 'stock']));
         assert.deepStrictEqual(own(1, model({})).keys, ['hud:turnon'], 'HUD off: only the button that turns it on');
@@ -93,7 +93,9 @@ module.exports = [
         assert.deepStrictEqual(own(3, on).keys, ['behavior:onlySportPlus', 'behavior:autoStart'].concat(st('behavior', 'leadMs'), ['behavior:rpmPoll'],
             pm('behavior', 'driveMode', ['comfort', 'sport', 'sportplus']), shifts));
         assert.deepStrictEqual(own(3, model({ onlySportPlus: true })).keys.slice(-4), st('behavior', 'sportplusStart').concat(st('behavior', 'sportplusShift')));
-        assert.deepStrictEqual(own(4, on).keys, pm('about', 'layout', ['full', 'standard']).concat(pm('about', 'renderer', ['auto', 'software']), pm('about', 'demo', ['auto', 'on', 'off'])));
+        assert.deepStrictEqual(own(4, on).keys, pm('about', 'layout', ['full', 'standard']).concat(pm('about', 'renderer', ['auto', 'software']), pm('about', 'demo', ['auto', 'on', 'off']), pm('about', 'flashMode', ['app', 'renderer'])));
+        // a HUD off its defaults: Reset HUD to defaults is the first place on its page (the note's button)
+        assert.strictEqual(own(1, model({ hudOn: true, clusterOn: true, hudSize: 100 })).keys[0], 'hud:reset');
         // keys are unique on every page (the kit keeps the focus on a key across redraws)
         [0, 1, 2, 3, 4].forEach((i) => { const k = own(i, on).keys; assert.strictEqual(new Set(k).size, k.length, 'page ' + i); });
     }],
@@ -104,7 +106,8 @@ module.exports = [
         assert.deepStrictEqual(own(0, on).run('home:bothMode:cluster'), [['bothMode', 'cluster']]);
         assert.deepStrictEqual(own(1, on).run('hud:hudSize:-'), [['hudSize', 100]]);
         assert.deepStrictEqual(own(1, on).run('hud:hudStyle:bracket'), [['hudStyle', 'bracket']]);
-        assert.deepStrictEqual(own(1, on).run('hud:hudNight'), [['hudNight', true]]);
+        assert.deepStrictEqual(own(1, on).run('hud:hudNightMode:on'), [['hudNightMode', 'on']]);
+        assert.deepStrictEqual(own(4, on).run('about:flashMode:renderer'), [['flashMode', 'renderer']]);
         assert.deepStrictEqual(own(1, model({})).run('hud:turnon'), [['hudOn', true]]);
         assert.deepStrictEqual(own(2, on).run('cluster:clusterY:-'), [['clusterY', -5]]);
         assert.deepStrictEqual(own(3, on).run('behavior:leadMs:+'), [['leadMs', 80]]);

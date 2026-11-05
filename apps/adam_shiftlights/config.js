@@ -34,19 +34,22 @@ module.exports = Object.freeze({
     styles: { cluster: 'large', hud: 'large' },   // the style settings' defaults (app.json too)
     sizeSteps: [70, 80, 90, 100, 110, 120],       // "size" setting steps (%): the cluster bar about its centre, the HUD art about (hud.centerX, hud.anchorY)
     brightSteps: [20, 40, 60, 80, 100],           // "brightness" setting steps (%)
-    nightDim: 0.35,             // "night dim" on: brightness x this [U] (no lights-on signal yet)
-    flashHz: 4,                 // the shift flash (0.4.2: from the shift point on), on half / off half per cycle (4 to 20) [U]
+    nightDim: 0.35,             // "night dim" on (or Auto while the car says night): brightness x this [U]
+    nightHoldMs: 5000,          // Auto: the car's day / night must hold this long before the brightness follows (the first value: at once)
+    flashHz: 4,                 // the shift flash (0.4.2: from the shift point on), on half / off half per cycle (4 to 20) [U];
+                                // Flash mode App (0.4.3 default) never toggles faster than 4 Hz (8 sends a second)
     brightness: 1.0,            // 0..1, multiplies every lit colour on the cluster and HUD (with the settings)
     // the HUD art (hudStyles, drawn centred on scene x 400) goes centred on the stock speed block: centerX = its
     // centre, anchorY = the bottom of our art (the stock speed sits under it). A bigger size grows upward. [U]
     // visible: the widest picture the HUD shows, 680 x 300 inside the 800 x 480 scene (idrive-apps PR #41: "wider is cut
     // off at the HUD's edges"); assumed centred, as in docs/mockups/hud-m-style.html [U]. The shift bar is held inside it
     // minus barMargin (px). defaults: what a fresh install starts with (Adam's tuned values, 2026-11-04: 80 px left, 60 px
-    // down, 110 %, lines up with the stock mph); settings already saved keep their values. barX: the "Shift bar left / right"
-    // default, the smallest step that puts the bar's left end barMargin inside the visible box at those values
-    // (bar 578 x 1.1 wide at x 2.1 -> 72.1 with +70; +65 would leave 67.1 < 68). test/geom.test.js recomputes it.
+    // down, 110 %, lines up with the stock mph); 0.4.3 moves a saved old default (100 %, centre, bar +70) to these once
+    // (logic.migrateSettings). barX: the "Shift bar left / right" default, the smallest step that keeps the bar's left end
+    // barMargin inside the visible box at those values: 0 since 0.4.3's bar (394 x 1.1 wide, left end at 103.2 >= 68; the
+    // 0.4.2 bar, 578 wide, needed +70). test/hud041.test.js recomputes it.
     hud: { centerX: 400, anchorY: 260, visible: { x0: 60, y0: 90, x1: 740, y1: 390 }, barMargin: 8,
-        defaults: { size: 110, x: -80, y: 60, barX: 70 } },
+        defaults: { size: 110, x: -80, y: 60, barX: 0 } },
     // "HUD: move left / right" and "up / down" setting steps (scene px; negative = left / up), app.json too. barX: the
     // shift bar's own move on top of the HUD move (left / right)
     nudge: { x: [-100, -90, -80, -70, -60, -50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
@@ -80,9 +83,13 @@ module.exports = Object.freeze({
             centre: 0, h: 92, shear: 50.6, cx: 960, cy: 185, glow: 14, dim: 0 },               // one block a dial: yellow, orange, red [U]
     },
     hudStyles: {                // on the 800x480 HUD scene, centred on x 400 (moved to hud.centerX when drawn)
+        // 0.4.3 (Adam: "i want it to look the same it looks on the IC"): the cluster's Large M slats (palette, 10 a side,
+        // mirrored lean, centre gap, dim) with every length x 0.9: the largest scale that keeps the bar inside the visible
+        // box at every size step with the default 60 px down (at 120 % its top is at y 91.4). Its base stays 8 px over the
+        // bracket (y 144). glow stays 13 (the cluster's is 30): more would cover the bracket under it.
         // idle: the unlit slats always show at dim (an idle car shows the bar, not nothing)
-        bar: { palette: 'YYYYYOOR', reds: 1, fill: 'inward', lean: 'same', perSide: 7, slat: 30, pitch: 36, inner: 33.6,
-            centre: 30.6, h: 52, shear: 18.72, cx: 390.64, cy: 118, glow: 13, dim: 0.16, idle: true },   // 578 x 52 at 111,92
+        bar: { palette: 'aaaaaaaacc', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 14.04, pitch: 16.74, inner: 32.4,
+            centre: 0, h: 74.52, shear: 26.829, cx: 400, cy: 106.74, glow: 13, dim: 0.2, idle: true },   // 394 x 75 at 203,69
         // shortcut: no style draws these in-bracket cells since 0.4.2 (Small was them); pad still sizes the bracket's rect
         // and FS_BRACKET keeps its cell code unused, so the GPU program the car compiled is unchanged. Drop both with
         // the next FS_BRACKET change. gap = share of a cell, pad = u past the bar

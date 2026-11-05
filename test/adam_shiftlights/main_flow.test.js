@@ -16,7 +16,10 @@ const MAIN = path.join(APP, 'main.js');
 const SPEC = JSON.parse(fs.readFileSync(path.join(APP, 'app.json'), 'utf8'));
 const { Recorder } = require(path.join(KIT, 'record.js'));
 const themes = require(path.join(KIT, 'themes.js'));
+const L = require(path.join(APP, 'logic.js'));
+const cfg = L.validateConfig(require(path.join(APP, 'config.js'))).cfg;
 const FES = 'de.bmw.infotainment.drivingexcitement.FES';
+const VEHICLE = 'de.bmw.infotainment.vehicle.Vehicle';
 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
 async function until(fn, ms, what) {
     const end = Date.now() + (ms || 3000);
@@ -28,13 +31,17 @@ const CDS = 'de.bmw.infotainment.vehicle.CDS';
 class FakeCar {
     constructor(ctx, groups, extra) {
         FakeCar.last = this; this.extra = extra || {};
-        // with ctx.signals (a test's fake car link), the rpm comes in like the real Car's: through signals.watch
+        // with ctx.signals (a test's fake car link), the rpm comes in like the real Car's: through signals.watch, and so
+        // does every extra interface (the drive mode, the day / night)
         if (ctx.signals && ctx.signals.watch) {
             ctx.signals.watch(CDS, '1', { statusEngineSpeed2: (v) => this.emit({ rpm: v.actualValueRPMEngineCrankshaft / 4, oil: 95, gear: 3 }, Date.now()) }, ctx.log);
+            Object.keys(this.extra).forEach((iface) => ctx.signals.watch(iface, '1', this.extra[iface], ctx.log));
         }
     }
     onSample(fn) { this.emit = fn; }
     mode(v) { this.extra[FES].statusFESVehicleDynamicSwitchHMI({ actualValueModeDrivingExperience: v }); }
+    /** The car's day / night as the binding hands it over (seen on a G05: the enum's name) */
+    dayNight(v) { this.extra[VEHICLE].statusDayNightChangeOver({ dayNightChangeOver: v }); }
 }
 
 /** The kit's Settings, as far as main.js uses it: defaults from app.json, then the saved values. */
@@ -71,7 +78,12 @@ function start(saved, visible, signals, own) {
             image: (id, cv) => { U.images++; U.frame = cv; return Promise.resolve(); }, open: (n) => { U.opened.push(n); return Promise.resolve(); },
         },
         loop: () => { U.loops++; }, theme: () => themes.theme('m_tricolour'), signals,
-        canvas: (w, h) => { const r = new Recorder(w, h, { textScale: 1 }).reset(); r.own = !!own; r.chrome = own ? { tabs: null } : null; return r; },
+        canvas: (w, h) => {
+            const r = new Recorder(w, h, { textScale: 1 }).reset(), text = r.text;
+            r.own = !!own; r.chrome = own ? { tabs: null } : null; r.texts = [];
+            r.text = function (str) { r.texts.push(String(str)); return text.apply(this, arguments); };   // what the page says
+            return r;
+        },
         onTab: (fn) => { U.tab = fn; }, onLayout: (fn) => { U.layout = fn; }, hideButton: (id) => U.hidden.push(id),
     };
     const realResolve = Module._resolveFilename;
@@ -161,8 +173,8 @@ module.exports = [
     }],
     ['0.2.x settings migrate on start (no crash, saved once); garbage falls back', async () => {
         const r = await start({ enabled: true, display: 'both', hudStyle: 'off', clusterStyle: 'row' });
-        assert.deepStrictEqual(['hudOn', 'clusterOn', 'hudStyle', 'clusterStyle', '_settingsV'].map(r.settings.get), [false, true, 'large', 'row', 3]);
-        assert.ok(r.lines.some((l) => /^settings migrated to v3/.test(l)));
+        assert.deepStrictEqual(['hudOn', 'clusterOn', 'hudStyle', 'clusterStyle', '_settingsV'].map(r.settings.get), [false, true, 'large', 'row', L.SETTINGS_V]);
+        assert.ok(r.lines.some((l) => /^settings migrated to v4/.test(l)));
         r.sample(3000);
         await until(() => r.layers().length === 1 && r.layers()[0].target === 'panel', 3000, 'cluster row on the panel');
         await r.done();
@@ -172,7 +184,7 @@ module.exports = [
         assert.deepStrictEqual([g.settings.get('hudOn'), g.settings.get('clusterOn'), g.layers().length], [false, false, 0]);
         assert.ok(!g.lines.some((l) => /^ERR/.test(l)), g.lines.join('\n'));
         await g.done();
-        const again = await start({ _settingsV: 3, enabled: false, display: 'off', hudOn: true });   // migrated already: untouched
+        const again = await start({ _settingsV: L.SETTINGS_V, enabled: false, display: 'off', hudOn: true });   // migrated already: untouched
         assert.strictEqual(again.settings.get('hudOn'), true);
         assert.ok(!again.lines.some((l) => /migrated/.test(l)));
         await again.done();
@@ -253,12 +265,14 @@ module.exports = [
         assert.deepStrictEqual([r.settings.get('hudOn'), r.settings.get('clusterOn')], [false, false]);
         await r.done();
     }],
-    ['0.4.2: at the shift point every effect layer on both targets gets flash 1 and all lights in one step, every HUD style; 1 rpm under none; off 50 under', async () => {
-        const r = await start({ _settingsV: 3, hudOn: true, clusterOn: true, bothMode: 'map', driveMode: 'sportplus', leadMs: 0 });
+    ['0.4.2 (Flash mode Renderer): at the shift point every effect layer on both targets gets flash 1 and all lights in one step, every HUD style; 1 rpm under none; off 50 under', async () => {
+        const r = await start({ _settingsV: 3, hudOn: true, clusterOn: true, bothMode: 'map', driveMode: 'sportplus', leadMs: 0, flashMode: 'renderer' });
         const key = (m) => m.conn + ':' + m.ref, ops = (op, l) => r.msgs.filter((m) => m.op === op && key(m) === key(l));
         const effects = () => r.layers().filter((m) => m.kind === 'effect');
         const st = (l) => { const u = ops('uniform', l).filter((m) => m.name === 'u_st').pop(); return u ? u.v.split(' ').map(Number) : []; };
-        const fill = (l) => /u_path/.test(l.fs), n = (l) => (l.target === 'hud' ? 8 : 10), reds = (l) => (l.target === 'hud' ? 1 : 2);
+        // lights a style shows (0.4.3: the HUD bar is the cluster's Large M slats, 10 with 2 reds)
+        const lt = (l) => L.lightsOf(cfg, l.target === 'hud' ? 'hud' : 'cluster', 'large');
+        const fill = (l) => /u_path/.test(l.fs), n = (l) => lt(l).count, reds = (l) => lt(l).reds;
         // flash 1: every light (cluster large 10, HUD bar 8); flash 0 here: all but the reds (just under the shift point, or
         // just after the flash ended); the fill's end is past 0 once the rpm got there; one running animation per flashing layer
         const settled = (flash) => effects().length && effects().every((l) => st(l)[1] === flash && ops('animate', l).length - ops('stop', l).length === flash &&
@@ -286,6 +300,125 @@ module.exports = [
         assert.ok(states.some((l) => /"red":true,"flash":true/.test(l)) && !states.some((l) => /"red":true,"flash":false|"red":false,"flash":true/.test(l)), states.join('\n'));
         assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
         await r.done();
+    }],
+    ['0.4.3 Flash mode App (default): u_on 1 before the flash u_st on every layer, then 1 / 0 every 125 ms, all in step, no animation; it stops the moment the flash ends', async () => {
+        const r = await start({ _settingsV: L.SETTINGS_V, hudOn: true, clusterOn: true, bothMode: 'map', driveMode: 'sportplus', leadMs: 0 });
+        const key = (m) => m.conn + ':' + m.ref, effects = () => r.layers().filter((m) => m.kind === 'effect');
+        r.sample(6799);
+        await until(() => effects().length === 3, 3000, 'three effect layers (map slats, HUD slats, HUD fill)');
+        await wait(100);
+        const n0 = r.msgs.length;
+        r.sample(6800);
+        await wait(700);
+        r.sample(6749);
+        await wait(500);
+        const after = r.msgs.slice(n0), runs = [];
+        effects().forEach((l) => {
+            const mine = after.filter((m) => m.op === 'uniform' && key(m) === key(l));
+            const iFlash = mine.findIndex((m) => m.name === 'u_st' && m.v.split(' ')[1] === '1');
+            const iEnd = mine.findIndex((m, i) => i > iFlash && m.name === 'u_st' && m.v.split(' ')[1] === '0');
+            const ons = mine.filter((m, i) => m.name === 'u_on' && i < iEnd);
+            const what = l.target + ' ' + (/u_path/.test(l.fs) ? 'fill' : 'slats') + ': ' + mine.map((m) => m.name + '=' + m.v).join(' | ');
+            // lit from the first frame: its u_on 1 went before the u_st that starts the flash (a 0.4.2 layer starts at 1 already)
+            const iOn = mine.findIndex((m) => m.name === 'u_on');
+            assert.ok(iFlash >= 0 && iEnd > iFlash && (iOn < 0 || iOn < iFlash || mine[iOn].v === '0'), what);
+            assert.ok(ons.length >= 4 && ons.length <= 8, ons.length + ' toggles in 700 ms: ' + what);
+            ons.forEach((m, i) => assert.strictEqual(m.v, i % 2 ? '1' : '0', 'starts lit (the layer\'s 1), then 0, 1, ...: ' + what));
+            for (let i = 1; i < ons.length; i++) assert.ok(ons[i].t - ons[i - 1].t >= 100, 'never faster than every 125 ms: ' + (ons[i].t - ons[i - 1].t));
+            assert.ok(!mine.some((m, i) => m.name === 'u_on' && i > iEnd), 'no u_on after the flash ended: ' + what);
+            runs.push(ons.map((m) => m.v).join(''));
+        });
+        assert.ok(runs.every((x) => x === runs[0]), 'every layer in step: ' + runs.join(' / '));
+        // the next flash starts lit again, whatever half the last one ended in: the newest u_on before its u_st is 1
+        const n1 = r.msgs.length;
+        r.sample(6800);
+        await wait(60);
+        effects().forEach((l) => {
+            const all = r.msgs.filter((m) => m.op === 'uniform' && key(m) === key(l));
+            const iFlash2 = all.findIndex((m) => r.msgs.indexOf(m) >= n1 && m.name === 'u_st' && m.v.split(' ')[1] === '1');
+            const lastOn = all.slice(0, iFlash2).filter((m) => m.name === 'u_on').pop();
+            assert.ok(iFlash2 > 0 && lastOn && lastOn.v === '1', l.target + ': ' + (lastOn && lastOn.v));
+        });
+        r.sample(6000);
+        assert.strictEqual(after.filter((m) => m.op === 'animate').length, 0, 'no renderer animation');
+        assert.ok(r.lines.some((l) => /^started: .*, flash app, night dim hud auto cluster auto, lead 0 ms/.test(l)), r.lines.join('\n'));
+        await r.done();
+    }],
+    ['0.4.3 Night dim Auto: the car\'s NACHT dims at once, TAG goes back only after it held 5 s; On / Off ignore the car; the page says which and the last value', async () => {
+        const realNow = Date.now;
+        let skew = 0;
+        Date.now = () => realNow() + skew;
+        try {
+            const r = await start({ _settingsV: L.SETTINGS_V, hudOn: true, hudStyle: 'bar' }, true, undefined, true);
+            r.sample(3000);
+            await until(() => r.layers().length === 1, 3000, 'the HUD bar');
+            const level = () => { const l = r.layers()[0], u = r.msgs.filter((m) => m.op === 'uniform' && m.name === 'u_st' && m.ref === l.ref && m.conn === l.conn).pop(); return u ? Number(u.v.split(' ')[2]) : NaN; };
+            const says = async (text) => { r.ui.tab(1); await until(() => r.ui.frame && r.ui.frame.texts.indexOf(text) >= 0, 3000, '"' + text + '" in ' + (r.ui.frame && r.ui.frame.texts.join(' | '))); };
+            await until(() => level() === 1, 3000, 'full brightness with no signal');
+            await says('Auto, no day / night signal from the car yet: full brightness');
+            r.car.dayNight('NACHT');
+            await until(() => level() === cfg.nightDim, 3000, 'dimmed at once (the first word)');
+            assert.ok(r.lines.indexOf('car day/night {"dayNightChangeOver":"NACHT"} -> night') >= 0, r.lines.join('\n'));
+            assert.ok(r.lines.indexOf('night dim auto: the car says night ("NACHT")') >= 0, r.lines.join('\n'));
+            await says('Auto, car says night (NACHT): dimmed to 35%');
+            r.car.dayNight('TAG');
+            await wait(1300);                       // the 1 s timer ran: the hold keeps it dimmed
+            assert.strictEqual(level(), cfg.nightDim, 'held');
+            skew += cfg.nightHoldMs;
+            await until(() => level() === 1, 3000, 'full again once TAG held 5 s');
+            r.car.dayNight(1);                      // the number form: still day, nothing changes
+            r.car.dayNight('KEINE_AENDERUNG');      // no change: keeps day
+            await wait(50);
+            assert.strictEqual(level(), 1);
+            await says('Auto, car says no day / night word (KEINE_AENDERUNG): full brightness');
+            r.settings.set('hudNightMode', 'on');
+            await until(() => level() === cfg.nightDim, 3000, 'On: dimmed in daylight');
+            await says('On: dimmed to 35% (car says no day / night word (KEINE_AENDERUNG))');
+            r.settings.set('hudNightMode', 'off');
+            r.car.dayNight(2);
+            skew += cfg.nightHoldMs;
+            await wait(1300);
+            assert.strictEqual(level(), 1, 'Off: never dimmed, night or not');
+            r.settings.set('hudNightMode', 'auto');
+            await until(() => level() === cfg.nightDim, 3000, 'Auto again: the car says night');
+            assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
+            await r.done();
+        } finally { Date.now = realNow; }
+    }],
+    ['0.4.3 Night dim Auto with no day / night interface on the unit (the watch fails): full brightness, the page says so, no ERR', async () => {
+        const signals = { watch: (iface) => Promise.resolve(iface === VEHICLE ? { available: false, error: 'Error: no SOME/IP config for ' + VEHICLE } : { available: false, error: null }) };
+        const r = await start({ _settingsV: L.SETTINGS_V, hudOn: true, hudStyle: 'bar' }, true, signals, true);
+        r.sample(3000);
+        await until(() => r.layers().length === 1, 3000, 'the HUD bar');
+        r.ui.tab(1);
+        await until(() => r.ui.frame && r.ui.frame.texts.indexOf('Auto, this car sends no day / night signal: full brightness') >= 0, 3000, 'the missing line');
+        const u = r.msgs.filter((m) => m.op === 'uniform' && m.name === 'u_st').pop();
+        assert.strictEqual(Number(u.v.split(' ')[2]), 1);
+        assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
+        await r.done();
+    }],
+    ['0.4.3 a 0.4.2 save holding the old defaults moves to today\'s once; chosen values stay; Reset HUD to defaults asks first, then sets size, move and bar move back', async () => {
+        const r = await start({ _settingsV: 3, hudOn: true, hudSize: 100, hudX: 0, hudY: 0, hudBarX: 70, hudNight: true, clusterNight: false, clusterSize: 120 }, true, undefined, true);
+        const D = cfg.hud.defaults;
+        assert.deepStrictEqual(['hudSize', 'hudX', 'hudY', 'hudBarX', 'hudNightMode', 'clusterNightMode', 'clusterSize', '_settingsV'].map(r.settings.get),
+            [D.size, D.x, D.y, D.barX, 'on', 'auto', 120, L.SETTINGS_V]);
+        assert.ok(r.lines.some((l) => /^settings migrated to v4: .*"hudSize",110.*"hudX",-80.*"hudY",60.*"hudBarX",0.*"hudNightMode","on"/.test(l)), r.lines.join('\n'));
+        const chosen = await start({ _settingsV: 3, hudOn: true, hudSize: 120, hudX: -40, hudY: 30, hudBarX: 15 }, true, undefined, true);
+        assert.deepStrictEqual(['hudSize', 'hudX', 'hudY', 'hudBarX'].map(chosen.settings.get), [120, -40, 30, 15], 'chosen values stay');
+        // the reset: dimmed at the defaults, a press arms it ("Confirm reset", nothing saved), the second press saves
+        chosen.ui.tab(1);
+        await until(() => chosen.ui.frame && chosen.ui.frame.targets.some((g) => g.key === 'hud:reset'), 3000, 'the reset button');
+        assert.ok(chosen.ui.frame.texts.indexOf('RESET HUD TO DEFAULTS') >= 0, chosen.ui.frame.texts.join(' | '));
+        chosen.press('hud:reset');
+        await until(() => chosen.ui.frame.texts.indexOf('CONFIRM RESET') >= 0, 3000, 'armed');
+        assert.deepStrictEqual(['hudSize', 'hudX', 'hudY', 'hudBarX'].map(chosen.settings.get), [120, -40, 30, 15], 'the first press saves nothing');
+        chosen.press('hud:reset');
+        await until(() => chosen.settings.get('hudSize') === D.size, 3000, 'reset');
+        assert.deepStrictEqual(['hudSize', 'hudX', 'hudY', 'hudBarX'].map(chosen.settings.get), [D.size, D.x, D.y, D.barX]);
+        await until(() => chosen.ui.frame.texts.indexOf('RESET HUD TO DEFAULTS') >= 0 && !chosen.ui.frame.targets.some((g) => g.key === 'hud:reset'), 3000, 'dimmed again at the defaults');
+        assert.ok(!r.lines.concat(chosen.lines).some((l) => /^ERR/.test(l)));
+        await r.done();
+        await chosen.done();
     }],
     ['a 0.3.1 save with every key (garbage too) and a 0.2.x save start without an ERR and draw every page', async () => {
         const saved031 = { _settingsV: 3, hudOn: 'yes', clusterOn: true, bothMode: 'x', hudStyle: {}, hudSize: 999, hudBright: 'x', hudNight: null, hudX: 'far', hudY: 7,

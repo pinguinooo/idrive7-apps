@@ -34,22 +34,28 @@ module.exports = [
         // the default place is 25 px under the mockup's (0.3.1), still on the panel above its middle
         assert.deepStrictEqual([bar('large').bar.y0, bar('row').bar.y0].map(Math.round), [134, 159]);
     }],
-    ['bars match the mockups (+-1 px): large 741,134 438x83; classic 753,152 414x46; row 788,159 344x22 (25 px under the mockup); HUD 111,92 578x52', () => {
+    ['bars match the mockups (+-1 px): large 741,134 438x83; classic 753,152 414x46; row 788,159 344x22 (25 px under the mockup); HUD 203,69 394x75', () => {
         [['large', [741, 134, 438, 83]], ['classic', [753, 152, 414, 46]], ['row', [788, 159, 344, 22]]].forEach((x) => {
             box(bar(x[0])).forEach((v, i) => near(v, x[1][i], 1, x[0] + ' ' + i));
         });
-        box(hudBar()).forEach((v, i) => near(v, [111, 92, 578, 52][i], 1, 'hud ' + i));
+        box(hudBar()).forEach((v, i) => near(v, [203, 69, 394, 75][i], 1, 'hud ' + i));
+        // 0.4.3: the HUD bar is the cluster's Large M slats design (Adam: "look the same it looks on the IC") at 0.9 of its size,
+        // centred on x 400, its base 8 px over the bracket (y 144); only the glow stays the HUD's own (13 px)
+        const H = cfg.hudStyles.bar, C = cfg.clusterStyles.large;
+        ['palette', 'reds', 'fill', 'lean', 'perSide', 'centre', 'dim'].forEach((k) => assert.strictEqual(H[k], C[k], 'hud ' + k));
+        ['slat', 'pitch', 'inner', 'h', 'shear'].forEach((k) => near(H[k], C[k] * 0.9, 1e-9, 'hud ' + k + ' = 0.9 x the cluster\'s'));
+        assert.deepStrictEqual([H.cx, H.cy + H.h / 2, H.glow, H.idle], [400, 144, 13, true]);
         const s = bar('stock'), xs = (side) => s.polys.filter((p) => (p.pts[0][0] < 960) === (side < 0)).map((p) => p.pts.map((q) => q[0]));
         const span = (a) => [Math.min.apply(null, [].concat.apply([], a)), Math.max.apply(null, [].concat.apply([], a))];
         span(xs(-1)).forEach((v, i) => near(v, [714.7, 805.3][i], 0.05, 'stock left'));
         span(xs(1)).forEach((v, i) => near(v, [1114.7, 1205.3][i], 0.05, 'stock right'));
         assert.deepStrictEqual([s.bar.y0, s.bar.y1], [139, 231]);
     }],
-    ['poly counts 20 / 20 / 12 / 2 / 15; lighting indices in order', () => {
-        assert.deepStrictEqual(['large', 'classic', 'row', 'stock'].map((k) => bar(k).polys.length).concat([hudBar().polys.length]), [20, 20, 12, 2, 15]);
+    ['poly counts 20 / 20 / 12 / 2 / 20; lighting indices in order', () => {
+        assert.deepStrictEqual(['large', 'classic', 'row', 'stock'].map((k) => bar(k).polys.length).concat([hudBar().polys.length]), [20, 20, 12, 2, 20]);
         const ix = (g) => g.polys.map((p) => p.i).sort((a, b) => a - b).join();
         assert.strictEqual(ix(bar('large')), '0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9');
-        assert.strictEqual(ix(hudBar()), '0,0,1,1,2,2,3,3,4,4,5,5,6,6,7');
+        assert.strictEqual(ix(hudBar()), '0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9');
         // inward: index 0 is the outermost pair, the last a side is innermost
         const l = bar('large'), outer = l.polys.filter((p) => p.i === 0).map((p) => p.pts[0][0]).sort((a, b) => a - b);
         assert.deepStrictEqual(outer.map(Math.round), [741, 1179]);
@@ -57,17 +63,19 @@ module.exports = [
         const r = bar('row'), inner = r.polys.filter((p) => p.i === 5).map((p) => Math.min(p.pts[0][0], p.pts[1][0])).sort((a, b) => a - b);
         assert.deepStrictEqual(inner, [933, 962]);
     }],
-    ['mirrored styles lean / on the left and \\ on the right, no slat crosses the axis; the HUD bar leans / throughout', () => {
-        ['large', 'classic', 'stock'].forEach((k) => {
-            const g = bar(k);
+    ['mirrored styles lean / on the left and \\ on the right, no slat crosses the axis; the HUD bar too (0.4.3: the cluster\'s look)', () => {
+        [['large', bar('large'), 960], ['classic', bar('classic'), 960], ['stock', bar('stock'), 960], ['hud', hudBar(), 400]].forEach((x) => {
+            const k = x[0], g = x[1], axis = x[2];
             g.polys.forEach((p) => {
-                const left = p.pts[0][0] < 960, baseX = (p.pts[0][0] + p.pts[1][0]) / 2, topX = (p.pts[2][0] + p.pts[3][0]) / 2;
+                const left = p.pts[0][0] < axis, baseX = (p.pts[0][0] + p.pts[1][0]) / 2, topX = (p.pts[2][0] + p.pts[3][0]) / 2;
                 assert.ok(left ? topX > baseX : topX < baseX, k + ' lean');
-                p.pts.forEach((q) => assert.ok(left ? q[0] <= 960 : q[0] >= 960, k + ' crosses the axis at ' + q[0]));
+                p.pts.forEach((q) => assert.ok(left ? q[0] <= axis : q[0] >= axis, k + ' crosses the axis at ' + q[0]));
             });
         });
         bar('row').polys.forEach((p) => assert.strictEqual(p.pts[0][0], p.pts[3][0]));
-        hudBar().polys.forEach((p) => { near(p.pts[2][0] - p.pts[1][0], 18.72, 1e-6, 'hud lean'); assert.ok(p.pts[2][1] < p.pts[1][1]); });
+        // the same lean as the cluster's Large slats: shear / height
+        hudBar().polys.forEach((p) => { near(Math.abs(p.pts[2][0] - p.pts[1][0]), cfg.hudStyles.bar.shear, 1e-6, 'hud lean'); assert.ok(p.pts[2][1] < p.pts[1][1]); });
+        near(cfg.hudStyles.bar.shear / cfg.hudStyles.bar.h, cfg.clusterStyles.large.shear / cfg.clusterStyles.large.h, 1e-9, 'lean angle');
     }],
     ['size 120 keeps the centre and scales w and h; a size that does not fit falls back to 100 with one warning', () => {
         const a = bar('large', 1), b = bar('large', 1.2);
@@ -139,7 +147,7 @@ module.exports = [
                     const b = s1[i];
                     if (a.role === 'slats') {
                         near(b.geom.bar.x1 - b.geom.bar.x0, (a.geom.bar.x1 - a.geom.bar.x0) * k, 1e-6, h + ' bar w ' + size);
-                        near(b.geom.bar.y1 - b.geom.bar.y0, 52 * k * (h === 'classic' ? cfg.hudStyles.smallBar : 1), 1e-6, h + ' bar h ' + size);
+                        near(b.geom.bar.y1 - b.geom.bar.y0, cfg.hudStyles.bar.h * k * (h === 'classic' ? cfg.hudStyles.smallBar : 1), 1e-6, h + ' bar h ' + size);
                         near(cfg.hud.anchorY - b.geom.bar.y1, (cfg.hud.anchorY - a.geom.bar.y1) * k, 1e-6, h + ' bar grows up ' + size);
                     } else {
                         near(b.geom.L, a.geom.L * k, 1e-6, h + ' bracket length ' + size);

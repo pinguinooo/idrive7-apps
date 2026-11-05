@@ -10,8 +10,9 @@
  *                is unused since 0.4.2 (u_cells count 0; config.js hudStyles.cells says why it stays); the rail,
  *                ticks and numerals are a static image (hudart.js).
  *
- * Sent only when they change: u_st (lit, flash, brightness, ...). While the flash is on, the renderer itself
- * steps u_on 1/0 at the flash rate (an `animate` started at the flash's start, output.js).
+ * Sent only when they change: u_st (lit, flash, brightness, ...). While the flash is on, u_on 1 shows the flash and 0
+ * shows nothing: the app sends it every half cycle (Flash mode App, the default since 0.4.3) or the renderer steps it
+ * (Renderer: an `animate` started at the flash's start, output.js).
  */
 const FS_SLATS = [
     'precision highp float;',

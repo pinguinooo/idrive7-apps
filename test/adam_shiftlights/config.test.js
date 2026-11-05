@@ -65,7 +65,7 @@ module.exports = [
     ['shapes that cannot be drawn fall back: slats over the axis, slat wider than pitch, wrong perSide', () => {
         hasError(bad((c) => { c.clusterStyles.large.shear = 40; }), /^clusterStyles\.large: shear must not pass inner/);
         hasError(bad((c) => { c.clusterStyles.classic.slat = 19; }), /^clusterStyles\.classic: slat must not be wider/);
-        hasError(bad((c) => { c.hudStyles.bar.perSide = 8; }), /^hudStyles\.bar: perSide must be 7/);
+        hasError(bad((c) => { c.hudStyles.bar.perSide = 8; }), /^hudStyles\.bar: perSide must be 10/);
         hasError(bad((c) => { c.clusterStyles.stock.reds = 4; }), /^clusterStyles\.stock: reds/);
         hasError(bad((c) => { c.clusterStyles.row.lean = 'sideways'; }), /^clusterStyles\.row: lean/);
     }],
@@ -132,14 +132,14 @@ module.exports = [
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
-        assert.strictEqual(spec.version, '0.4.2');
+        assert.strictEqual(spec.version, '0.4.3');
         assert.strictEqual(spec.mguAppStartType, 'autostart');
         // in page order (Home, HUD, Cluster, Behavior, About): the HMI's settings list reads the same way
         assert.deepStrictEqual(spec.settings.map((s) => s.key),
-            ['hudOn', 'clusterOn', 'bothMode', 'hudStyle', 'hudSize', 'hudBright', 'hudNight', 'hudX', 'hudY', 'hudBarX',
-                'clusterStyle', 'clusterSize', 'clusterBright', 'clusterNight', 'clusterX', 'clusterY',
+            ['hudOn', 'clusterOn', 'bothMode', 'hudStyle', 'hudSize', 'hudBright', 'hudNightMode', 'hudX', 'hudY', 'hudBarX',
+                'clusterStyle', 'clusterSize', 'clusterBright', 'clusterNightMode', 'clusterX', 'clusterY',
                 'onlySportPlus', 'autoStart', 'leadMs', 'rpmPoll', 'driveMode', 'comfortStart', 'comfortShift', 'sportStart', 'sportShift', 'sportplusStart', 'sportplusShift',
-                'layout', 'renderer', 'demo']);
+                'layout', 'renderer', 'demo', 'flashMode']);
         assert.strictEqual(item('clusterStyle').default, config.styles.cluster);
         assert.strictEqual(item('hudStyle').default, config.styles.hud);
         assert.deepStrictEqual(item('clusterStyle').options.map((o) => o[0]), L.CLUSTER_STYLES);
@@ -151,7 +151,8 @@ module.exports = [
         ['cluster', 'hud'].forEach((w) => {
             assert.deepStrictEqual([item(w + 'Size').steps, item(w + 'Size').default], [config.sizeSteps, w === 'hud' ? config.hud.defaults.size : 100]);
             assert.deepStrictEqual([item(w + 'Bright').steps, item(w + 'Bright').default], [config.brightSteps, 100]);
-            assert.deepStrictEqual([item(w + 'Night').type, item(w + 'Night').default], ['bool', false]);
+            // 0.4.3: Auto / On / Off (Auto follows the car's day / night), default Auto
+            assert.deepStrictEqual([item(w + 'NightMode').type, item(w + 'NightMode').default, item(w + 'NightMode').options.map((o) => o[0])], ['choice', 'auto', L.NIGHT_MODES]);
         });
         spec.settings.forEach((s) => assert.ok(/^[\x20-\x7e]+$/.test(s.label), s.label));
         const sig = spec.signals;
@@ -161,6 +162,13 @@ module.exports = [
         const fes = sig['de.bmw.infotainment.drivingexcitement.FES'];
         assert.strictEqual(fes.statusFESVehicleDynamicSwitchHMI, 's');
         assert.ok(typeof fes._optional === 'string' && fes._optional.length > 10);
+        // 0.4.3: the day / night (getter + notifier, as Cluster Info installs it on a G05), optional: a unit without the
+        // interface still installs the app (Night dim Auto then stays at full brightness)
+        const veh = sig['de.bmw.infotainment.vehicle.Vehicle'];
+        assert.deepStrictEqual(Object.keys(veh).sort(), ['_optional', 'statusDayNightChangeOver']);
+        assert.strictEqual(veh.statusDayNightChangeOver, 'rs');
+        assert.ok(typeof veh._optional === 'string' && /full brightness/.test(veh._optional));
+        assert.deepStrictEqual([item('flashMode').type, item('flashMode').default, item('flashMode').options.map((o) => o[0])], ['choice', 'app', L.FLASH_MODES]);
     }],
     ['app.json lead and Fast RPM settings match config.js; bad rpm values fall back; no preview setting left', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
@@ -197,20 +205,25 @@ module.exports = [
             return e;
         });
         // 0.4.1 on purpose: a fresh install starts at Adam's tuned HUD (size, x, y defaults), the shift bar got its own move,
-        // and the three shift (all red) settings go in 100 rpm steps (every old step is still one). Nothing else moved.
-        const evolved = now.filter((e) => e.key !== 'hudBarX');
+        // and the three shift (all red) settings go in 100 rpm steps (every old step is still one). 0.4.3: the HUD's move
+        // steps say which is the default, the bar's own move defaults to 0, the manual night dim (a bool) is replaced by
+        // Night dim Auto / On / Off under new keys (a saved true moves to On once: migrateSettings), and Flash mode is new.
+        // Nothing else moved: every other key keeps its type, default, steps and option ids.
+        const NEW = ['hudBarX', 'hudNightMode', 'clusterNightMode', 'flashMode'], GONE = ['hudNight', 'clusterNight'];
+        const evolved = now.filter((e) => NEW.indexOf(e.key) < 0);
         const old = (k) => was.filter((e) => e.key === k)[0];
-        assert.deepStrictEqual(evolved.map((e) => e.key), was.map((e) => e.key));
+        assert.deepStrictEqual(evolved.map((e) => e.key), was.map((e) => e.key).filter((k) => GONE.indexOf(k) < 0));
+        assert.deepStrictEqual(now.filter((e) => e.key === 'hudBarX').map((e) => [e.default, e.markDefault]), [[0, true]]);
         evolved.forEach((e) => {
             const o = old(e.key);
             if (e.key === 'hudSize') assert.deepStrictEqual(e, Object.assign({}, o, { default: 110 }));
-            else if (e.key === 'hudX') assert.deepStrictEqual(e, Object.assign({}, o, { default: -80 }));
-            else if (e.key === 'hudY') assert.deepStrictEqual(e, Object.assign({}, o, { default: 60 }));
+            else if (e.key === 'hudX') assert.deepStrictEqual(e, Object.assign({}, o, { default: -80, markDefault: true }));
+            else if (e.key === 'hudY') assert.deepStrictEqual(e, Object.assign({}, o, { default: 60, markDefault: true }));
             else if (/Shift$/.test(e.key)) {
                 assert.deepStrictEqual(Object.assign({}, e, { steps: 0 }), Object.assign({}, o, { steps: 0 }), e.key);
                 o.steps.filter((v) => v <= 6800).forEach((v) => assert.ok(e.steps.indexOf(v) >= 0, e.key + ' keeps ' + v));
             } else assert.deepStrictEqual(e, o, e.key);
         });
-        assert.strictEqual(L.SETTINGS_V, 3, 'no settings migration added');
+        assert.strictEqual(L.SETTINGS_V, 4, 'one migration since 0.3.1: 0.4.3 (old HUD defaults, night dim)');
     }],
 ];

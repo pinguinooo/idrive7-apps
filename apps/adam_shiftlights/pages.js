@@ -5,9 +5,12 @@
  * descriptions live here. Values shown are the ones the app really uses (logic.js readers): a bad saved value
  * shows its fallback, and a step starts from there.
  *
- * m = { get, schema (app.json settings), cfg (checked config), carMode, offReason, version }
- * A control: { key (stable focus key '<page>:<setting>[:<option>|:-|:+]'), text, on, end, writes }
- *   writes = [[setting, value], ...] what pressing it saves; [] = nothing to change (a stepper at its end).
+ * m = { get, schema (app.json settings), cfg (checked config), carMode, offReason, version, night }
+ *   night = { night (the car's day / night after its hold: true / false / null), raw (its last value), sub: 'waiting' |
+ *   'present' | 'missing' (this unit has no such signal) } from main.js; none: nothing seen.
+ * A control: { key (stable focus key '<page>:<setting>[:<option>|:-|:+]'), text, on, end, writes [, confirm, busy] }
+ *   writes = [[setting, value], ...] what pressing it saves; [] = nothing to change (a stepper at its end). confirm: the first
+ *   press only asks (ui.js); busy: drawn dimmed, nothing to press.
  * A row: { id, kind: 'toggle' | 'pills' | 'stepper', label, desc, value, enabled, controls }
  */
 const L = require('./logic');
@@ -24,7 +27,11 @@ const SHORT = {
     layout: { full: 'Full screen', standard: 'Standard' },
     renderer: { auto: 'GPU', software: 'Software' },
     demo: { auto: 'Auto', on: 'Always', off: 'Never' },
+    hudNightMode: { auto: 'Auto', on: 'On', off: 'Off' },
+    clusterNightMode: { auto: 'Auto', on: 'On', off: 'Off' },
+    flashMode: { app: 'App', renderer: 'Renderer' },
 };
+const RESET_KEYS = ['hudSize', 'hudX', 'hudY', 'hudBarX'];   // what "Reset HUD to defaults" sets back (app.json defaults)
 const STYLE_DESC = {
     hudStyle: { large: 'Shift bar + rev bracket, large', classic: 'Smaller shift bar + rev bracket', bar: 'Shift bar only', bracket: 'Rev bracket + gear only' },
     clusterStyle: { large: 'M slats, large', classic: 'M slats, small', row: 'Centre row, 12 lights', stock: 'Stock look, one block per dial' },
@@ -78,6 +85,22 @@ function choice(m, key) {
     return (it.options || []).some((o) => o[0] === v) ? v : it.default;
 }
 const stepLabel = (m, key, v) => { const l = itemOf(m, key).labels; return l && l[String(v)] !== undefined ? l[String(v)] : String(v); };
+/** ". Default 110%" / ". Default 80 px left" for a stepper's description; '' when its default step already reads "Default". */
+function defaultText(m, key) {
+    const it = itemOf(m, key), d = stepLabel(m, key, it.default);
+    if (it.default === undefined || /^default$/i.test(d)) return '';
+    return '. Default ' + (it.unit === '%' ? d + '%' : /^[A-Z][a-z]/.test(d) ? d[0].toLowerCase() + d.slice(1) : d);
+}
+
+/** The Night dim row's line: what it uses now and the car's last day / night value (or that none came). */
+function nightLine(m, s) {
+    const n = m.night || {}, dim = Math.round(m.cfg.nightDim * 100) + '%';
+    const word = n.raw === undefined || n.raw === null ? '' : L.dayNightOf({ dayNightChangeOver: n.raw }) || 'no day / night word';
+    const car = word ? 'car says ' + word + ' (' + String(n.raw) + ')' : n.sub === 'missing' ? 'this car sends no day / night signal' : 'no day / night signal from the car yet';
+    if (s.nightMode === 'on') return 'On: dimmed to ' + dim + ' (' + car + ')';
+    if (s.nightMode === 'off') return 'Off: full brightness (' + car + ')';
+    return 'Auto, ' + car + ': ' + (s.night ? 'dimmed to ' + dim : 'full brightness');
+}
 
 /** The drive mode in use, in words: "Sport+, from the car" / "Sport, the fallback (the car sends none)". */
 function modeLine(m) {
@@ -112,36 +135,38 @@ function home(m) {
 }
 
 function display(m, which) {
-    const ds = L.readDisplays(m.get), s = L.readStyle(m.cfg, m.get, which), D = DISPLAY[which], on = ds[which];
+    const ds = L.readDisplays(m.get), s = L.readStyle(m.cfg, m.get, which, m.night ? m.night.night : null), D = DISPLAY[which], on = ds[which];
     const shown = ds.display === which || ds.display === 'both', page = which, k = (x) => which + x;
     let note = 'Showing on the ' + (which === 'hud' ? 'HUD' : 'cluster') + ' now: changes show live';
     if (!on) note = D.name + ' is off. Turn it on here or on Home';
     else if (!shown) note = 'On, not showing: the ' + D.other + ' wins when both are on (change it on Home)';
     else if (which === 'cluster' && ds.display === 'both') note = 'Showing in the cluster centre area (experimental)';
-    const dim = Math.round(m.cfg.nightDim * 100);
     const barStyle = which === 'hud' && (s.style === 'large' || s.style === 'bar');
     // the shift bar (Small's too) is held inside the visible area: say so when that moved it (pure geometry, no drawing)
     const held = on && which === 'hud' && G.hudLayout(m.cfg, s).barShift.clamped;
     if (held) note = 'Shift bar held inside the visible area (it was past the edge)';
     const rows = [
         row(k('Style'), 'pills', 'Style', STYLE_DESC[k('Style')][s.style], pills(m, page, k('Style'), s.style), { value: SHORT[k('Style')][s.style] }),
-        row(k('Size'), 'stepper', 'Size', D.size, stepper(m, page, k('Size'), s.size), { value: s.size + '%' }),
-        row(k('Bright'), 'stepper', 'Brightness', 'How bright the lit lights are', stepper(m, page, k('Bright'), s.bright), { value: s.bright + '%' }),
-        row(k('Night'), 'toggle', 'Night dim', 'Dims to ' + dim + '%. Manual: the car\'s light signal is not read yet', toggle(page, k('Night'), s.night)),
-        row(k('X'), 'stepper', 'Move left / right', D.x, stepper(m, page, k('X'), s.x), { value: stepLabel(m, k('X'), s.x) }),
-        row(k('Y'), 'stepper', 'Move up / down', D.y, stepper(m, page, k('Y'), s.y), { value: stepLabel(m, k('Y'), s.y) }),
+        row(k('Size'), 'stepper', 'Size', D.size + defaultText(m, k('Size')), stepper(m, page, k('Size'), s.size), { value: s.size + '%' }),
+        row(k('Bright'), 'stepper', 'Brightness', 'How bright the lit lights are' + defaultText(m, k('Bright')), stepper(m, page, k('Bright'), s.bright), { value: s.bright + '%' }),
+        row(k('NightMode'), 'pills', 'Night dim', nightLine(m, s), pills(m, page, k('NightMode'), s.nightMode), { value: SHORT[k('NightMode')][s.nightMode] }),
+        row(k('X'), 'stepper', 'Move left / right', D.x + defaultText(m, k('X')), stepper(m, page, k('X'), s.x), { value: stepLabel(m, k('X'), s.x) }),
+        row(k('Y'), 'stepper', 'Move up / down', D.y + defaultText(m, k('Y')), stepper(m, page, k('Y'), s.y), { value: stepLabel(m, k('Y'), s.y) }),
     ];
     if (which === 'hud') {
-        const bar = row('hudBarX', 'stepper', 'Shift bar left / right', barStyle ? 'Moves the shift bar only; kept inside the visible area' : 'Only for the Large and Bar only styles',
+        const bar = row('hudBarX', 'stepper', 'Shift bar left / right', barStyle ? 'Moves the shift bar only; kept inside the visible area' + defaultText(m, 'hudBarX') : 'Only for the Large and Bar only styles',
             stepper(m, page, 'hudBarX', s.barX), { value: stepLabel(m, 'hudBarX', s.barX) });
         bar.enabled = on && barStyle;
         rows.push(bar);
     }
     rows.forEach((r) => { if (r.id !== 'hudBarX') r.enabled = on; });
-    return {
-        id: page, rows, note, noteTone: !on ? 'warn' : held || !shown ? 'warn' : 'dim',
-        noteAction: on ? null : { key: page + ':turnon', text: 'Turn ' + D.name + ' on', writes: [[k('On'), true]] },
-    };
+    let action = on ? null : { key: page + ':turnon', text: 'Turn ' + D.name + ' on', writes: [[k('On'), true]] };
+    if (on && which === 'hud') {
+        // size, move and the bar's move back to app.json's defaults; the first press asks (ui.js), dimmed when they are already
+        const writes = RESET_KEYS.reduce((a, key) => a.concat(writeOf(m, key, itemOf(m, key).default)), []);
+        action = { key: 'hud:reset', text: 'Reset HUD to defaults', writes, confirm: true, busy: !writes.length };
+    }
+    return { id: page, rows, note, noteTone: !on ? 'warn' : held || !shown ? 'warn' : 'dim', noteAction: action };
 }
 
 function behavior(m) {
@@ -189,10 +214,12 @@ function about(m) {
             { title: 'Remove safely', lines: ['Store > Shift Lights > Remove.', 'Never kill or restart it by hand: three crashes', 'in about 30 s wipe every app.'] },
             { title: 'Kill switch', lines: ['Home > All off, or a file named ' + m.cfg.safety.killFile, 'in the app\'s data folder.'] },
         ],
-        rows: ['layout', 'renderer', 'demo'].map((key) => {
+        rows: ['layout', 'renderer', 'demo', 'flashMode'].map((key) => {
             const v = choice(m, key);
-            return row(key, 'pills', { layout: 'Screen layout', renderer: 'Renderer', demo: 'Demo data' }[key],
-                { layout: 'Standard keeps the HMI\'s own title and bar', renderer: 'Software: no GPU renderer, slower', demo: 'Auto: demo data until the car answers' }[key], pills(m, 'about', key, v), { value: SHORT[key][v] });
+            const flash = v === 'renderer' ? 'Renderer: the cluster plays it (a G01 showed solid red)' : 'App: this app turns it on and off, 8 times a second';
+            return row(key, 'pills', { layout: 'Screen layout', renderer: 'Renderer', demo: 'Demo data', flashMode: 'Shift flash' }[key],
+                { layout: 'Standard keeps the HMI\'s own title and bar', renderer: 'Software: no GPU renderer, slower', demo: 'Auto: demo data until the car answers', flashMode: flash }[key],
+                pills(m, 'about', key, v), { value: SHORT[key][v] });
         }),
         rowsNote: 'Standard or Software: these pages become one settings list (Settings button).',
     };
@@ -211,7 +238,7 @@ function view(i, m) {
 function controlsOf(v) {
     const out = [];
     (v.cards || []).forEach((c) => c.controls.forEach((x) => out.push(x)));
-    if (v.noteAction) out.push(v.noteAction);
+    if (v.noteAction && !v.noteAction.busy) out.push(v.noteAction);
     (v.rows || []).forEach((r) => { if (r.enabled) r.controls.forEach((x) => out.push(x)); });
     (v.modes || []).forEach((r) => { if (r.enabled) r.start.controls.concat(r.shift.controls).forEach((x) => out.push(x)); });
     if (v.alloff) out.push(v.alloff);

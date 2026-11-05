@@ -24,50 +24,52 @@ const model = (saved) => {
 };
 
 module.exports = [
-    ['the new HUD defaults: 110 %, 80 px left, 60 px down, bar +70 (app.json and config.js agree)', () => {
-        assert.deepStrictEqual(D, { size: 110, x: -80, y: 60, barX: 70 });
-        assert.deepStrictEqual(['hudSize', 'hudX', 'hudY', 'hudBarX'].map((k) => item(k).default), [110, -80, 60, 70]);
+    ['the HUD defaults: 110 %, 80 px left, 60 px down, bar move 0 since 0.4.3 (app.json and config.js agree)', () => {
+        assert.deepStrictEqual(D, { size: 110, x: -80, y: 60, barX: 0 });
+        assert.deepStrictEqual(['hudSize', 'hudX', 'hudY', 'hudBarX'].map((k) => item(k).default), [110, -80, 60, 0]);
         assert.deepStrictEqual(item('hudBarX').steps, cfg.nudge.barX);
         assert.ok(cfg.nudge.barX.every((v) => v % 5 === 0) && cfg.nudge.barX.length === 41);
         const r = L.readStyle(cfg, (k) => item(k) && item(k).default, 'hud');
-        assert.deepStrictEqual([r.size, r.x, r.y, r.barX, r.warnings], [110, -80, 60, 70, []]);
+        assert.deepStrictEqual([r.size, r.x, r.y, r.barX, r.warnings], [110, -80, 60, 0, []]);
     }],
-    ['defaults are for new installs only: saved values (also 0 and 100) are read as saved; a missing key gets the default', () => {
+    ['readStyle reads saved values as saved (also 0 and 100); a missing key gets the default (0.4.3\'s one-time move of old defaults is migrateSettings\')', () => {
         const saved = { hudSize: 100, hudX: 0, hudY: 0, hudBarX: 0 };
         const r = L.readStyle(cfg, (k) => saved[k], 'hud');
         assert.deepStrictEqual([r.size, r.x, r.y, r.barX], [100, 0, 0, 0]);
         const adam = { hudSize: 110, hudX: -80, hudY: 60 };
         const a = L.readStyle(cfg, (k) => adam[k], 'hud');
-        assert.deepStrictEqual([a.size, a.x, a.y, a.barX], [110, -80, 60, 70], 'barX is new: it starts at the default');
+        assert.deepStrictEqual([a.size, a.x, a.y, a.barX], [110, -80, 60, D.barX], 'no saved barX: the default');
         // the cluster keeps 100 % and no move
         const c = L.readStyle(cfg, () => undefined, 'cluster');
         assert.deepStrictEqual([c.size, c.x, c.y], [100, 0, 0]);
     }],
-    ['the settings migration writes none of the HUD size / move keys (saved values are never touched)', () => {
-        const writes = L.migrateSettings((k) => ({ enabled: true, display: 'hud', hudStyle: 'large', hudSize: 100, hudX: 0, hudY: 0 }[k]));
-        assert.ok(writes.every((w) => !/^hud(Size|X|Y|BarX)$/.test(w[0])), JSON.stringify(writes));
-        assert.deepStrictEqual(L.migrateSettings((k) => (k === '_settingsV' ? 3 : undefined)), []);
+    ['the settings migration never touches a chosen HUD size / move (only old defaults move: v043.test.js)', () => {
+        const writes = L.migrateSettings((k) => ({ _settingsV: 3, hudSize: 120, hudX: -40, hudY: 30, hudBarX: 15 }[k]), cfg);
+        assert.deepStrictEqual(writes, [['_settingsV', L.SETTINGS_V]]);
+        assert.deepStrictEqual(L.migrateSettings((k) => (k === '_settingsV' ? L.SETTINGS_V : undefined), cfg), []);
     }],
     ['at the new defaults the whole shift bar is inside the visible box, margin kept; the bracket and gear are where they were', () => {
         const l = lay(D.size, D.x, D.y, D.barX), b = l.bar.bar;
         assert.ok(b.x0 >= V.x0 + M && b.x1 <= V.x1 - M && b.y0 >= V.y0 && b.y1 <= V.y1, JSON.stringify(b));
         assert.strictEqual(l.barShift.clamped, false);
-        // the group move alone leaves the bar's left end near x 2, 58 px outside the box (what Adam saw cut off)
+        // 0.4.3's bar (the cluster's design at 0.9, 394 px at 100 %) needs no move of its own: with the group move alone its
+        // left end is at 103.2, inside the box (0.4.2's 578 px bar sat at x 2.1, 58 px outside: what Adam saw cut off)
         const l0 = lay(D.size, D.x, D.y, 0), raw0 = l0.bar.bar.x0 - l0.barShift.x;
-        assert.ok(Math.abs(raw0 - 2.1) < 0.2 && raw0 < V.x0, 'x0 ' + raw0);
+        assert.ok(Math.abs(raw0 - 103.19) < 0.05 && raw0 >= V.x0 + M && l0.barShift.clamped === false, 'x0 ' + raw0);
+        near((l0.bar.bar.x0 + l0.bar.bar.x1) / 2, cfg.hud.centerX + D.x, 1e-9, 'centred over the moved HUD (the bracket\'s middle)');
         // the bar move is the bar's alone
-        const a = lay(D.size, D.x, D.y, 0), c = lay(D.size, D.x, D.y, D.barX);
+        const a = lay(D.size, D.x, D.y, 0), c = lay(D.size, D.x, D.y, 20);
         assert.deepStrictEqual([a.bracket.rect, a.bracket.gear, a.bracket.origin], [c.bracket.rect, c.bracket.gear, c.bracket.origin]);
-        near(c.bar.bar.x0 - raw0, D.barX, 1e-9, 'the default moves the bar by barX');
-        assert.strictEqual(a.barShift.clamped, true, 'with no bar move the clamp has to pull it in (so the default avoids a note on every fresh install)');
+        near(c.bar.bar.x0 - raw0, 20, 1e-9, 'a bar move of 20 moves the bar alone by 20');
         assert.ok(b.y0 >= 90 && lay(D.size, D.x, D.y, D.barX).bracket.fits);
     }],
-    ['hud.barX default is the smallest 5 px step that keeps the margin from the visible left edge', () => {
+    ['hud.barX default is the smallest step to the right (0 or more) that keeps the margin from the visible left edge: 0', () => {
         const l0 = lay(D.size, D.x, D.y, 0), raw0 = l0.bar.bar.x0 - l0.barShift.x;     // the bar's left end with the group move alone
-        const okSteps = cfg.nudge.barX.filter((v) => raw0 + v >= V.x0 + M);
+        const okSteps = cfg.nudge.barX.filter((v) => v >= 0 && raw0 + v >= V.x0 + M);
         assert.strictEqual(okSteps[0], D.barX);
-        assert.ok(raw0 + (D.barX - 5) < V.x0 + M, 'one step less would be inside the margin');
-        assert.ok(lay(D.size, D.x, D.y, D.barX).bar.bar.x0 - V.x0 < 20, 'and not further right than needed');
+        assert.strictEqual(D.barX, 0);
+        const r = lay(D.size, D.x, D.y, D.barX).bar.bar;
+        assert.ok(r.x1 <= V.x1 - M, 'the right end too');
     }],
     ['bar edges stay inside the visible box for every size, HUD move and bar move (clamp); too wide for the box: centred', () => {
         let n = 0, clamped = 0;
@@ -81,10 +83,10 @@ module.exports = [
             assert.strictEqual(Math.abs(l.barShift.x - barX) > 0.01, l.barShift.clamped, [size, x, barX].join(' '));
         })));
         assert.ok(n > 1000 && clamped > 100 && clamped < n, n + ' ' + clamped);
-        // 120 %: 693 px wide, wider than the 680 px box: centred, never cut on one side only
+        // 0.4.3: even at 120 % the bar (473 px) is narrower than the box less its margins: never centred by force
         const w = lay(120, 0, D.y, 0).bar.bar;
-        assert.ok(w.x1 - w.x0 > V.x1 - V.x0);
-        assert.ok(Math.abs((w.x0 + w.x1) / 2 - 400) < 1e-9);
+        assert.ok(w.x1 - w.x0 < V.x1 - V.x0 - 2 * M, String(w.x1 - w.x0));
+        near((w.x0 + w.x1) / 2, 400, 1e-9, 'no move: centred on the scene');
     }],
     ['clamp: far left asks pull the bar back to the left margin, far right to the right margin; in range is left alone', () => {
         const far = lay(100, -100, 0, -100).bar.bar, farR = lay(100, 100, 0, 100).bar.bar;
@@ -105,7 +107,8 @@ module.exports = [
         const v = P.view(1, model({ hudOn: true }));
         const r = v.rows.filter((x) => x.id === 'hudBarX')[0];
         assert.ok(r && r.enabled && r.label === 'Shift bar left / right');
-        assert.deepStrictEqual([r.value, r.controls[0].writes, r.controls[1].writes], ['70 px right', [['hudBarX', 65]], [['hudBarX', 75]]]);
+        assert.deepStrictEqual([r.value, r.controls[0].writes, r.controls[1].writes], ['Same as the HUD', [['hudBarX', -5]], [['hudBarX', 5]]]);
+        assert.strictEqual(r.desc, 'Moves the shift bar only; kept inside the visible area. Default same as the HUD');
         assert.strictEqual(v.rows.length, 7);
         assert.notStrictEqual(v.noteTone, 'warn');
         const held = P.view(1, model({ hudOn: true, hudX: -100, hudBarX: -100, hudSize: 100 }));
@@ -143,7 +146,8 @@ module.exports = [
         assert.strictEqual(t(6900).invalid, true);            // still over the limiter bound: falls back to the defaults, flagged
         assert.deepStrictEqual([t(0).shift, t(undefined).shift, t('x').shift, t(-5).shift], [6800, 6800, 6800, 6800]);
         assert.deepStrictEqual([L.shiftRpm(6850), L.shiftRpm(2599), L.shiftRpm(0), L.shiftRpm(NaN), L.shiftRpm('x')], [6800, 2500, 0, 0, 0]);
-        assert.strictEqual(L.SETTINGS_V, 3);
+        // no migration of the shift values (0.4.3's migration moves only the HUD's old defaults and the night dim)
+        assert.ok(L.migrateSettings((k) => ({ _settingsV: 3, sportShift: 6850, comfortShift: 6900 })[k], cfg).every((w) => !/Shift$/.test(w[0])));
     }],
     ['Behavior page: the shift stepper moves 100 per press, Default sits at the mode\'s rpm, the top step has no "+"', () => {
         const w = (saved, mode) => P.view(3, model(saved)).modes[mode].shift.controls.map((c) => c.writes);

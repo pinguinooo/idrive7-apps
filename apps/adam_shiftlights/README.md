@@ -4,14 +4,16 @@
 
 RPM shift lights for BMW iDrive 7 (MGU) on the instrument cluster and the HUD, as an app for the
 [mgu-store](https://github.com/robertnisipeanu/mgu-store). OEM-style M slats light up from the outside in,
-amber then red, with their own thresholds per drive mode and a lower limit while the engine is cold.
+amber then red, with their own thresholds per drive mode and a lower limit while the engine is cold. The HUD shows the
+same M slats as the cluster (0.4.3), and both can dim at night on the car's own day / night signal.
 The centre screen holds the settings on five pages (Home, HUD, Cluster, Behavior, About). It draws only when
 something changes: there is no live preview, so nothing on that screen competes with the rpm updates.
 
 ## Status
 
-Proven on a 2024 X3 M40i (G01 LCI) in a car test: the HUD shift lights and "Only in Sport+" work. Read the Safety
-section before you install it.
+Proven on a 2024 X3 M40i (G01 LCI) in a car test: the HUD shift lights and "Only in Sport+" work. On that car 0.4.2's
+shift flash turned the bar red but did not flash; 0.4.3 switches the flash from the app instead (see The shift flash).
+Read the Safety section before you install it.
 
 ## Requirements
 
@@ -45,10 +47,11 @@ Every page fits one screen. The pill in colour is the value in use; a greyed row
 | HUD | Style | Large (shift bar + rev bracket), Small (the same with a 70 % shift bar), Bar only, Bracket (rev bracket + gear) | Large |
 | HUD | Size | 70 to 120 % | 110 % |
 | HUD | Brightness | 20 to 100 % | 100 % |
-| HUD | Night dim | on / off | off |
+| HUD | Night dim | Auto (dims while the car says night), On, Off | Auto |
 | HUD | Move left / right | 100 px left to 100 px right, steps of 10 | 80 px left |
 | HUD | Move up / down | 60 px up to 60 px down, steps of 10 | 60 px down |
-| HUD | Shift bar left / right | 100 px left to 100 px right of the HUD, steps of 5 (Large and Bar only) | 70 px right |
+| HUD | Shift bar left / right | 100 px left to 100 px right of the HUD, steps of 5 (Large and Bar only) | Same as the HUD |
+| HUD | Reset HUD to defaults | size, both moves and the shift bar move back to the defaults (press twice: the first press asks) | |
 | Cluster | Style | Large, Small (M slats), Centre row (12 lights), Stock (one block per dial) | Large |
 | Cluster | Size, Brightness, Night dim | as on the HUD page | |
 | Cluster | Move left / right | 50 px left to 50 px right, steps of 5 | Default |
@@ -63,6 +66,7 @@ Every page fits one screen. The pill in colour is the value in use; a greyed row
 | About | Screen layout | Full screen, Standard | Full screen |
 | About | Renderer | GPU, Software | GPU |
 | About | Demo data | Auto, Always, Never | Auto |
+| About | Shift flash | App (this app switches the flash), Renderer (the cluster plays it) | App |
 
 With the Software renderer, the Standard layout or no touch routing, the screen shows a read-only Home and the
 bar's three buttons: HUD on/off, Cluster on/off and Settings, which opens the HMI's own list of every setting
@@ -70,6 +74,10 @@ bar's three buttons: HUD on/off, Cluster on/off and Settings, which opens the HM
 
 A new install starts with both displays off. Settings saved by 0.2.x move over on the first start: a display
 that was showing stays on. 0.4.0 keeps every saved setting as it was (and so does 0.4.1: it only adds the Shift bar move, and its start values for fresh installs; and 0.4.2: it changes only what the lights and the Small style show).
+0.4.3 moves a few saved values once, on its first start: a HUD size, move or shift bar move that still holds an earlier
+default (100 %, Centre, Centre, 70 px right) goes to today's (110 %, 80 px left, 60 px down, Same as the HUD), so an
+update gets the tuned place too; any other value you picked stays. A night dim that was on becomes Night dim On, one
+that was off becomes Auto. The HUD page's Reset HUD to defaults sets size and moves back at any time.
 
 "Default" uses the built-in thresholds for that mode.
 
@@ -81,13 +89,30 @@ which has no shift bar, the bracket's fill turns red and flashes. It stops once 
 (plus the light-up lead while the rpm was climbing), so it does not flicker on a steady rpm. Before 0.4.2 the bar stayed
 solid red at the shift point and flashed only in the last 100 rpm under the limiter. The flash rate stays 4 Hz (`flashHz`
 in config.js, 4 to 20): the slowest allowed, as the flash now comes at every shift, and its first half is lit, so the bar
-shows red at once.
+shows red at once. Its off half shows nothing at all (not a dimmer red), so the flash is red, dark, red, dark.
+
+Why 0.4.2 did not flash on the car: it handed the flash to the cluster renderer as an animation that switches the
+flash's on / off value by itself. The cluster (KOMBI) plays such animations on its own clock; on a G01 it never ran,
+so the value stayed at its "on" and the bar stayed solid red. M Track's cover hit the same thing on the same car.
+Since 0.4.3 the app switches it instead (About, **Shift flash: App**, the default): while the bar flashes it sends the
+on / off value every 125 ms (at most 8 small messages a second a layer, never faster whatever `flashHz` says), every
+layer in step, and stops the moment the flash ends; the on value always goes out before the message that starts the
+flash, so the first frame is lit. If the link to the renderer is backed up it skips a step rather than queue it.
+**Renderer** is 0.4.2's way, for a car whose cluster plays animations.
 
 ### HUD styles
 
 Large: the shift bar over the rev bracket and gear. Small (0.4.2): the same layout with the shift bar at 70 % of its size
 (`hudStyles.smallBar` in config.js), on the same base line and centred over the bracket; before 0.4.2 Small drew small
 shift cells inside the bracket. Bar only: the shift bar alone. Bracket: the rev bracket and gear alone.
+
+Since 0.4.3 the HUD's shift bar is the cluster's Large M slats: 10 slats a side leaning toward the middle, 8 amber then 2
+red, a gap in the middle, the same colours, and at the shift point the whole shape red and flashing. It is drawn at 90 %
+of the cluster's pixel size (394 x 75 px at 100 %), the largest that stays inside the HUD's visible area at every size
+with the default 60 px down. What still differs from the cluster: the glow is 13 px, not 30 (more would spill over the
+rev bracket 8 px under it); the unlit slats show dimly at idle (the cluster shows them only once one is lit); the HUD
+also has the rev bracket and gear; and on the HUD black is see-through. Before 0.4.3 the HUD bar was BMW's own HUD
+design: 15 slats all leaning one way, yellow, orange and a red centre.
 
 ### HUD and cluster together
 
@@ -113,6 +138,18 @@ Since 0.3.1 the cluster bar sits 25 px lower than in 0.3.0 (the M slats' top edg
 panel, was 109). The Cluster page's Move settings shift it from there in 5 px steps; a move that would put the bar off the
 panel falls back to the default place. Keep it clear of the dial numerals either side.
 
+### Night dim
+
+Each display's Night dim is Auto, On or Off. On dims the lit lights to 35 % (`nightDim` in config.js), Off never does.
+Auto follows the car's own day / night signal, the one its light sensor sets (`Vehicle` `statusDayNightChangeOver`:
+TAG = day, NACHT = night): night dims, day is full brightness. The first value applies at once; after that a change
+must hold 5 s before the brightness follows (`nightHoldMs`), so it never flickers. The car sending no signal, or a car
+whose software has none, leaves Auto at full brightness (as before 0.4.3, when night dim was a manual switch).
+The Night dim row on each page says what it uses now and the car's last value, for example "Auto, car says night
+(NACHT): dimmed to 35%", "Auto, no day / night signal from the car yet: full brightness", or "this car sends no day /
+night signal". The log has a line for every new value: `car day/night {"dayNightChangeOver":"NACHT"} -> night`.
+The signal is the one another iDrive 7 app reads on a G05 (it showed "TAG"); what a G01 sends shows on the Night dim row.
+
 ### Lead and Fast RPM
 
 The car sends the engine speed only when it changes, and not very often, so the lights trail the real rpm by up
@@ -127,15 +164,18 @@ to one update. Two settings close that gap:
 ### HUD position
 
 The defaults (0.4.1) are the values tuned on the car: 110 %, 80 px left, 60 px down, which lines the art up with the stock
-mph. Only a fresh install starts there; saved values are never changed.
+mph. Every step on the HUD page says which value is the default, and Reset HUD to defaults (at the right of the line under
+the tabs, while the HUD is on) puts size, both moves and the shift bar move back: the first press turns it into Confirm
+reset for 5 s, the second press resets. It is dimmed while everything is at its default. 0.4.3 also moved a saved earlier
+default to these once (see above).
 
-The shift bar is wide (578 px at 100 %, 636 at 110 %), and the HUD shows a picture of at most 680 x 300 px inside its
-800 x 480 scene (wider is cut off). With the HUD moved 80 px left the bar's left end sat at x 2, outside that box. The bar
-now has its own Shift bar left / right move on top of the HUD move (default +70 px: the smallest 5 px step that keeps its
-left end 8 px inside the box), and it is always held inside the box left and right, whatever the settings (the HUD page
-says so when it did). Too wide for the box (120 %): centred. The box is assumed centred in the scene (`hud.visible` in
-config.js). Up / down is not clamped. The Small style's bar is narrower and stays centred over the bracket (the Shift bar
-move is for Large and Bar only); it is held inside the box the same way, which only 120 % moved 90 px or more needs.
+The HUD shows a picture of at most 680 x 300 px inside its 800 x 480 scene (wider is cut off). The shift bar has its own
+Shift bar left / right move on top of the HUD move, and it is always held inside that box left and right, whatever the
+settings (the HUD page says so when it did). 0.4.2's bar was 578 px wide, so the default HUD move put its left end at x 2,
+outside the box, and the bar move defaulted to 70 px right. 0.4.3's bar (394 px at 100 %, 434 at 110 %) fits with no move
+of its own, centred over the rev bracket: the default is Same as the HUD. The box is assumed centred in the scene
+(`hud.visible` in config.js). Up / down is not clamped. The Small style's bar is narrower and stays centred over the
+bracket (the Shift bar move is for Large and Bar only).
 
 The gear spot shows 1 to 9 in D, and P, R or N from the selector; a value it does not know shows nothing.
 
@@ -144,7 +184,7 @@ size grows upward, away from the speed. The app draws no speed or unit: the stoc
 
 ## Screens
 
-From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down; 0.4.2).
+From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down; 0.4.3).
 
 | Home | HUD | Cluster |
 |---|---|---|
@@ -164,6 +204,8 @@ From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down; 0.4.2
 - Never reinstall an app that crashed. Remove it with the Store.
 - The app stops all cluster and HUD output after 5 errors in 10 seconds. Turn a display off and on to reset
   that. Demo data never reaches the cluster or the HUD.
+- The day / night signal is optional: a head unit without it still installs the app (Night dim Auto then stays at full
+  brightness). If a Store update ever names `statusDayNightChangeOver` as refused, the old version stays installed.
 
 ## Latency
 
