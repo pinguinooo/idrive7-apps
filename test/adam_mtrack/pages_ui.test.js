@@ -308,5 +308,15 @@ module.exports = [
                 W.drawCorner(c, r, side, Buffer.alloc(r.w * r.h * 4), {}, u, cfg);
             });
         });
+    }],    ['0.1.5 OEM style: a gauge\'s track, ticks and labels are bright white (BMW\'s), not 0.1.4\'s grey', () => {
+        const R = G.RECTS.panelL, cv = new Canvas(R.w, R.h), u = U.resolve('us'), sr = G.slotRect(-1, 'upper');
+        W.drawPanel(cv, R, -1, { upper: 'coolant', lower: 'oil' }, { coolant: 60, oil: 40 }, u, () => true, cfg);
+        const y = Math.round(sr.y0 + sr.h * 0.6), x = Math.round((sr.x0 + 8 + sr.x1 - 18) * 0.5 + 20);   // mid-track, clear of a tick
+        const at = (px, py) => Array.from(cv.d.slice(((py - R.y) * R.w + px - R.x) * 4, ((py - R.y) * R.w + px - R.x) * 4 + 4));
+        const p = at(x, y);
+        assert.ok(p[0] >= 230 && p[1] >= 230 && p[2] >= 230 && p[3] >= 220, 'track pixel ' + p);
+        let label = 0;                                        // the labels' row: some near-white text pixels
+        for (let xx = sr.x0; xx < sr.x1; xx++) { const q = at(xx, y + 27); if (q[3] > 200 && q[0] >= 235) label++; }
+        assert.ok(label > 5, 'near-white label pixels ' + label);
     }],
 ];

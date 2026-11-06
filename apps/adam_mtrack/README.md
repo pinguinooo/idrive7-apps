@@ -1,4 +1,4 @@
-# M Track Cluster (`adam_mtrack`) 0.1.4
+# M Track Cluster (`adam_mtrack`) 0.1.5
 
 An M Track style cover over the instrument cluster, drawn by the cluster-render service on its `panel` target
 (1920 x 720): two bar tachs from 0 to 7 (x1000 rpm, the B58's 7,000 rpm limit), the gear over a line over the speed
@@ -6,6 +6,19 @@ in mph, the M badge with our shift-light slats in its place, side panels you pic
 clock and outside temperature. Built for a 2024 X3 M40i (G01 LCI, iDrive 7, US units). **Off when installed.**
 
 It covers the real speedometer, so it only shows while every guard holds, and drops at once when one fails.
+
+**0.1.5: drawn like BMW's, measured against the OEM photo.** 0.1.4 matched where things sit; this pass matched how
+they are drawn, region by region against Adam's photo of BMW's own M display (iDrive-Apps tools/oem-compare: the photo
+straightened into panel pixels, then structure, stroke width, ink size, hue and tone per region). The rpm fill is now
+BMW's: a solid orange-red block at the revs with a crimson-to-pink glow above it under a 6 px grid of darker crimson
+lines (the photo's grid pitch is 6 px too). The shift markers are pale yellow, not orange; the band is flat and
+lighter with a bright white inner edge; the side gauges' tracks, ticks and labels are bright white instead of grey;
+the coolant and oil icons have BMW's shapes and weight; SPORT+ and mph are near-white; the corner arcs have BMW's
+thicker glowing edge and the oil gauge's cold end is cyan. The text face stays the kit's label face (Ubuntu Sans,
+condensed regular): of 49 face, weight and width combinations from 11 open families scored against the photo it
+fits BMW's text best in width and stroke weight. The art's text (mph, the drive-mode tags) is now drawn from a committed Liberation Sans (SIL OFL 1.1), the face
+0.1.4 fell back to, so the art no longer depends on the build machine. No change to the dead-man, the recovery or
+settings.
 
 **0.1.4: the panel already fills; OEM left panels.** On Adam's car (2026-11-05) Test 1 KNOWN drew. The two round
 dials in that photo are M Track's own (the KNOWN shader's), not BMW's: the layer is one 1920 x 720 effect that the car

@@ -24,10 +24,10 @@ const G = require('./geom');
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 /** The live boxes' colours (widgets.js and the corners' art), nearest wins; index 0 is never written. */
 const PALETTE = ['#000000', '#f2f5f8', '#dfe4ea', '#aeb6c0', '#b0b4bc', '#96989f', '#e2262a', '#ff2a1f', '#3ecf6a', '#c8c8e6',
-    '#8282c8', '#ff6a1a', '#2878ff', '#aab0b8', '#e6eaee', '#f1141d'].map(hex);
+    '#8282c8', '#ff6a1a', '#28cdeb', '#aab0b8', '#e6eaee', '#f1141d'].map(hex);   // 12: the oil gauge's cold end, cyan (0.1.5, photo)
 /** The bars' over-art colours (art.html barOver: lines, the dark gap line and its blends, the red and amber fields). */
-const OVER_PALETTE = [[0, 0, 0], [238, 241, 244], [226, 232, 240], [214, 220, 236], [14, 14, 18], [200, 30, 42], [236, 165, 60],
-    [176, 176, 186], [128, 128, 134], [64, 64, 68], [96, 96, 100], [152, 152, 162], [198, 198, 206], [36, 36, 40], [222, 196, 170], [206, 92, 96]];
+const OVER_PALETTE = [[0, 0, 0], [238, 241, 244], [226, 232, 240], [214, 220, 236], [14, 14, 18], [200, 30, 42], [242, 214, 90],
+    [176, 176, 186], [128, 128, 134], [64, 64, 68], [96, 96, 100], [152, 152, 162], [198, 198, 206], [36, 36, 40], [240, 230, 170], [206, 92, 96]];
 const BOXES = ['panelL', 'panelR', 'cornerL', 'cornerR'];
 const TINT = [0.97, 0.98, 1];
 

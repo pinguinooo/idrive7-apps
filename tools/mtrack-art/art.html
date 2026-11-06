@@ -5,7 +5,11 @@
   Dev-time only (not shipped): draws M Track Cluster's static art, item by item, with the approved mockup's own drawing
   code (iDrive-Apps docs/mockups/mtrack-cluster.html: base, plate, bar, sq, badge, corner, gearBlock), trimmed to the
   static parts, with the tach scale 0-7 from apps/adam_mtrack/geom.js (loaded below, so the art and the live fill
-  agree). tools/mtrack-art/make-art.mjs renders each item on a transparent canvas and writes apps/adam_mtrack/art/art.json.
+  agree). tools/mtrack-art/make-art.mjs calls makeArt(the font's bytes), renders each item on a transparent canvas and
+  writes apps/adam_mtrack/art/art.json. 0.1.5: the atlas's text (mph, the drive-mode tags) in Liberation Sans (fonts/,
+  SIL OFL 1.1), the face 0.1.4 fell back to and still the closest to BMW's for these two (iDrive-Apps
+  docs/emulator/mtrack-0.1.5/font-pick.md), now committed so the art no longer depends on what the build machine has;
+  makeArt refuses to draw on a fallback face.
 -->
 <script>var module = { exports: {} };</script>
 <script src="../../apps/adam_mtrack/geom.js"></script>
@@ -13,11 +17,21 @@
 <script src="../../apps/adam_mtrack/config.js"></script>
 <script>
 var MCFG = module.exports;
-(function () {      // a function scope: geom.js's top-level names stay global, these shadow them
+window.makeArt = async function (faces) {      // a function scope: geom.js's top-level names stay global, these shadow them
 'use strict';
+// the atlas's text face (make-art.mjs's font files, [{ b64, weight }]): one family, a file per weight
+const FAMILY = 'MTrackArt';
+for (const f of faces) {
+  const face = new FontFace(FAMILY, Uint8Array.from(atob(f.b64), (ch) => ch.charCodeAt(0)), { weight: String(f.weight) });
+  await face.load();
+  document.fonts.add(face);
+  const c = document.createElement('canvas').getContext('2d'), w = (x) => { c.font = x; return c.measureText('SPORT+ mph 0123').width; };
+  if (face.status !== 'loaded' || Math.abs(w(`${f.weight} 20px "${FAMILY}"`) - w(`${f.weight} 20px monospace`)) < 1) throw new Error(FAMILY + ' ' + f.weight + ' did not load: refusing to draw on a fallback face');
+}
 const T = MCFG.tach, BARS = GEOM.BARS, C = GEOM.CENTRE;
-const SANS = '"BMW Type Next", Arial, "Liberation Sans", Helvetica, sans-serif';
-const COL = { cap: '#f1141d', redField: '#c81e2a', yellowField: '#eca53c', line: '#eef1f4' };
+const SANS = `"${FAMILY}", sans-serif`;
+// 0.1.5: the shift markers pale yellow (the OEM photo's hue 47 deg, not orange)
+const COL = { cap: '#f1141d', redField: '#c81e2a', yellowField: '#f2d65a', line: '#eef1f4' };
 const BASE = { edge: [[960, 112], [1120, 118], [1280, 126], [1400, 140], [1520, 163], [1620, 196], [1700, 240], [1748, 300], [1752, 360], [1752, 712]], centre: '#15161b', side: '#1f2023' };
 const PLATE = [[1262, 207], [1468, 211], [1520, 218], [1556, 232], [1590, 252], [1618, 272], [1645, 302], [1676, 342], [1700, 380], [1712, 405],
   [1708, 445], [1690, 485], [1668, 525], [1640, 565], [1614, 592], [1590, 600], [1310, 600]];
@@ -104,10 +118,11 @@ function plate(side) {
 function barUnder(side) {           // the translucent band and its darker top (under the live fill)
   const b = bar(side), band = bandPoly(b);
   const xo = xAtY(b.outer, 420), xi = xAtY(b.inner, 420), g = ctx.createLinearGradient(xo, 0, xi, 0);
-  g.addColorStop(0, 'rgba(116,104,112,0.64)'); g.addColorStop(0.5, 'rgba(146,140,144,0.62)'); g.addColorStop(1, 'rgba(168,164,172,0.62)');
+  // 0.1.5: flat and lighter, as BMW's (the photo's band is one even light grey across, not a dark-to-light ramp)
+  g.addColorStop(0, 'rgba(156,154,158,0.66)'); g.addColorStop(0.5, 'rgba(164,162,166,0.66)'); g.addColorStop(1, 'rgba(172,170,174,0.66)');
   fill(band, g);
   ctx.save(); poly(band); ctx.clip();
-  const top = ctx.createLinearGradient(0, 180, 0, 330); top.addColorStop(0, 'rgba(0,0,0,0.32)'); top.addColorStop(1, 'rgba(0,0,0,0)');
+  const top = ctx.createLinearGradient(0, 180, 0, 300); top.addColorStop(0, 'rgba(0,0,0,0.2)'); top.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = top; ctx.fillRect(0, 170, 1920, 170);
   ctx.restore();
 }
@@ -118,7 +133,7 @@ function barOver(side, numerals) {  // everything the mockup draws after the fil
     if (kind === 'dash') { const n = 2, w = (sc(b, c) - sc(b, a)) / n; for (let k = 0; k < n; k++) fill(strip(b.outer, s, sc(b, a) + k * w + w * 0.15, sc(b, a) + (k + 1) * w - w * 0.15, o0, o1, 4), col); }
     else fill(strip(b.outer, s, sc(b, a), sc(b, c), o0, o1, 10), col);
   });
-  line(b.inner.pts, 1.6, 'rgba(232,236,242,0.55)');
+  line(b.inner.pts, 2.4, 'rgba(238,241,244,0.9)');      // 0.1.5: BMW's inner edge is a bright white line
   const edge = b.outer.pts.concat(b.top.pts.slice(1));
   const inset = (pts, o) => pts.map((p, i) => { const q = pts[Math.min(i + 1, pts.length - 1)], r0 = pts[Math.max(i - 1, 0)], dx = q[0] - r0[0], dy = q[1] - r0[1], l = Math.hypot(dx, dy) || 1; return [p[0] - s * dy / l * o * -1, p[1] + s * dx / l * o * -1]; });
   ctx.save(); ctx.shadowColor = 'rgba(255,255,255,0.55)'; ctx.shadowBlur = 6;
@@ -146,7 +161,7 @@ function stackIcon(x, y, c) { [24, 30, 36].forEach((w, i) => fill([[x, y + i * 9
 function centreStatic() {
   const X = C.cx, [mainHalf, c0, c1] = C.line;
   stackIcon(C.stackX, C.stackY, 'rgba(230,234,238,0.85)');
-  line([[X - mainHalf, C.lineY], [X + mainHalf, C.lineY]], 2.2, 'rgba(225,230,236,0.8)');
+  line([[X - mainHalf, C.lineY], [X + mainHalf, C.lineY]], 2.2, 'rgba(238,241,244,0.95)');   // 0.1.5: brighter (photo)
   for (const sd of [-1, 1]) fill([[X + sd * c0, C.lineY - 2.5], [X + sd * (c1 - 6), C.lineY - 2.5], [X + sd * c1, C.lineY + 2.5], [X + sd * c0, C.lineY + 2.5]], '#f2f5f8', 6, 'rgba(255,255,255,0.6)');
 }
 function badge(x, y) {
@@ -156,8 +171,9 @@ function badge(x, y) {
 function corner(pts, labels, ends, side, at3) {      // the mockup's corner() without its needle (drawn live)
   const tr = spline(pts);
   fill(strip(tr, side, 0, 1, 2, 26), 'rgba(150,152,160,0.34)');
-  line(tr.pts, 4, 'rgba(238,241,244,0.95)');
-  line(tr.pts.map((_, i) => off(at(tr, tr.cum[i] / tr.len, side), 6.5)), 1.6, 'rgba(238,241,244,0.7)');
+  // 0.1.5: BMW's arc edge is a thicker white line with a soft glow, its inner line brighter
+  ctx.save(); ctx.shadowColor = 'rgba(255,255,255,0.5)'; ctx.shadowBlur = 5; line(tr.pts, 5.5, 'rgba(242,245,248,1)'); ctx.restore();
+  line(tr.pts.map((_, i) => off(at(tr, tr.cum[i] / tr.len, side), 7)), 2, 'rgba(238,241,244,0.85)');
   for (let k = 0; k <= 4; k++) { const p = at(tr, k / 4, side); line([off(p, 0), off(p, 11)], 2.2, 'rgba(238,241,244,0.9)', 'butt'); }
   if (ends[0]) fill(strip(tr, side, 0, 0.13, 2, 12), ends[0]);
   if (ends[1]) fill(strip(tr, side, 0.87, 1, 2, 12), ends[1]);
@@ -170,7 +186,7 @@ function cornerL() {
 }
 function cornerR(units) {
   const L = OIL_SCALE[units];
-  corner(mirror(FUEL_ARC).reverse(), L.map(String), ['rgba(40,120,255,0.95)', 'rgba(232,30,36,0.95)'], 1,
+  corner(mirror(FUEL_ARC).reverse(), L.map(String), ['rgba(40,205,235,0.95)', 'rgba(232,30,36,0.95)'], 1,
     mirror(FUEL_LABELS).reverse().map(([x, y], i) => [x - [22, 16, 10][i], y]));
 }
 
@@ -248,6 +264,7 @@ window.renderItem = function (i) {
   return btoa(s);
 };
 window.ART = { items: ITEMS.map((it) => ({ name: it.name, format: it.format, from: it.from || 'rgba', rect: { x: it.rect.x, y: it.rect.y, w: it.rect.w, h: it.rect.h }, sampling: it.sampling })), atlas: ATLAS.meta };
-})();
+return window.ART;
+};
 </script>
 </body></html>

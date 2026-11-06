@@ -6,7 +6,9 @@
  * same panel coordinates (each box draws with its rect's origin taken off). The plates, the gauges' scales and
  * their labels are static art (art/art.json); here: values, bars, needles, texts.
  * Values stay in the car's units (C, bar, Nm, kW, km, km/h, l/100km) and are converted only here (units.js).
- * The kit's fonts are ASCII: a degree sign is drawn as a small ring.
+ * Text is the kit's label face (Ubuntu Sans, width 85, weight 400): measured the closest open face to BMW's cluster
+ * text (0.1.5, iDrive-Apps docs/emulator/mtrack-0.1.5/font-pick.md). A degree sign is drawn as a small ring: it
+ * measured closer to BMW's bold degree sign than the face's own glyph (0.1.5, fidelity.md).
  *
  *   drawPanel(cv, rect, side, lay, v, u, avail)   lay: logic.layoutOf's side; avail(id): the widget has a signal
  *   drawCorner(cv, rect, side, base, v, u, cfg)   base: the corner's static art (rgba), copied in first
@@ -42,7 +44,7 @@ function pen(cv, rect) {
         quad(pts, c) { cv.quad(pts.map((p) => [X(p[0]), Y(p[1])]), c); },
         circle(x, y, r, c) { cv.circle(X(x), Y(y), r, c); },
         ring(x, y, r, w, a0, a1, c) { cv.arc(X(x), Y(y), r - w / 2, r + w / 2, a0, a1, c); },
-        /** A temperature unit: a small ring and the letter (no degree glyph in the kit's fonts). */
+        /** A temperature unit: a small ring and the letter. */
         tempUnit(u, x, y, size, c, align) {
             const s = u.temp === 'F' ? 'F' : 'C', w = cv.textWidth(s, size, { literal: true }) + size * 0.42;
             const x0 = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
@@ -71,18 +73,19 @@ function scaleOf(id, u, cfg) {
 }
 function icon(g, kind, x, y) {      // the mockup's small white pictograms (simplified)
     const c = '#e6eaee';
-    if (kind === 'coolant') { g.rect(x - 2, y - 14, 4, 18, c); g.rect(x - 10, y + 6, 20, 3, c); [-1, 0, 1].forEach((i) => g.line([[x + i * 7 - 3, y + 13], [x + i * 7 + 3, y + 13]], 2, c)); }
-    else if (kind === 'oil') { g.quad([[x - 12, y + 6], [x + 8, y + 6], [x + 14, y - 2], [x - 12, y - 2]], c); g.quad([[x - 12, y - 2], [x + 4, y - 2], [x, y - 8], [x - 8, y - 8]], c); }
+    // 0.1.5: BMW's coolant pictogram (a thermometer stem over two bars) and oil can, at the photo's ink box and weight
+    if (kind === 'coolant') { g.rect(x - 3, y - 15, 6, 17, c); g.rect(x - 13, y + 3, 26, 4, c); g.rect(x - 13, y + 9, 26, 3, c); }
+    else if (kind === 'oil') { g.quad([[x - 15, y + 6], [x + 9, y + 6], [x + 17, y - 3], [x - 15, y - 3]], c); g.quad([[x - 15, y - 3], [x + 3, y - 3], [x - 1, y - 9], [x - 11, y - 9]], c); }
     else if (kind === 'boost') { g.ring(x, y, 11, 3, 0, 360, c); g.line([[x, y], [x + 7, y - 7]], 3, c); }
     else if (kind === 'fuel') { g.rect(x - 8, y - 12, 13, 22, c); g.line([[x + 5, y - 8], [x + 11, y - 2], [x + 11, y + 8]], 2.5, c); }
-    else if (kind === 'torque' || kind === 'power') { g.ring(x, y, 10, 3, 0, 360, c); g.text(kind === 'torque' ? 'T' : 'P', x, y + 1, 13, c, 'center', 'bold'); }
+    else if (kind === 'torque' || kind === 'power') { g.ring(x, y, 10, 3.4, 0, 360, c); g.text(kind === 'torque' ? 'T' : 'P', x, y + 1, 13, c, 'center', 'bold'); }
 }
 function barWidget(g, r, id, v, u, cfg) {
     const sc = scaleOf(id, u, cfg), val = shown(id, v, u), y = r.y0 + r.h * 0.6, ty = y - 34, x0 = r.x0 + 8, x1 = r.x1 - 18;
     icon(g, id, r.x0 + 22, ty);
-    if (id === 'coolant' || id === 'oil') g.tempUnit(u, r.x1 - 10, ty, 22, '#e6eaee', 'right');
-    else if (sc.unit) g.text(sc.unit, r.x1 - 10, ty, 22, '#e6eaee', 'right');
-    g.line([[x0, y], [x1, y]], 3, [176, 180, 188, 178]);
+    if (id === 'coolant' || id === 'oil') g.tempUnit(u, r.x1 - 10, ty, 22, '#f2f5f8', 'right');
+    else if (sc.unit) g.text(sc.unit, r.x1 - 10, ty, 22, '#f2f5f8', 'right');
+    g.line([[x0, y], [x1, y]], 3, [238, 241, 244, 235]);      // 0.1.5: BMW's track is a bright white 3 px line
     if (sc.zone) g.rect(x0 + (x1 - x0) * sc.zone[0], y - 3.5, (x1 - x0) * (sc.zone[1] - sc.zone[0]), 7, '#e2262a');
     if (val === null) g.text('NO DATA', (x0 + x1) / 2, y - 16, 16, LABEL, 'center', 'bold');
     else {
@@ -90,7 +93,7 @@ function barWidget(g, r, id, v, u, cfg) {
         if (f > 0.004) g.rect(x0, y - 4, (x1 - x0) * f, 8, '#eef1f4');
         g.rect(x0 + (x1 - x0) * f - 2, y - 9, 4, 18, '#e2262a');
     }
-    sc.labels.forEach((l) => { const x = x0 + (x1 - x0) * l[1]; g.line([[x, y - 7], [x, y + 4]], 2, [236, 240, 244, 216]); g.text(l[0], x, y + 27, 22, '#e9edf1', 'center'); });
+    sc.labels.forEach((l) => { const x = x0 + (x1 - x0) * l[1]; g.line([[x, y - 7], [x, y + 5]], 2.4, '#f2f5f8'); g.text(l[0], x, y + 27, 22, '#f2f5f8', 'center'); });
 }
 function rowsWidget(g, r, rows) {
     const n = rows.length, step = Math.min(44, r.h / n);

@@ -80,11 +80,13 @@ try {
     const tachs = (alive, yr) => layer(STG[0], [['u_tint', [1, 1, 1, 1]], ['u_fill', [yr, 6, 110, 0]], ['u_alive', [alive]]], {});
     const q3 = G.barNumeralQuads(A, cfg.tach)[3], q3l = G.barNumeralQuads(A, cfg.tach)[11];
     const ctr = (q) => [q.dst[0] + Math.floor(q.dst[2] / 2), q.dst[1] + Math.floor(q.dst[3] / 2)];
-    let r = await probe([tachs(1, 400)], tachsAssets, [[1290, 520], [1290, 250], [1290, 400], [960, 400], [1920 - 1291, 520], [R.overR.x + 15, R.overR.y + 15], [1920 - (R.overR.x + 15) - 1, R.overR.y + 15], ctr(q3), ctr(q3l)]);
-    const [below, above, cap, mid, leftBelow, red, redL, n3, n3l] = r.out;
+    let r = await probe([tachs(1, 400)], tachsAssets, [[1290, 520], [1290, 250], [1290, 400], [960, 400], [1920 - 1291, 520], [R.overR.x + 15, R.overR.y + 15], [1920 - (R.overR.x + 15) - 1, R.overR.y + 15], ctr(q3), ctr(q3l), [1290, 380], [1293, 380]]);
+    const [below, above, cap, mid, leftBelow, red, redL, n3, n3l, gridLine, gridCell] = r.out;
     check(below[0] > 115 && Math.abs(below[0] - below[1]) < 6, 'tachs: swept fill below the revs (' + below.slice(0, 3) + ' over art 100)');
     check(Math.abs(above[0] - 100) <= 2, 'tachs: no fill above the glow (' + above.slice(0, 3) + ')');
-    check(cap[0] > 200 && cap[1] < 60, 'tachs: the red cap at the revs line (' + cap.slice(0, 3) + ')');
+    check(cap[0] > 200 && cap[1] > 60 && cap[1] < 120 && cap[2] < 80, 'tachs: BMW\'s orange-red block at the revs line (' + cap.slice(0, 3) + ')');
+    check(gridCell[0] > gridCell[1] + 60 && gridLine[1] < gridCell[1] - 8 && gridLine[0] < gridCell[0], 'tachs: the glow above the revs is a crimson wash under a 6 px grid of darker lines (line ' +
+        gridLine.slice(0, 3) + ', cell ' + gridCell.slice(0, 3) + ')');
     check(Math.abs(mid[0] - 100) <= 2, 'tachs: background untouched outside the bands (' + mid.slice(0, 3) + ')');
     check(Math.abs(leftBelow[0] - below[0]) <= 2, 'tachs: the left bar mirrors the right (' + leftBelow.slice(0, 3) + ')');
     check(Math.abs(red[0] - 200) <= 3 && Math.abs(red[1] - 30) <= 3 && Math.abs(red[2] - 42) <= 3, 'tachs: the over-art\'s palette index 5 draws its red (' + red.slice(0, 3) + ')');

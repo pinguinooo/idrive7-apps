@@ -19,13 +19,17 @@ const require = createRequire(import.meta.url);
 const cfg = require(path.join(root, 'apps/adam_mtrack/config.js'));
 const ST = require(path.join(root, 'apps/adam_mtrack/stages.js'));
 const out = process.argv[2] || path.join(root, 'apps/adam_mtrack/art/art.json');
+// the atlas's text face, a file per weight (fonts/, SIL OFL 1.1)
+const ART_FONTS = [['LiberationSans-Regular.ttf', 400], ['LiberationSans-Bold.ttf', 700]];
 const { chromium } = await import(process.env.PLAYWRIGHT || '/home/claudius/.local/node/lib/node_modules/playwright/index.mjs');
 
 const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--font-render-hinting=none'] });
 try {
     const page = await browser.newPage();
     await page.goto('file://' + path.join(here, 'art.html'));
-    const art = await page.evaluate(() => window.ART);
+    // 0.1.5: the committed text face; makeArt throws if it falls back to another face
+    const faces = ART_FONTS.map((f) => ({ weight: f[1], b64: fs.readFileSync(path.join(here, 'fonts', f[0])).toString('base64') }));
+    const art = await page.evaluate((f) => window.makeArt(f), faces);
     const items = [];
     let total = 0;
     for (let i = 0; i < art.items.length; i++) {

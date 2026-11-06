@@ -7,6 +7,8 @@
 #   EMU_DIR=~/work/mtrack/idrive7-apps OUT=~/work/mtrack/out bash test/adam_mtrack/emu-run.sh
 #   SCRIPT=emu_ladder.mjs ...: the Safety page's test pattern instead of the sweep
 #   SCRIPT=emu_update.mjs SEED_SETTINGS=test/adam_mtrack/settings-0.1.3.json ...: an update from 0.1.3's saved settings
+#   SCRIPT=emu_oem.mjs EMU_FAKETIME='@2026-11-05 03:36:30' FAKETIME_LIB=<libfaketime .so> ...: the OEM photo's state, the
+#     emulator (and so the app's clock) started at that local time (libfaketime, emulator only; Playwright keeps real time)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -37,7 +39,7 @@ mkdir -p "$OUT/raw"
 if [ -n "${SEED_SETTINGS:-}" ]; then mkdir -p "$DATA_DIR"; cp "$SEED_SETTINGS" "$DATA_DIR/settings.json"; fi
 "$NODE22" test/adam_mtrack/fake_cluster_render.js "$SOCK" "$CR_LOG" > "$OUT/raw/fake.log" 2>&1 &
 FAKE_PID=$!
-(cd "$EMU_DIR" && MTRACK_CR_SOCKET=$SOCK MTRACK_EMU_FEED=$FEED exec "$NODE22" kit/tools/emu.js adam_mtrack --port "$PORT") > "$OUT/raw/emu.log" 2>&1 &
+(cd "$EMU_DIR" && MTRACK_CR_SOCKET=$SOCK MTRACK_EMU_FEED=$FEED exec env ${EMU_FAKETIME:+LD_PRELOAD=$FAKETIME_LIB "FAKETIME=$EMU_FAKETIME"} "$NODE22" kit/tools/emu.js adam_mtrack --port "$PORT") > "$OUT/raw/emu.log" 2>&1 &
 EMU_PID=$!
 for _ in $(seq 1 150); do
   if curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then break; fi

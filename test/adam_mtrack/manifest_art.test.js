@@ -29,8 +29,8 @@ module.exports = [
         assert.ok(!('requireCheckControl' in cfg), 'the old config switch is gone (BMW popups replaces it)');
         assert.ok(st.steps.indexOf(S.speedStaleMs) >= 0);
     }],
-    ['app.json: id, title, version 0.1.4, installs with the cover off, Sport+ only, US units', () => {
-        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.4', 'OAD3']);
+    ['app.json: id, title, version 0.1.5, installs with the cover off, Sport+ only, US units', () => {
+        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.5', 'OAD3']);
         assert.strictEqual(item('coverOn').default, false);
         assert.strictEqual(item('whenToShow').default, 'sportplus');
         assert.strictEqual(item('units').default, 'us');
@@ -126,5 +126,23 @@ module.exports = [
             envs.forEach((e) => assert.ok(f === 'main.js' && (e === 'process.env.MTRACK_CR_SOCKET' || e === 'process.env.MTRACK_EMU_FEED'), f + ': ' + e));
         });
         assert.ok(/if \(process\.env\.MTRACK_EMU_FEED\) require\('\.\/emufeed'\)/.test(fs.readFileSync(path.join(APP, 'main.js'), 'utf8')));
+    }],    ['0.1.5 OEM colours: pale yellow shift markers (photo hue 47 deg), the oil gauge\'s cold end cyan (photo 188 deg) and drawn in its art', () => {
+        const hue = (c) => { const mx = Math.max.apply(null, c), mn = Math.min.apply(null, c), d = mx - mn, r = c[0], g = c[1], b = c[2];
+            const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return (h * 60 + 360) % 360; };
+        assert.ok(Math.abs(hue(ST.OVER_PALETTE[6]) - 47.4) <= 10, 'shift marker hue ' + hue(ST.OVER_PALETTE[6]));
+        assert.ok(Math.abs(hue(ST.PALETTE[12]) - 187.5) <= 10, 'cold end hue ' + hue(ST.PALETTE[12]));
+        const ci = it2('cornerR_us'), px = zlib.inflateRawSync(Buffer.from(ci.data, 'base64'));
+        let cyan = 0;
+        for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 200 && ST.encodeLH(px.slice(i, i + 4), 1, { x: 0, y: 0, w: 1, h: 1 }, ST.PALETTE)[1] === 12 * 17) cyan++;
+        assert.ok(cyan > 100, 'cyan pixels in the right corner art: ' + cyan);
+    }],
+    ['0.1.5: the art\'s text face is committed (Liberation Sans, OFL beside it) and art.html names no system face', () => {
+        const mk = fs.readFileSync(path.join(__dirname, '../../tools/mtrack-art/make-art.mjs'), 'utf8'), html = fs.readFileSync(path.join(__dirname, '../../tools/mtrack-art/art.html'), 'utf8');
+        const files = (/ART_FONTS = (\[.*\]);/.exec(mk) || [])[1];
+        assert.ok(files, 'make-art.mjs lists ART_FONTS');
+        JSON.parse(files.replace(/'/g, '"')).forEach((f) => assert.ok(fs.existsSync(path.join(__dirname, '../../tools/mtrack-art/fonts', f[0])), f[0]));
+        assert.ok(/SIL Open Font License/.test(fs.readFileSync(path.join(__dirname, '../../tools/mtrack-art/fonts/OFL-Liberation.txt'), 'utf8')));
+        assert.ok(!/Arial|Helvetica|BMW Type/.test(html), 'no system face in art.html');
+        assert.ok(/refusing to draw on a fallback face/.test(html));
     }],
 ];

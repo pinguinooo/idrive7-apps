@@ -178,9 +178,9 @@ function centreQuads(atlas, f) {
     let x = X - (cells.reduce((a, c) => a + c.adv + sp.gap, -sp.gap)) / 2;
     cells.forEach((c) => { put(c, x - c.ox, CENTRE.speedY - c.h / 2, 1); x += c.adv + sp.gap; });
     const u = atlas.labels[f.unit] || atlas.labels.mph;
-    put(u, CENTRE.unitX - u.ox, CENTRE.unitY - u.h / 2, 0.87);
+    put(u, CENTRE.unitX - u.ox, CENTRE.unitY - u.h / 2, 0.92);
     const t = atlas.tags[f.tag];
-    if (t) put(t, X - t.w / 2, CENTRE.tagY - t.h / 2, 0.6);
+    if (t) put(t, X - t.w / 2, CENTRE.tagY - t.h / 2, 0.92);   // 0.1.5: near-white, as BMW's (was a grey 0.6)
     return out;
 }
 
