@@ -24,6 +24,8 @@ and said it looks a lot better than ours; 0.1.7 ports it with his two correction
 - *Fuel and oil gauges.* Not round any more (Adam: BMW's are bar-like with flat and angled ends): each is a faceted
   band of three straight legs with 3 px gaps at the bends, the high end cut flat, the low end cut at 45 deg, filled solid
   from the low end, no needle. The fill turns red under 12 % fuel or in the oil gauge's hot zone.
+  Their labels keep 8 px clear of the band: each is pushed out by its own measured box (`geom.gaugeLabelOff`, Codex's
+  labelOff), so the wide F labels (120, 210, 300) sit off the band instead of on it.
 - *Centre.* Codex's gear (91 x 112) over the three-bar stack and a thin line with bright caps, over the speed; the unit
   in muted grey. **The M badge and the SPORT+ tag are gone**: neither Codex's design nor BMW's photo has them, the badge
   would collide with the gear at its new height, and they freed about 59 KB of the renderer budget. The slats moved up

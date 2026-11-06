@@ -98,7 +98,12 @@ function gauge(side, labels, zone) {
   quads.forEach((q) => { ctx.fillStyle = '#161a22'; ctx.fill(poly(q)); });
   quads.forEach((q) => stroke(poly(q), 1.5, '#596171'));
   zoneQuads(zone[0], zone[1], side).forEach((q) => stroke(poly(q), 1.5, '#b3283e'));
-  labels.forEach((l) => { const p = GEOM.gaugePoint(l[1], side, 26); text(l[0], p[0], p[1], 25, '#d7d9e1'); });
+  labels.forEach((l) => {      // pushed out by the label's measured box so it keeps 8 px clear of the band (Codex labelOff)
+    ctx.font = `400 25px ${SANS}`; ctx.textBaseline = 'middle';
+    const m = ctx.measureText(l[0]), h = 2 * Math.max(m.actualBoundingBoxAscent, m.actualBoundingBoxDescent);
+    const p = GEOM.gaugePoint(l[1], side, GEOM.gaugeLabelOff(l[1], side, m.width, h));
+    text(l[0], p[0], p[1], 25, '#d7d9e1');
+  });
 }
 function icon(d, vb, x, y, w, h, alpha) {
   ctx.save(); ctx.globalAlpha = alpha || 1; ctx.translate(x, y); ctx.scale(w / vb[0], h / vb[1]);

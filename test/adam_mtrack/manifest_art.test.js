@@ -11,6 +11,7 @@ const SPEC = JSON.parse(fs.readFileSync(path.join(APP, 'app.json'), 'utf8'));
 const ART = JSON.parse(fs.readFileSync(path.join(APP, 'art', 'art.json'), 'utf8'));
 const C = require('../../apps/adam_mtrack/catalogue');
 const G = require('../../apps/adam_mtrack/geom');
+const PD = require('./polydist');
 const cfg = require('../../apps/adam_mtrack/config');
 const S = require('../../apps/adam_mtrack/shader');
 const ST = require('../../apps/adam_mtrack/stages');
@@ -90,6 +91,21 @@ module.exports = [
         let right = 0;
         for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (px[(y * c.w + x) * 4 + 3] > 0) right = Math.max(right, c.rect.x + x);
         assert.ok(right < 1818, 'the oil gauge art ends at ' + right);
+    }],
+    ['0.1.7 corner labels keep 7 px clear of the band in the committed art (8 px rule less 1 px antialiasing)', () => {
+        [['cornerL', -1], ['cornerR_us', 1], ['cornerR_metric', 1]].forEach((x) => {
+            const c = it2(x[0]), px = zlib.inflateRawSync(Buffer.from(c.data, 'base64')), quads = G.gaugeQuads(1, x[1]);
+            let ink = 0, worst = Infinity;
+            for (let j = 0; j < c.h; j++) for (let i = 0; i < c.w; i++) {
+                const k = (j * c.w + i) * 4;
+                if (px[k + 3] < 200 || Math.min(px[k], px[k + 1], px[k + 2]) < 195) continue;     // label ink #d7d9e1 only
+                ink++;
+                const p = [c.rect.x + i + 0.5, c.rect.y + j + 0.5];
+                quads.forEach((q) => { worst = Math.min(worst, PD.pointPoly(p, q)); });
+            }
+            assert.ok(ink > 50, x[0] + ': label ink found (' + ink + ' px)');
+            assert.ok(worst >= 7, x[0] + ': a label pixel sits ' + worst.toFixed(2) + ' px from the band');
+        });
     }],
     ['atlas: every gear (P R N D - and 0.1.6\'s digits 1-8, no small style) and speed glyph the centre draws, the tachs\' numerals 0..7; mph and km/h; no drive-mode tags (0.1.7); the centre\'s static cell', () => {
         const A = ART.atlas;

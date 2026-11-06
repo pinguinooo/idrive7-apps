@@ -11,6 +11,7 @@
  *   yOfRpm(rpm, T)      the height of the revs line (both tachs: mirrored, same y)
  *   ticks(T), numerals(T)   every tick / numeral place on the right tach, mirrored for the left
  *   gaugeQuads(f, side), gaugePoint(f, side, off)   the corner gauges' faceted band (side -1 fuel, 1 oil)
+ *   gaugeLabelOff(f, side, w, h)                    a corner label's offset, 8 px clear of the band (art only)
  *   RECTS               every layer's rect; slotRect(side, half) the side panels' content boxes
  */
 // Codex's spine, bottom to top: 9 anchors, now 0..7,000 rpm (left tach)
@@ -102,6 +103,11 @@ function gaugePoint(f, side, off) {
     const L = LEGS[i], o = off || 0;
     return [gx(side, L.a[0] + L.d[0] * d + L.n[0] * o), L.a[1] + L.d[1] * d + L.n[1] * o];
 }
+/** Offset for a w x h label centred at gaugePoint(f, side, off): 26, or more so its box keeps 8 px clear of the band (Codex labelOff). */
+function gaugeLabelOff(f, side, w, h) {
+    const a = gaugePoint(f, side, 0), b = gaugePoint(f, side, 1);      // b - a: the unit normal of the leg at f
+    return Math.max(26, GAUGE.half + 8 + (w * Math.abs(b[0] - a[0]) + h * Math.abs(b[1] - a[1])) / 2);
+}
 
 /* ---------- rects (panel px) ---------- */
 // 0.1.7, Codex's layout: the side panels' slots (right; the left mirrored), the centre (gear over the line over the speed)
@@ -180,6 +186,6 @@ function barNumeralQuads(atlas, T) {
 
 module.exports = {
     centreQuads, barNumeralQuads, CENTRE_CELL,
-    SPINE, TACH, GAUGE, CENTRE, SLOTS, RECTS, mirror, mirrorPt, point, yOfRpm, ticks, numerals, gaugeQuads, gaugePoint,
+    SPINE, TACH, GAUGE, CENTRE, SLOTS, RECTS, mirror, mirrorPt, point, yOfRpm, ticks, numerals, gaugeQuads, gaugePoint, gaugeLabelOff,
     slotRect, slatBar, flipRect,
 };

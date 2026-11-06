@@ -6,6 +6,7 @@ const path = require('path');
 const U = require('../../apps/adam_mtrack/units');
 const G = require('../../apps/adam_mtrack/geom');
 const W = require('../../apps/adam_mtrack/widgets');
+const PD = require('./polydist');
 const cfg = require('../../apps/adam_mtrack/config');
 const T = cfg.tach;
 const near = (a, b, e, m) => assert.ok(Math.abs(a - b) <= (e || 0.05), (m || '') + ' ' + a + ' vs ' + b);
@@ -73,10 +74,16 @@ module.exports = [
         [0.01, 0.3, 0.5, 0.86, 1].forEach((f) => assert.deepStrictEqual(G.gaugeQuads(f, 1), G.gaugeQuads(f, -1).map((q) => q.map((p) => [1920 - p[0], p[1]])), 'mirror at ' + f));
         assert.deepStrictEqual(G.gaugePoint(1, 1, 26), [1920 - 142, 440]);
         assert.deepStrictEqual(G.gaugePoint(0, -1, 26), [290, 566], 'labels sit toward the inner side');
-        [0, 0.5, 1].forEach((f) => [[-1, G.RECTS.cornerL], [1, G.RECTS.cornerR]].forEach((x) => {
-            const p = G.gaugePoint(f, x[0], 26), r = x[1];
-            assert.ok(p[0] - 30 >= r.x && p[0] + 30 <= r.x + r.w && p[1] - 14 >= r.y && p[1] + 14 <= r.y + r.h, 'label ' + f + ' inside ' + JSON.stringify(r));
-        }));
+    }],
+    ['0.1.7 corner labels: gaugeLabelOff keeps a 3-digit or one-glyph label box 8 px clear of the band, inside its corner (Codex labelOff)', () => {
+        [[-1, G.RECTS.cornerL], [1, G.RECTS.cornerR]].forEach((x) => [0, 0.5, 1].forEach((f) => [[44, 20], [16, 20]].forEach((wh) => {
+            const c = G.gaugePoint(f, x[0], G.gaugeLabelOff(f, x[0], wh[0], wh[1])), b = PD.box(c, wh[0], wh[1]), r = x[1], at = x[0] + ' ' + f + ' ' + wh;
+            G.gaugeQuads(1, x[0]).forEach((q) => assert.ok(PD.polyPoly(b, q) >= 8 - 1e-6, 'label ' + at + ': ' + PD.polyPoly(b, q) + ' px from the band'));
+            assert.ok(b.every((p) => p[0] >= r.x && p[0] <= r.x + r.w && p[1] >= r.y && p[1] <= r.y + r.h), 'label ' + at + ' inside ' + JSON.stringify(r));
+        })));
+        const old = PD.box(G.gaugePoint(1, 1, 26), 44, 20);
+        assert.ok(Math.min.apply(null, G.gaugeQuads(1, 1).map((q) => PD.polyPoly(old, q))) < 8, 'the 0.1.7 first cut (a flat 26 px) puts "300" within 8 px of the band');
+        assert.strictEqual(G.gaugeLabelOff(1, -1, 16, 20), 26, 'a narrow label on the vertical leg keeps the 26 px floor');
     }],
     ['left rects mirror the right ones about x 960; every rect inside the panel', () => {
         const R = G.RECTS;
