@@ -40,7 +40,7 @@ function rig() {
         cfg: C, log, diag: () => {}, changed: () => {}, units: () => 'us', art: ART, knownCard: () => ST.knownCard(Canvas, '0.1.3'),
         makeOutput: (opts) => createOutput(Object.assign({ ClusterRender, socketPath: sock, log, cfg: C, guard, art: ART, fault: (m) => lines.push('FAULT ' + m) }, opts)),
         verify: (why, done) => RD.verifyRelease({ ClusterRender, socketPath: sock, log, diag: () => {}, guard, cfg: C }, why, done),
-        frame: () => ({ yr: G.yOfRpm(800, C.tach), quads: [], slats: { lit: 0, flashing: false }, badge: true, level: 1, mph: 0, rpm: 800 }),
+        frame: () => ({ yr: G.yOfRpm(800, C.tach), quads: [], slats: { lit: 0, flashing: false }, level: 1, mph: 0, rpm: 800 }),
         drawBoxes: (out) => ['panelL', 'panelR', 'cornerL', 'cornerR'].forEach((n) => { const r = G.RECTS[n]; out.box(n, Buffer.alloc(r.w * r.h * 4, 200)); }),
     });
     const timer = setInterval(() => { lad.tick(Date.now(), { parked }); lad.pump(Date.now()); }, 30);
@@ -125,10 +125,10 @@ module.exports = [
             assert.deepStrictEqual(s4.frames.map((f) => f.bytes), [131072, 131072], 'the image and the asset, whole');
             const s5 = await runStep(r, 5);
             assert.deepStrictEqual(s5.layers.map((l) => [l.kind, l.x, l.y, l.w, l.h, l.exclusive, l.z, l.visible]), [['effect', 0, 0, 1920, 720, 0, C.build.z, 0]]);
-            assert.deepStrictEqual(s5.assets.map((a) => [a.format, a.w, a.h]), [['r8', 480, 360], ['r8', 492, 474], ['rgba8', 16, 1], ['r8', 180, 462], ['r8', 1024, ART.atlas.h]]);
+            assert.deepStrictEqual(s5.assets.map((a) => [a.format, a.w, a.h]), [['r8', 480, 360], ['r8', 2 * G.RECTS.overR.w, G.RECTS.overR.h], ['rgba8', 16, 1], ['r8', G.RECTS.band.w, G.RECTS.band.h], ['r8', 1024, ART.atlas.h]]);
             const s6 = await runStep(r, 6);
             assert.deepStrictEqual(s6.layers.map((l) => l.z), [90, 91, 92, 93]);
-            assert.strictEqual(s6.assets.length, 11);
+            assert.strictEqual(s6.assets.length, 10);
             [s5, s6].forEach((s, i) => {
                 const mem = s.assets.reduce((b, a) => b + a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2, 0);
                 assert.ok(mem <= C.memoryBudgetBytes, 'step ' + (i + 5) + ' memory ' + mem);

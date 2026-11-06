@@ -27,24 +27,56 @@ module.exports = [
         assert.deepStrictEqual([c.temp, c.press, c.speed, c.dist, c.torque], ['C', 'bar', 'km/h', 'km', 'Nm']);
         assert.strictEqual(U.resolve('car', { temp: 'F', press: 'BAR' }).speed, 'mph', 'mixed: US');
     }],
-    ['tach scale 0-7: 0 at 0, firstStep at 1000, 1 at 7000; clamped; monotonic', () => {
-        assert.strictEqual(G.fracOf(0, T), 0); near(G.fracOf(1000, T), T.firstStep, 1e-9); assert.strictEqual(G.fracOf(7000, T), 1);
-        assert.strictEqual(G.fracOf(9000, T), 1); assert.strictEqual(G.fracOf(-500, T), 0); assert.strictEqual(G.fracOf(NaN, T), 0);
-        for (let r = 0; r < 7000; r += 50) assert.ok(G.fracOf(r + 50, T) > G.fracOf(r, T), String(r));
+    ['0.1.7 tach scale 0-7 on Codex\'s spine: 0 rpm at y 590, 7,000 at 87; clamped; strictly rising every 100 rpm', () => {
+        near(G.yOfRpm(0, T), 590, 0.01); near(G.yOfRpm(7000, T), 87, 0.01);
+        assert.deepStrictEqual(G.point(0, T), [1920 - 635, 590], 'the right tach is Codex\'s left mirrored');
+        near(G.point(7000, T)[0], 1920 - 681, 0.01);
+        near(G.yOfRpm(9000, T), 87, 0.01); near(G.yOfRpm(-500, T), 590, 0.01); near(G.yOfRpm(NaN, T), 590, 0.01);
+        for (let r = 0; r < 7000; r += 100) assert.ok(G.yOfRpm(r + 100, T) < G.yOfRpm(r, T), String(r));
+        near(G.yOfRpm(1000 * 7 / 8, T), 525, 0.01, 'the second anchor at 7/8 of 1,000 rpm');
     }],
-    ['the 7,000 rpm line is the top tick (the old 8); 0 at the 0 tick; the line rises with the revs', () => {
-        near(G.yOfRpm(7000, T), G.BARS.tickTopY, 0.01); near(G.yOfRpm(0, T), G.BARS.tick0Y, 0.01);
-        for (let r = 0; r < 7000; r += 250) assert.ok(G.yOfRpm(r + 250, T) < G.yOfRpm(r, T), String(r));
+    ['0.1.7 the red zone starts at 6,500 rpm: y 119.0, the top 7 % of the scale', () => {
+        near(G.yOfRpm(T.redFrom, T), 119.0, 0.1);
+        assert.strictEqual(T.redFrom, 6500);
+        assert.ok(!('amberFrom' in T) && !('firstStep' in T), 'no amber dashes, no short first step');
     }],
-    ['ticks every 500 rpm, majors at the 1000s (15); numerals 0..7 only, in order up the bar, 7 at the top tick', () => {
+    ['ticks every 500 rpm (15), majors at the 1000s, 24 px long (minors 8), 22 px out from the spine; numerals 0..7 at Codex\'s offsets', () => {
         const t = G.ticks(T);
         assert.strictEqual(t.length, 15);
         assert.deepStrictEqual(t.filter((x) => x.major).map((x) => x.rpm), [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000]);
+        assert.deepStrictEqual(t.map((x) => x.len), t.map((x) => (x.major ? 24 : 8)));
+        t.forEach((x) => { near(x.x, G.point(x.rpm, T)[0] + 22, 1e-9); near(x.y, G.yOfRpm(x.rpm, T), 1e-9); });
         const n = G.numerals(T);
+        const C1 = [[692, 568], [662.7, 494.7], [637.3, 420.3], [619.6, 345.0], [621.0, 270.4], [649.4, 200.9], [683.0, 136.4], [715, 75]];
         assert.deepStrictEqual(n.map((x) => x.k), [0, 1, 2, 3, 4, 5, 6, 7]);
-        for (let i = 1; i < n.length; i++) assert.ok(n[i].y < n[i - 1].y);
-        near(n[7].y, G.BARS.nums8[4][1], 0.5, 'numeral 7 where the mockup had 8'); near(n[7].x, G.BARS.nums8[4][0], 0.5);
-        near(n[0].x, G.BARS.nums8[0][0], 0.5);
+        n.forEach((x, i) => { near(x.x, 1920 - C1[i][0], 0.5, 'numeral ' + i + ' x'); near(x.y, C1[i][1] + 13, 0.5, 'numeral ' + i + ' y'); });
+    }],
+    ['0.1.7 corner gauges: a faceted band, 3 legs, filled from the low end; clamped; the right one the left\'s mirror', () => {
+        assert.deepStrictEqual(G.gaugeQuads(0, -1), []);
+        assert.deepStrictEqual(G.gaugeQuads(-1, 1), []); assert.deepStrictEqual(G.gaugeQuads(NaN, -1), []);
+        assert.deepStrictEqual(G.gaugeQuads(2, -1), G.gaugeQuads(1, -1));
+        const full = G.gaugeQuads(1, -1);
+        assert.strictEqual(full.length, 3);
+        near(G.GAUGE.len, 290.9, 0.1);
+        assert.deepStrictEqual(full[0][0], [290, 601], 'the low end\'s outer edge reaches x 290');
+        assert.deepStrictEqual(full[0][3], [272, 583], 'the inner edge stops at x 272 (a 45 deg cut)');
+        assert.deepStrictEqual([full[2][1], full[2][2]], [[107, 440], [125, 440]], 'the high end cut flat at y 440');
+        [0, 1].forEach((i) => [[1, 0], [2, 3]].forEach((e) => {       // each bend: the edges stop short of each other, mitred
+            const a = full[i][e[0]], c = full[i + 1][e[1]], d = Math.hypot(a[0] - c[0], a[1] - c[1]);
+            assert.ok(d > 2.5 && d < 3.5, 'a 3 px gap at bend ' + (i + 1) + ': ' + d);
+        }));
+        const half = G.gaugeQuads(0.5, -1), last = half[half.length - 1], mid = [(last[1][0] + last[2][0]) / 2, (last[1][1] + last[2][1]) / 2];
+        assert.strictEqual(half.length, 2);
+        near(114 + Math.hypot(mid[0] - 176, mid[1] - 592), 145.4, 1, 'half ends 145.4 px from the low end');
+        const dot = (last[2][0] - last[1][0]) * (-1) + (last[2][1] - last[1][1]) * (-1);
+        near(dot, 0, 1e-6, 'the partial leg ends in a cut perpendicular to it');
+        [0.01, 0.3, 0.5, 0.86, 1].forEach((f) => assert.deepStrictEqual(G.gaugeQuads(f, 1), G.gaugeQuads(f, -1).map((q) => q.map((p) => [1920 - p[0], p[1]])), 'mirror at ' + f));
+        assert.deepStrictEqual(G.gaugePoint(1, 1, 26), [1920 - 142, 440]);
+        assert.deepStrictEqual(G.gaugePoint(0, -1, 26), [290, 566], 'labels sit toward the inner side');
+        [0, 0.5, 1].forEach((f) => [[-1, G.RECTS.cornerL], [1, G.RECTS.cornerR]].forEach((x) => {
+            const p = G.gaugePoint(f, x[0], 26), r = x[1];
+            assert.ok(p[0] - 30 >= r.x && p[0] + 30 <= r.x + r.w && p[1] - 14 >= r.y && p[1] + 14 <= r.y + r.h, 'label ' + f + ' inside ' + JSON.stringify(r));
+        }));
     }],
     ['left rects mirror the right ones about x 960; every rect inside the panel', () => {
         const R = G.RECTS;
@@ -55,11 +87,14 @@ module.exports = [
         const sb = G.slatBar(cfg.row);
         assert.ok(sb.rect.x + sb.rect.w / 2 - 960 < 1 && sb.rect.y < cfg.row.cy && sb.rect.y + sb.rect.h > cfg.row.cy);
     }],
-    ['centre quads: the gear (letter or 0.1.6\'s digit) in the one big spot, speed digits centred, the unit and the tag; at most 6; a dash without data', () => {
+    ['centre quads: the gear (letter or 0.1.6\'s digit) in the one big spot, speed digits centred, the unit; at most 5, no tag (0.1.7); a dash without data', () => {
         const art = JSON.parse(fs.readFileSync(path.join(__dirname, '../../apps/adam_mtrack/art/art.json'), 'utf8'));
         const gs = art.atlas.styles.gear, src = (c) => [gs.glyphs[c].x, gs.glyphs[c].y];
         const q = G.centreQuads(art.atlas, { gear: '3', speed: 123, unit: 'mph', tag: 'SPORT+' });
-        assert.strictEqual(q.length, 6, 'gear, 3 speed digits, unit, tag: no small digit');
+        assert.strictEqual(q.length, 5, 'gear, 3 speed digits, unit: no tag even when one is passed (0.1.7)');
+        assert.ok(!art.atlas.tags, 'no drive-mode tags in the atlas');
+        near(q[0].dst[0] + G.RECTS.centre.x + gs.glyphs['3'].ox + gs.glyphs['3'].adv / 2, 960, 1, 'the gear centred on x 960');
+        near(q[0].dst[1] + G.RECTS.centre.y + gs.pad, 272, 0.5, 'the gear\'s top at Codex\'s 272');
         assert.deepStrictEqual(q[0].src.slice(0, 2), src('3'), 'the digit 3 from the gear style');
         assert.deepStrictEqual(q[4].src.slice(0, 2), [art.atlas.labels.mph.x, art.atlas.labels.mph.y]);
         const qd = G.centreQuads(art.atlas, { gear: 'D', speed: 123, unit: 'mph', tag: 'SPORT+' });
@@ -77,14 +112,14 @@ module.exports = [
         const spH = art.atlas.styles.speed.glyphs['0'].h;
         assert.strictEqual(G.centreQuads(art.atlas, { gear: 'D', speed: 1500, unit: 'mph' }).filter((x) => x.dst[3] === spH).length, 3, 'speed capped at 3 digits');
         q.forEach((x) => { assert.ok(x.dst[0] >= 0 && x.dst[1] >= 0 && x.dst[0] + x.dst[2] <= G.RECTS.centre.w && x.dst[1] + x.dst[3] <= G.RECTS.centre.h, JSON.stringify(x)); });
-        const B = G.RECTS.badge, C = G.RECTS.centre, cc = G.CENTRE_CELL;
-        assert.ok(B.x >= C.x && B.y >= C.y && B.x + B.w <= C.x + C.w && B.y + B.h <= C.y + C.h, 'the M badge inside the centre layer');
+        const C = G.RECTS.centre, cc = G.CENTRE_CELL;
+        assert.ok(!G.RECTS.badge, 'no M badge rect (0.1.7)');
         assert.ok(cc.x >= C.x && cc.y >= C.y && cc.x + cc.w <= C.x + C.w && cc.y + cc.h <= C.y + C.h, 'the static line and stack icon inside the centre layer');
         assert.deepStrictEqual([art.atlas.centre.px, art.atlas.centre.py, art.atlas.centre.w, art.atlas.centre.h], [cc.x, cc.y, cc.w, cc.h], 'the atlas cell is the geom one');
     }],
-    ['the tachs\' numerals: 8 a bar from the atlas\'s bar style, the left bar\'s at the mirror of each centre, inside the over-art; the panels layer holds every live box', () => {
+    ['the tachs\' numerals: 8 a tach from the atlas\'s bar style, the left tach\'s at the mirror of each centre, inside the panel; the panels layer holds every live box', () => {
         const art = JSON.parse(fs.readFileSync(path.join(__dirname, '../../apps/adam_mtrack/art/art.json'), 'utf8'));
-        const q = G.barNumeralQuads(art.atlas, cfg.tach), n = G.numerals(cfg.tach), O = G.RECTS.overR, L = G.RECTS.overL;
+        const q = G.barNumeralQuads(art.atlas, cfg.tach), n = G.numerals(cfg.tach);
         assert.strictEqual(q.length, 16);
         q.slice(0, 8).forEach((x, i) => {
             const c = art.atlas.styles.bar.glyphs[String(i)], l = q[8 + i];
@@ -92,11 +127,11 @@ module.exports = [
             assert.deepStrictEqual(l.src, x.src, 'the same glyph, not mirrored');
             near(x.dst[0] + c.ox + c.adv / 2, n[i].x, 0.6, 'right ' + i + ' centred on its numeral');
             near(l.dst[0] + c.ox + c.adv / 2, 1920 - n[i].x, 0.6, 'left ' + i + ' at the mirror');
-            assert.ok(x.dst[0] >= O.x && x.dst[0] + x.dst[2] <= O.x + O.w && l.dst[0] >= L.x && l.dst[0] + l.dst[2] <= L.x + L.w, 'inside the over-art: ' + JSON.stringify([x.dst, l.dst]));
+            [x, l].forEach((d) => assert.ok(d.dst[0] >= 0 && d.dst[1] >= 0 && d.dst[0] + d.dst[2] <= 1920 && d.dst[1] + d.dst[3] <= 720, 'inside the panel: ' + JSON.stringify(d.dst)));
+            near(x.dst[1] + art.atlas.styles.bar.pad, n[i].y - 13, 0.5, 'glyph top ' + i);
         });
         const P = G.RECTS.panels;
         ['panelL', 'panelR', 'cornerL', 'cornerR'].forEach((k) => { const r = G.RECTS[k]; assert.ok(r.x >= P.x && r.y >= P.y && r.x + r.w <= P.x + P.w && r.y + r.h <= P.y + P.h, k); });
-        assert.ok(G.RECTS.cornerR.x + G.RECTS.cornerR.w <= 1760, 'the right corner ends at 1760 (the stray unit label is gone, KB-ANY-205)');
     }],
     ['widgets: a panel key changes only with what it shows (rounded as drawn); corners likewise', () => {
         const u = U.resolve('us'), lay = { upper: 'coolant', lower: 'boost' }, all = () => true;

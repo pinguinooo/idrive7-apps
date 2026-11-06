@@ -15,7 +15,7 @@ const ST = require('../../apps/adam_mtrack/stages');
 const { createOutput } = require('../../apps/adam_mtrack/output');
 
 const ART = JSON.parse(fs.readFileSync(path.join(__dirname, '../../apps/adam_mtrack/art/art.json'), 'utf8'));
-const FRAME = { yr: G.yOfRpm(800, cfg.tach), quads: [], slats: { lit: 0, flashing: false }, badge: true, level: 1 };
+const FRAME = { yr: G.yOfRpm(800, cfg.tach), quads: [], slats: { lit: 0, flashing: false }, level: 1 };
 
 class FakeCR extends EventEmitter {
     constructor(app) { super(); this.app = app; this.ops = []; this.ready = false; this.backend = 'id7'; this.targets = 'panel:1920x720'; this.n = 0; this.anims = {}; FakeCR.last = this; }
@@ -77,7 +77,7 @@ module.exports = [
         assert.strictEqual(layerOps(r).length, 0, 'nothing before the first status answer');
         r.reply(false);
         const ops = r.c.ops.map((m) => m.op), first = ops.indexOf('layer');
-        assert.deepStrictEqual(r.ops('asset').map((a) => [a.format, a.w, a.h, a.sampling]), [['r8', 480, 360, 'bilinear'], ['r8', 492, 474, 'nearest'], ['rgba8', 16, 1, 'nearest'], ['r8', 180, 462, 'nearest'], ['r8', 1024, ART.atlas.h, 'nearest']]);
+        assert.deepStrictEqual(r.ops('asset').map((a) => [a.format, a.w, a.h, a.sampling]), [['r8', 480, 360, 'bilinear'], ['r8', 2 * G.RECTS.overR.w, G.RECTS.overR.h, 'nearest'], ['rgba8', 16, 1, 'nearest'], ['r8', G.RECTS.band.w, G.RECTS.band.h, 'nearest'], ['r8', 1024, ART.atlas.h, 'nearest']]);
         assert.strictEqual(r.ops('pixels').length, 5, 'every asset\'s pixels whole');
         assert.ok(ops.lastIndexOf('pixels') < first, 'pixels before the layer');
         const l = layerOps(r)[0];
@@ -123,10 +123,10 @@ module.exports = [
         r.ops('animate').forEach((a) => assert.strictEqual(a.keys, cfg.safety.aliveKeys));
         assert.strictEqual(r.ops('animate').length, 4, 'one dead-man animation a layer');
         const mem = r.ops('asset').reduce((b, a) => b + a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2, 0);
-        assert.strictEqual(r.ops('asset').length, 11);
+        assert.strictEqual(r.ops('asset').length, 10);
         assert.ok(mem <= cfg.memoryBudgetBytes, 'renderer memory ' + mem);
         assert.strictEqual(mem, ST.memoryOf(ART));
-        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 11 assets, 3\.0 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 10 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
         assert.deepStrictEqual(r.out.status().build, { state: 'shown', n: 4, of: 4, name: '', word: 'shown', why: '', stop: null });
     }],
     ['the dead-man: a new animation first, then the previous one stopped, every aliveRearmMs while shown; a backward clock jump re-arms at once; none after the drop', () => {
@@ -202,7 +202,7 @@ module.exports = [
         assert.strictEqual(r.ops('asset').length, 0, 'nothing sent');
         assert.strictEqual(layerOps(r).length, 0);
         assert.strictEqual(r.faults.length, 1);
-        assert.ok(/stage 1 TACHS not sent: the renderer's pixel memory is full \(14\.5 MiB in use: robertn_waze_cluster 14\.5 MiB, 1\.7 MiB needed\)/.test(r.faults[0]), r.faults[0]);
+        assert.ok(/stage 1 TACHS not sent: the renderer's pixel memory is full \(14\.5 MiB in use: robertn_waze_cluster 14\.5 MiB, 1\.5 MiB needed\)/.test(r.faults[0]), r.faults[0]);
     }],
     ['another app\'s HUD let go of the shared scene: the build waits cfg.build.handoverMs (3.5 s) before making anything', () => {
         const r = rig();
@@ -227,7 +227,7 @@ module.exports = [
     ['live boxes go as coverage + palette index in two rects, only the changed box; a box drawn before stage 2 is its first pixels', () => {
         const r = rig();
         const R = G.RECTS.panelR, px = Buffer.alloc(R.w * R.h * 4);
-        for (let i = 0; i < 10; i++) { const k = ((5 + i) * R.w + 7) * 4; px[k] = 0xe2; px[k + 1] = 0x26; px[k + 2] = 0x2a; px[k + 3] = 255; }
+        for (let i = 0; i < 10; i++) { const k = ((5 + i) * R.w + 7) * 4; px[k] = 0xb3; px[k + 1] = 0x28; px[k + 2] = 0x3e; px[k + 3] = 255; }
         r.out.box('panelR', px);
         r.out.show(FRAME);
         r.buildAll();
@@ -242,7 +242,7 @@ module.exports = [
         assert.deepStrictEqual(upd.map((p) => [p.rects, p.bytes]), [[[{ x: 30, y: 20, w: 1, h: 1 }, { x: R.w + 30, y: 20, w: 1, h: 1 }], 2]], 'one changed pixel: its coverage and its index');
         assert.strictEqual(r.out.box('panelR', px2), 0, 'nothing changed: nothing sent');
         const enc = ST.encodeBox(px, R.w, { x: 7, y: 5, w: 1, h: 1 });
-        assert.deepStrictEqual([enc[0], enc[1]], [255, 6 * 17], 'red #e2262a: full coverage, palette index 6');
+        assert.deepStrictEqual([enc[0], enc[1]], [255, 5 * 17], 'red #b3283e: full coverage, palette index 5');
     }],
     ['step 2\'s three bars: amber u_alive 1 (no animation); green u_alive 1 re-armed new-first; blue exactly 0.1.1\'s (u_alive 0, the same number sent again every 250 ms)', () => {
         const r = rig({ out: { name: 'adam_mtrack-test', label: 'test' } });

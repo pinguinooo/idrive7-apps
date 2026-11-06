@@ -2,14 +2,13 @@
 <html><head><meta charset="utf-8"><title>M Track art</title></head>
 <body>
 <!--
-  Dev-time only (not shipped): draws M Track Cluster's static art, item by item, with the approved mockup's own drawing
-  code (iDrive-Apps docs/mockups/mtrack-cluster.html: base, plate, bar, sq, badge, corner, gearBlock), trimmed to the
-  static parts, with the tach scale 0-7 from apps/adam_mtrack/geom.js (loaded below, so the art and the live fill
-  agree). tools/mtrack-art/make-art.mjs calls makeArt(the font's bytes), renders each item on a transparent canvas and
-  writes apps/adam_mtrack/art/art.json. 0.1.5: the atlas's text (mph, the drive-mode tags) in Liberation Sans (fonts/,
-  SIL OFL 1.1), the face 0.1.4 fell back to and still the closest to BMW's for these two (iDrive-Apps
-  docs/emulator/mtrack-0.1.5/font-pick.md), now committed so the art no longer depends on what the build machine has;
-  makeArt refuses to draw on a fallback face.
+  Dev-time only (not shipped): draws M Track Cluster's static art, item by item. 0.1.7: the Codex-designed M display
+  (ai-brain codex-mdash-test/out/m-display.html and HANDOFF.md: its tach paths, gradients, DIGITS outlines, stack, line
+  and caps) with Adam's two corrections, the tach scale 0-7 and faceted solid corner gauges, all placed by
+  apps/adam_mtrack/geom.js (loaded below, so the art and the live fill agree). tools/mtrack-art/make-art.mjs calls
+  makeArt(the font's bytes), renders each item on a transparent canvas and writes apps/adam_mtrack/art/art.json. The
+  atlas's unit labels and the gauges' labels are in Liberation Sans (fonts/, SIL OFL 1.1), committed so the art does not
+  depend on what the build machine has; makeArt refuses to draw on a fallback face.
 -->
 <script>var module = { exports: {} };</script>
 <script src="../../apps/adam_mtrack/geom.js"></script>
@@ -25,195 +24,122 @@ for (const f of faces) {
   const face = new FontFace(FAMILY, Uint8Array.from(atob(f.b64), (ch) => ch.charCodeAt(0)), { weight: String(f.weight) });
   await face.load();
   document.fonts.add(face);
-  const c = document.createElement('canvas').getContext('2d'), w = (x) => { c.font = x; return c.measureText('SPORT+ mph 0123').width; };
+  const c = document.createElement('canvas').getContext('2d'), w = (x) => { c.font = x; return c.measureText('mph 0123 \u00bd').width; };
   if (face.status !== 'loaded' || Math.abs(w(`${f.weight} 20px "${FAMILY}"`) - w(`${f.weight} 20px monospace`)) < 1) throw new Error(FAMILY + ' ' + f.weight + ' did not load: refusing to draw on a fallback face');
 }
-const T = MCFG.tach, BARS = GEOM.BARS, C = GEOM.CENTRE;
+const T = MCFG.tach, C = GEOM.CENTRE, TACH = GEOM.TACH;
 const SANS = `"${FAMILY}", sans-serif`;
-// 0.1.5: the shift markers pale yellow (hue 47 deg in the 2026-11-05 car photo, M Track 0.1.3's own cover: KB-ANY-213)
-const COL = { cap: '#f1141d', redField: '#c81e2a', yellowField: '#f2d65a', line: '#eef1f4' };
-const BASE = { centre: '#15161b', side: '#1f2023' };
-const PLATE = [[1262, 207], [1468, 211], [1520, 218], [1556, 232], [1590, 252], [1618, 272], [1645, 302], [1676, 342], [1700, 380], [1712, 405],
-  [1708, 445], [1690, 485], [1668, 525], [1640, 565], [1614, 592], [1590, 600], [1310, 600]];
-const FUEL_ARC = [[182, 488], [175, 518], [176, 552], [189, 588], [214, 617], [250, 636], [298, 645], [330, 646]];
-const FUEL_LABELS = [[223, 500], [262, 562], [298, 606]];
-const OIL_SCALE = { us: [120, 210, 300], metric: [50, 100, 150] };
-const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const mirror = GEOM.mirror, spline = GEOM.spline, at = GEOM.at, xAtY = GEOM.xAtY, arcAtY = GEOM.arcAtY;
+const DEG = Math.PI / 180;
 let ctx = null;
 
-/* ---------- the mockup's helpers ---------- */
-const off = (p, o) => [p.x + p.nx * o, p.y + p.ny * o];
-function strip(tr, side, f0, f1, o0, o1, steps = 24) {
-  const a = [], b = [];
-  for (let k = 0; k <= steps; k++) { const p = at(tr, f0 + (f1 - f0) * k / steps, side); a.push(off(p, o0)); b.push(off(p, o1)); }
-  return a.concat(b.reverse());
-}
-const GLYPHS = {
-  0: '0 0,1 0,1 1.6,0 1.6,z', 1: '.05 .34,.5 0,.5 1.6', 2: '0 0,1 0,1 .8,0 .8,0 1.6,1 1.6', 3: '0 0,1 0,1 1.6,0 1.6|.3 .8,1 .8',
-  4: '.72 1.6,.72 0,0 1.04,1 1.04', 5: '1 0,0 0,0 .78,1 .78,1 1.6,0 1.6', 6: '1 0,0 0,0 1.6,1 1.6,1 .78,0 .78',
-  7: '0 0,1 0,1 .2,.36 1.6', 8: '0 0,1 0,1 1.6,0 1.6,z|0 .8,1 .8', 9: '1 .82,0 .82,0 0,1 0,1 1.6,0 1.6',
-  P: '0 1.6,0 0,1 0,1 .86,0 .86', M: '0 1.6,0 0,.5 .64,1 0,1 1.6', D: '0 0,.6 0,1 .4,1 1.2,.6 1.6,0 1.6,z',
-  N: '0 1.6,0 0,1 1.6,1 0', R: '0 1.6,0 0,1 0,1 .86,0 .86|.4 .86,1 1.6', S: '1 0,0 0,0 .78,1 .78,1 1.6,0 1.6', '/': '.15 1.6,.85 0', '-': '0 .8,1 .8',
+/* ---------- Codex's paths (the LEFT tach; the right is its mirror, x' = 1920 - x) ---------- */
+const PATH_A = 'M614 598 C585 525 542 421 520 351 C498 285 545 207 658 85 L684 85 C603 188 562 264 570 320 C577 382 627 520 665 598 Z';
+const PATH_B = 'M614 598 C585 525 542 421 520 351 C498 285 545 207 658 85';
+const PATH_C = 'M665 598 C627 520 577 382 570 320 C562 264 603 188 684 85';
+// Codex DIGITS (64 x 82 grid, even-odd counters), plus a D for the gear spot
+const DIGITS = {
+  '0': 'M13 0 H51 Q64 0 64 13 V69 Q64 82 51 82 H13 Q0 82 0 69 V13 Q0 0 13 0 Z M15 13 Q12 13 12 17 V65 Q12 69 16 69 H48 Q52 69 52 65 V17 Q52 13 48 13 Z',
+  '1': 'M9 0 H49 V82 H34 V14 H9 Z',
+  '2': 'M1 0 H50 Q64 0 64 14 V32 Q64 46 50 46 H15 V68 H64 V82 H0 V47 Q0 33 14 33 H48 Q51 33 51 29 V17 Q51 13 47 13 H1 Z',
+  '3': 'M0 0 H49 Q64 0 64 14 V29 Q64 37 55 41 Q64 45 64 53 V68 Q64 82 49 82 H0 V69 H47 Q51 69 51 65 V52 Q51 48 47 48 H13 V35 H47 Q51 35 51 31 V17 Q51 13 47 13 H0 Z',
+  '4': 'M38 0 H54 V49 H64 V62 H54 V82 H40 V62 H0 V48 Z M40 17 L15 49 H40 Z',
+  '5': 'M1 0 H64 V13 H15 V33 H49 Q64 33 64 48 V68 Q64 82 49 82 H0 V69 H47 Q51 69 51 65 V50 Q51 46 47 46 H1 Z',
+  '6': 'M15 0 H60 V13 H18 Q13 13 13 18 V33 H49 Q64 33 64 48 V68 Q64 82 49 82 H15 Q0 82 0 67 V15 Q0 0 15 0 Z M13 46 V65 Q13 69 17 69 H47 Q51 69 51 65 V50 Q51 46 47 46 Z',
+  '7': 'M0 0 H64 V14 L27 82 H10 L49 14 H0 Z',
+  '8': 'M15 0 H49 Q64 0 64 14 V28 Q64 37 56 41 Q64 45 64 54 V68 Q64 82 49 82 H15 Q0 82 0 68 V54 Q0 45 8 41 Q0 37 0 28 V14 Q0 0 15 0 Z M17 13 Q13 13 13 17 V30 Q13 34 17 34 H47 Q51 34 51 30 V17 Q51 13 47 13 Z M17 47 Q13 47 13 51 V65 Q13 69 17 69 H47 Q51 69 51 65 V51 Q51 47 47 47 Z',
+  '9': 'M15 0 H49 Q64 0 64 15 V67 Q64 82 49 82 H4 V69 H46 Q51 69 51 64 V49 H15 Q0 49 0 34 V15 Q0 0 15 0 Z M17 13 Q13 13 13 17 V32 Q13 36 17 36 H51 V17 Q51 13 47 13 Z',
+  P: 'M0 0 H47 Q64 0 64 17 V34 Q64 51 47 51 H15 V82 H0 Z M15 14 V37 H44 Q50 37 50 31 V20 Q50 14 44 14 Z',
+  R: 'M0 0 H47 Q64 0 64 17 V32 Q64 47 49 49 L66 82 H49 L32 51 H15 V82 H0 Z M15 14 V37 H44 Q50 37 50 31 V20 Q50 14 44 14 Z',
+  N: 'M0 82 V0 H16 L49 57 V0 H64 V82 H48 L15 25 V82 Z',
+  D: 'M0 0 H47 Q64 0 64 17 V65 Q64 82 47 82 H0 Z M15 14 V68 H45 Q50 68 50 63 V19 Q50 14 45 14 Z',
+  '-': 'M5 35 H59 V48 H5 Z',
 };
-const GLYPH = {};
-Object.keys(GLYPHS).forEach((k) => { GLYPH[k] = GLYPHS[k].split('|').map((s) => s.split(',').map((p) => (p === 'z' ? p : p.split(' ').map(Number)))); });
-function sqMetrics(h, o) {
-  const sw = o.sw || h * 0.18, hn = o.box ? h - sw : h, u = hn / 1.6;
-  const wd = o.box ? (o.w || h) - sw : u * (o.wide || 1), gap = (o.gap === undefined ? 0.45 : o.gap) * u;
-  return { sw, hn, u, wd, gap, adv: (c) => (c === '1' ? 0.55 : c === '/' ? 0.7 : 1) * wd };
-}
-function sq(str, x, y, h, color, o = {}) {
-  const m = sqMetrics(h, o), sw = m.sw, hn = m.hn, u = m.u, wd = m.wd, gap = m.gap, adv = m.adv;
-  const total = [...str].reduce((s, c) => s + adv(c) + gap, -gap);
-  let cx = o.align === 'left' ? x + sw / 2 : o.align === 'right' ? x - total - sw / 2 : x - total / 2;
-  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = sw; ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
-  if (o.glow) { ctx.shadowColor = o.glow; ctx.shadowBlur = h * 0.2; }
-  for (const c of str) {
-    for (const stroke of GLYPH[c] || []) {
-      ctx.beginPath();
-      stroke.forEach((p, i) => { if (p === 'z') ctx.closePath(); else ctx[i ? 'lineTo' : 'moveTo'](cx + p[0] * wd, y - hn / 2 + p[1] * u); });
-      ctx.stroke();
-    }
-    cx += adv(c) + gap;
-  }
-  ctx.restore();
-  return total + sw;
-}
-function poly(pts, close = true) { ctx.beginPath(); pts.forEach((p, i) => ctx[i ? 'lineTo' : 'moveTo'](p[0], p[1])); if (close) ctx.closePath(); }
-function line(pts, width, color, cap = 'round') { poly(pts, false); ctx.lineWidth = width; ctx.strokeStyle = color; ctx.lineJoin = 'round'; ctx.lineCap = cap; ctx.stroke(); }
-function fill(pts, color, blur, glowColor) { ctx.save(); if (blur) { ctx.shadowColor = glowColor || (typeof color === 'string' ? color : '#ff4010'); ctx.shadowBlur = blur; } poly(pts); ctx.fillStyle = color; ctx.fill(); ctx.restore(); }
-const rect = (x, y, w, h, color, blur) => fill([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], color, blur);
-function text(s, x, y, size, color, align = 'left', weight = 500) {
+const mirrored = (draw) => { ctx.save(); ctx.translate(1920, 0); ctx.scale(-1, 1); draw(); ctx.restore(); };
+const stroke = (d, width, color) => { ctx.lineWidth = width; ctx.strokeStyle = color; ctx.lineCap = 'butt'; ctx.lineJoin = 'miter'; ctx.stroke(typeof d === 'string' ? new Path2D(d) : d); };
+function poly(pts) { const p = new Path2D(); pts.forEach((q, i) => p[i ? 'lineTo' : 'moveTo'](q[0], q[1])); p.closePath(); return p; }
+function text(s, x, y, size, color, align = 'center', weight = 400) {
   ctx.font = `${weight} ${size}px ${SANS}`; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
 }
 
-/* ---------- the bars, 0-7 ---------- */
-const SIDES = [-1, 1].map((side) => {
-  const m = (pts) => (side > 0 ? pts : mirror(pts));
-  const outer = spline(m(BARS.outer)), inner = spline(m(BARS.inner));
-  return { side, outer, inner, top: spline(m(BARS.top), 6), tail: spline(m(BARS.tail), 6), foot: m(BARS.foot),
-    s0: arcAtY(outer, BARS.tick0Y), s7: arcAtY(outer, BARS.tickTopY) };
-});
-const bar = (side) => SIDES[side > 0 ? 1 : 0];
-const bandPoly = (b) => b.outer.pts.concat(b.top.pts.slice(1), b.inner.pts.slice().reverse());
-const sc = (b, r) => (b.s0 + (b.s7 - b.s0) * GEOM.fracOf(r, T)) / b.outer.len;
-
-// 0.1.6: the whole panel, glass edge to glass edge. The LCD shows a pure 0 as its lit backlight (a lavender frame on the
-// car, KB-ANY-213's photo), so nothing here is 0: past r 900 the gradient holds at BASE.side, the dash edge's own tone,
-// and every byte of bgR2 stays >= 15 (manifest_art.test.js). No vignette toward the edge (it would bring the frame back).
-function base() {
-  const g = ctx.createRadialGradient(960, 400, 120, 960, 420, 900);
-  g.addColorStop(0, BASE.centre); g.addColorStop(0.55, BASE.centre); g.addColorStop(1, BASE.side);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, 1920, 720);
-  const v = ctx.createLinearGradient(0, 0, 0, 260);
-  v.addColorStop(0, 'rgba(0,0,0,0.30)'); v.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = v; ctx.fillRect(0, 0, 1920, 260);
-}
-function plate(side) {
-  const pts = PLATE.concat(BARS.outer.map(([x, y]) => [x - 20, y])), P = side > 0 ? pts : mirror(pts);
-  const g = ctx.createLinearGradient(0, 210, 0, 600);
-  g.addColorStop(0, 'rgba(72,74,80,0.55)'); g.addColorStop(1, 'rgba(92,94,98,0.62)');
-  fill(P, g);
-}
-function barUnder(side) {           // the translucent band and its darker top (under the live fill)
-  const b = bar(side), band = bandPoly(b);
-  const xo = xAtY(b.outer, 420), xi = xAtY(b.inner, 420), g = ctx.createLinearGradient(xo, 0, xi, 0);
-  // 0.1.5: flat and lighter (one even light grey across, not a dark-to-light ramp)
-  g.addColorStop(0, 'rgba(156,154,158,0.66)'); g.addColorStop(0.5, 'rgba(164,162,166,0.66)'); g.addColorStop(1, 'rgba(172,170,174,0.66)');
-  fill(band, g);
-  ctx.save(); poly(band); ctx.clip();
-  const top = ctx.createLinearGradient(0, 180, 0, 300); top.addColorStop(0, 'rgba(0,0,0,0.2)'); top.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = top; ctx.fillRect(0, 170, 1920, 170);
-  ctx.restore();
-}
-function barOver(side, numerals) {  // everything the mockup draws after the fill: fields, lines, ticks (numerals 0..7: the atlas's bar style)
-  const b = bar(side), s = b.side;
-  const o0 = BARS.line + BARS.gap + BARS.line2 + 1, o1 = o0 + 8;
-  [[T.amberFrom, T.redFrom, COL.yellowField, 'dash'], [T.redFrom, T.max, COL.redField, 'solid']].forEach(([a, c, col, kind]) => {
-    if (kind === 'dash') { const n = 2, w = (sc(b, c) - sc(b, a)) / n; for (let k = 0; k < n; k++) fill(strip(b.outer, s, sc(b, a) + k * w + w * 0.15, sc(b, a) + (k + 1) * w - w * 0.15, o0, o1, 4), col); }
-    else fill(strip(b.outer, s, sc(b, a), sc(b, c), o0, o1, 10), col);
+// 0.1.7: a flat field of 16, glass edge to glass edge: the LCD shows a pure 0 as its lit backlight (KB-ANY-214), so the
+// background is never 0 and every byte of bgR2 stays >= 15 (manifest_art.test.js); Codex's black is not used
+function base() { ctx.fillStyle = '#101010'; ctx.fillRect(0, 0, 1920, 720); }
+function bandMask() { mirrored(() => { ctx.fillStyle = '#ffffff'; ctx.fill(new Path2D(PATH_A)); }); }
+/** The right tach's static lines (Codex's, the scale 0-7): bloom, outer and inner edge, red edge, end line, ticks. The
+ * track, red zone, fill, pointer and numerals are the tachs shader's. */
+function barOver() {
+  const red = GEOM.point(T.redFrom, T);
+  mirrored(() => {
+    ctx.save(); ctx.filter = 'blur(1.6px)'; ctx.globalAlpha = 0.16; stroke(PATH_B, 5, '#7e889e'); ctx.restore();
+    stroke(PATH_B, 5, '#151c27');
+    const g = ctx.createLinearGradient(0, 85, 0, 598);
+    [[0, '#2a303c'], [0.4, '#a0a8bb'], [0.65, '#b9bfd0'], [1, '#424956']].forEach((s) => g.addColorStop(s[0], s[1]));
+    stroke(PATH_B, 2.2, g);
+    stroke(PATH_C, 1.2, '#424856');
+    stroke(`M${1920 - red[0] - TACH.tickX} ${red[1]} L658 85`, 4, '#78283a');
+    stroke('M620 597 H661', 1, '#555d6c');
   });
-  line(b.inner.pts, 2.4, 'rgba(238,241,244,0.9)');      // 0.1.5: BMW's inner edge is a bright white line
-  const edge = b.outer.pts.concat(b.top.pts.slice(1));
-  const inset = (pts, o) => pts.map((p, i) => { const q = pts[Math.min(i + 1, pts.length - 1)], r0 = pts[Math.max(i - 1, 0)], dx = q[0] - r0[0], dy = q[1] - r0[1], l = Math.hypot(dx, dy) || 1; return [p[0] - s * dy / l * o * -1, p[1] + s * dx / l * o * -1]; });
-  ctx.save(); ctx.shadowColor = 'rgba(255,255,255,0.55)'; ctx.shadowBlur = 6;
-  line(inset(edge, BARS.line / 2), BARS.line, COL.line); ctx.restore();
-  line(inset(b.outer.pts, BARS.line + BARS.gap / 2), BARS.gap, 'rgba(12,12,16,0.85)');
-  line(inset(b.outer.pts, BARS.line + BARS.gap + BARS.line2 / 2), BARS.line2, 'rgba(236,240,244,0.85)');
-  const tl = b.tail.pts;
-  for (let k = 1; k < tl.length; k++) line([tl[k - 1], tl[k]], 4 - 2.6 * k / tl.length, `rgba(236,240,244,${(0.8 * (1 - k / tl.length)).toFixed(3)})`);
-  const bo = b.outer.pts[0], bi = b.inner.pts[0];
-  line([[bo[0] + s * 1, bo[1] - 10], [bo[0] - s * 2, bo[1]], [bi[0], bi[1]]], 2.6, 'rgba(236,240,244,0.7)');
-  const f = b.foot, fg = ctx.createLinearGradient(f[0][0], f[0][1], f[2][0], f[2][1]);
-  fg.addColorStop(0, 'rgba(170,170,180,0.3)'); fg.addColorStop(1, 'rgba(170,170,180,0)');
-  ctx.save(); poly(f, false); ctx.lineWidth = 12; ctx.strokeStyle = fg; ctx.lineCap = 'butt'; ctx.stroke(); ctx.restore();
-  GEOM.ticks(T).forEach((t) => {
-    const xo2 = s > 0 ? t.x : 1920 - t.x, y = t.y;
-    line([[xo2 + s * 2, y], [xo2 - s * t.len, y]], t.major ? 3.4 : 2.6, COL.line, 'butt');
-    fill([[xo2 + s * 5, y], [xo2 - s * 1, y - 4], [xo2 - s * 1, y + 4]], COL.line);
-  });
-  if (numerals) GEOM.numerals(T).forEach((n) => sq(String(n.k), s > 0 ? n.x : 1920 - n.x, n.y, BARS.numH, '#f4f6f8', { box: true, w: BARS.numW, sw: BARS.numSW, glow: 'rgba(255,255,255,0.35)' }));
+  GEOM.ticks(T).forEach((t) => stroke(`M${t.x} ${t.y} H${t.x - t.len}`, t.major ? 2 : 1.2, t.rpm >= T.redFrom ? '#8a3748' : '#9da3b2'));
 }
-function bandMask(side) { fill(bandPoly(bar(side)), '#ffffff'); }
 
-/* ---------- centre (static), badge, corners ---------- */
-function stackIcon(x, y, c) { [24, 30, 36].forEach((w, i) => fill([[x, y + i * 9], [x + w, y + i * 9], [x + w + 4, y + i * 9 + 5], [x, y + i * 9 + 5]], c)); }
+/* ---------- centre (static): the stack, the line and its caps, as alpha (the centre layer colours them #d7d9e1) ---------- */
 function centreStatic() {
-  const X = C.cx, [mainHalf, c0, c1] = C.line;
-  stackIcon(C.stackX, C.stackY, 'rgba(230,234,238,0.85)');
-  line([[X - mainHalf, C.lineY], [X + mainHalf, C.lineY]], 2.2, 'rgba(238,241,244,0.95)');   // 0.1.5: brighter (photo)
-  for (const sd of [-1, 1]) fill([[X + sd * c0, C.lineY - 2.5], [X + sd * (c1 - 6), C.lineY - 2.5], [X + sd * c1, C.lineY + 2.5], [X + sd * c0, C.lineY + 2.5]], '#f2f5f8', 6, 'rgba(255,255,255,0.6)');
+  const A = (a, draw) => { ctx.save(); ctx.globalAlpha = a; draw(); ctx.restore(); };
+  A(0.46, () => { ctx.fillStyle = '#ffffff'; ctx.fill(new Path2D('M1042 344 H1066 L1077 351 H1042 Z M1042 356 H1078 L1081 362 H1042 Z M1042 368 H1082 V374 H1042 Z')); });
+  A(0.15, () => stroke(`M735 ${C.lineY} H1185`, 1.5, '#ffffff'));
+  A(0.89, () => { ctx.fillStyle = '#ffffff'; ctx.fill(new Path2D('M735 404 L776 405 L776 408 L735 407 Z M1144 405 L1185 404 L1185 407 L1144 408 Z')); });
 }
-function badge(x, y) {
-  [['#4cb3ea', -54], ['#2a3f9f', -37], ['#e3231b', -20]].forEach(([c, dx]) => fill([[x + dx, y + 12], [x + dx + 11, y + 12], [x + dx + 19, y - 12], [x + dx + 8, y - 12]], c));
-  sq('M', x + 2, y, 24, '#f4f6f8', { align: 'left', box: true, w: 40, sw: 5.5 });
+
+/* ---------- corners: the faceted gauge's track, outline, zone and labels (the live fill is widgets.js's) ---------- */
+const zoneQuads = (f0, f1, side) => (f0 === 0 ? GEOM.gaugeQuads(f1, side)
+  : [[GEOM.gaugePoint(f0, side, -9), GEOM.gaugePoint(f1, side, -9), GEOM.gaugePoint(f1, side, 9), GEOM.gaugePoint(f0, side, 9)]]);
+function gauge(side, labels, zone) {
+  const quads = GEOM.gaugeQuads(1, side);
+  quads.forEach((q) => { ctx.fillStyle = '#161a22'; ctx.fill(poly(q)); });
+  quads.forEach((q) => stroke(poly(q), 1.5, '#596171'));
+  zoneQuads(zone[0], zone[1], side).forEach((q) => stroke(poly(q), 1.5, '#b3283e'));
+  labels.forEach((l) => { const p = GEOM.gaugePoint(l[1], side, 26); text(l[0], p[0], p[1], 25, '#d7d9e1'); });
 }
-function corner(pts, labels, ends, side, at3) {      // the mockup's corner() without its needle (drawn live)
-  const tr = spline(pts);
-  fill(strip(tr, side, 0, 1, 2, 26), 'rgba(150,152,160,0.34)');
-  // 0.1.5: BMW's arc edge is a thicker white line with a soft glow, its inner line brighter
-  ctx.save(); ctx.shadowColor = 'rgba(255,255,255,0.5)'; ctx.shadowBlur = 5; line(tr.pts, 5.5, 'rgba(242,245,248,1)'); ctx.restore();
-  line(tr.pts.map((_, i) => off(at(tr, tr.cum[i] / tr.len, side), 7)), 2, 'rgba(238,241,244,0.85)');
-  for (let k = 0; k <= 4; k++) { const p = at(tr, k / 4, side); line([off(p, 0), off(p, 11)], 2.2, 'rgba(238,241,244,0.9)', 'butt'); }
-  if (ends[0]) fill(strip(tr, side, 0, 0.13, 2, 12), ends[0]);
-  if (ends[1]) fill(strip(tr, side, 0.87, 1, 2, 12), ends[1]);
-  labels.forEach((s, i) => sq(s, at3[i][0], at3[i][1], 21, '#f2f5f8', { box: true, w: 17, sw: 4.2 }));
+function icon(d, vb, x, y, w, h, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha || 1; ctx.translate(x, y); ctx.scale(w / vb[0], h / vb[1]);
+  stroke(d, 2, '#acb0bd'); ctx.restore();
 }
 function cornerL() {
-  corner(FUEL_ARC.slice().reverse(), ['0', '1/2', '1'], ['rgba(232,30,36,0.95)', null], -1, FUEL_LABELS.slice().reverse());
-  fill([[120, 600], [134, 600], [134, 620], [120, 620]], '#dfe4ea'); fill([[138, 606], [146, 610], [138, 614]], '#dfe4ea');
-  fill([[238, 661], [252, 661], [252, 685], [238, 685]], '#dfe4ea');     // the range's pump icon (mockup bottomRow)
+  gauge(-1, [['0', 0], ['½', 0.5], ['1', 1]], [0, 0.12]);      // widgets.js FUEL_LOW
+  icon('M3 27 V3 H15 V27 M3 12 H15 M1 27 H17 M15 8 L21 13 V24 Q21 28 18 24 V17 H15', [24, 30], 115, 638, 23, 27);   // Codex fuelIcon
 }
+const OIL_SCALE = { us: [120, 210, 300], metric: [50, 100, 150] };
 function cornerR(units) {
-  const L = OIL_SCALE[units];
-  corner(mirror(FUEL_ARC).reverse(), L.map(String), ['rgba(40,205,235,0.95)', 'rgba(232,30,36,0.95)'], 1,
-    mirror(FUEL_LABELS).reverse().map(([x, y], i) => [x - [22, 16, 10][i], y]));
+  gauge(1, OIL_SCALE[units].map((n, i) => [String(n), i / 2]), [0.86, 1]);   // widgets.js SCALES.oil
+  const p = GEOM.gaugePoint(0, 1, 0);       // Codex oilIcon, below the band's low end, at 65%
+  icon('M3 12 H19 L26 8 L29 11 L23 19 L18 23 H4 Z M8 12 V7 H17 M1 11 V19', [32, 32], p[0] - 15, p[1] + 14, 30, 30, 0.65);
 }
 
 /* ---------- the glyph atlas: white on transparent, one cell a glyph ---------- */
-// v2 (0.1.3): only the glyphs the cover draws (gear P R N D - and, 0.1.6, the engaged gear's digit 1-8 at the same size,
-// the speed, the tachs' numerals), plus one static cell: the centre's line, end caps and stack icon (CENTRE_CELL, panel px), drawn by the centre layer
+// 0.1.7: Codex's DIGITS outlines (gear P R N D - and the engaged gear's digit 1-8, the speed, the tachs' numerals 0..7 with
+// Codex's local -3 deg skew), the unit labels, and one static cell: the centre's stack, line and caps (CENTRE_CELL, panel px)
 const STYLES = {
-  gear: { chars: 'PRND-12345678', h: C.gearH, o: { box: true, w: C.gearW, sw: C.gearSW, glow: 'rgba(255,255,255,0.3)' } },
-  speed: { chars: '0123456789-', h: C.speedH, o: { box: true, w: C.speedW, sw: C.speedSW, glow: 'rgba(255,255,255,0.25)' } },
-  bar: { chars: '01234567', h: BARS.numH, o: { box: true, w: BARS.numW, sw: BARS.numSW, glow: 'rgba(255,255,255,0.35)' } },
+  gear: { chars: 'PRND-12345678', w: C.gearW, h: C.gearH, skew: 0 },
+  speed: { chars: '0123456789-', w: C.speedW, h: C.speedH, skew: 0 },
+  bar: { chars: '01234567', w: TACH.labelW, h: TACH.labelH, skew: -3 },
 };
 const CENTRE_CELL = GEOM.CENTRE_CELL;
-const LABELS = { mph: [22, 500, 'left'], 'km/h': [22, 500, 'left'] };
-const TAGS = ['SPORT+', 'SPORT', 'COMFORT'];      // main.js MODE_TAG
+const LABELS = { mph: [22, 400], 'km/h': [22, 400] };
 function atlasLayout() {             // cells packed in rows, 1024 wide
-  const W = 1024, cells = [], meta = { w: W, h: 0, styles: {}, labels: {}, tags: {} };
+  const W = 1024, cells = [], meta = { w: W, h: 0, styles: {}, labels: {} };
   let x = 0, y = 0, rowH = 0;
   const place = (w, h) => { if (x + w > W) { x = 0; y += rowH; rowH = 0; } const r = { x, y, w, h }; x += w; rowH = Math.max(rowH, h); return r; };
   Object.keys(STYLES).forEach((name) => {
-    const S = STYLES[name], m = sqMetrics(S.h, S.o), pad = Math.ceil(S.h * 0.2) + 2;
-    const st = meta.styles[name] = { h: S.h, sw: m.sw, wd: m.wd, gap: m.gap, pad, glyphs: {} };
+    const S = STYLES[name], pad = 2, lean = Math.ceil(-Math.tan(S.skew * DEG) * S.h) + (S.skew ? 1 : 0);
+    const st = meta.styles[name] = { w: S.w, h: S.h, gap: 0.18 * S.w, pad, glyphs: {} };
     for (const c of S.chars) {
-      const cw = Math.ceil(m.adv(c) + m.sw + 2 * pad), ch = Math.ceil(S.h + 2 * pad);
-      const r = place(cw, ch);
-      st.glyphs[c] = { x: r.x, y: r.y, w: cw, h: ch, ox: pad + m.sw / 2, adv: m.adv(c) };
-      cells.push(() => sq(c, r.x + pad, r.y + ch / 2, S.h, '#ffffff', Object.assign({ align: 'left' }, S.o)));
+      const cw = Math.ceil(S.w * 66 / 64) + lean + 2 * pad, ch = S.h + 2 * pad, r = place(cw, ch);   // R reaches x 66 of 64
+      st.glyphs[c] = { x: r.x, y: r.y, w: cw, h: ch, ox: pad + lean, adv: S.w };
+      cells.push(() => {
+        ctx.save(); ctx.translate(r.x + pad + lean, r.y + pad); ctx.scale(S.w / 64, S.h / 82);
+        if (S.skew) ctx.transform(1, 0, Math.tan(S.skew * DEG), 1, 0, 0);
+        ctx.fillStyle = '#ffffff'; ctx.fill(new Path2D(DIGITS[c]), 'evenodd'); ctx.restore();
+      });
     }
   });
   const measure = (s, size, weight) => { const c = document.createElement('canvas').getContext('2d'); c.font = `${weight} ${size}px ${SANS}`; return Math.ceil(c.measureText(s).width); };
@@ -221,11 +147,6 @@ function atlasLayout() {             // cells packed in rows, 1024 wide
     const [size, weight] = LABELS[s], w = measure(s, size, weight) + 8, h = size + 12, r = place(w, h);
     meta.labels[s] = { x: r.x, y: r.y, w, h, ox: 4 };
     cells.push(() => text(s, r.x + 4, r.y + h / 2, size, '#ffffff', 'left', weight));
-  });
-  TAGS.forEach((s) => {
-    const w = measure(s, 20, 700) + 8, h = 32, r = place(w, h);
-    meta.tags[s] = { x: r.x, y: r.y, w, h };
-    cells.push(() => text(s, r.x + w / 2, r.y + h / 2, 20, '#ffffff', 'center', 700));
   });
   const cc = place(CENTRE_CELL.w, CENTRE_CELL.h);
   meta.centre = { x: cc.x, y: cc.y, w: CENTRE_CELL.w, h: CENTRE_CELL.h, px: CENTRE_CELL.x, py: CENTRE_CELL.y };
@@ -237,14 +158,13 @@ function atlasLayout() {             // cells packed in rows, 1024 wide
 /* ---------- the items: name, format, rect (panel px), draw ---------- */
 const R = GEOM.RECTS, ATLAS = atlasLayout();
 // v2 (0.1.3): 'bg' is drawn whole and make-art.mjs keeps its right half at half resolution (bgR2: the tachs layer mirrors
-// it and samples it bilinear); the centre's line, caps and stack icon moved to the atlas (they are not mirror images);
-// one over-art (the right bar, no numerals): the tachs layer mirrors it for the left bar and draws the numerals itself
+// it and samples it bilinear); one over-art (the right tach, no numerals): the tachs layer mirrors it for the left tach and
+// draws the numerals itself. 0.1.7: no M badge
 const ITEMS = [
-  { name: 'bg', format: 'r8', from: 'luma', rect: R.tachs, sampling: 'bilinear', draw: () => { base(); plate(-1); plate(1); barUnder(-1); barUnder(1); } },
-  { name: 'band', format: 'r8', from: 'alpha', rect: R.band, sampling: 'nearest', draw: () => bandMask(1) },
-  { name: 'overR', format: 'rgba8', rect: R.overR, sampling: 'nearest', draw: () => barOver(1, false) },
+  { name: 'bg', format: 'r8', from: 'luma', rect: R.tachs, sampling: 'bilinear', draw: base },
+  { name: 'band', format: 'r8', from: 'alpha', rect: R.band, sampling: 'nearest', draw: bandMask },
+  { name: 'overR', format: 'rgba8', rect: R.overR, sampling: 'nearest', draw: barOver },
   { name: 'atlas', format: 'r8', from: 'alpha', rect: { x: 0, y: 0, w: ATLAS.meta.w, h: ATLAS.meta.h }, sampling: 'nearest', draw: ATLAS.draw },
-  { name: 'badge', format: 'rgba8', rect: R.badge, sampling: 'nearest', draw: () => badge(962.5, 250) },
   { name: 'cornerL', format: 'rgba8', rect: R.cornerL, sampling: 'nearest', draw: cornerL },
   { name: 'cornerR_us', format: 'rgba8', rect: R.cornerR, sampling: 'nearest', draw: () => cornerR('us') },
   { name: 'cornerR_metric', format: 'rgba8', rect: R.cornerR, sampling: 'nearest', draw: () => cornerR('metric') },

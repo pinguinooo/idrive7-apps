@@ -1,144 +1,130 @@
 'use strict';
 /**
  * geom.js - where the cover is drawn on the 1920 x 720 panel: pure geometry, Node 8, no I/O.
- * The paths are the approved mockup's (iDrive-Apps docs/mockups/mtrack-cluster.html CONFIG.bars, .slots, .centre;
- * right-hand shapes, the left ones are their mirror about x 960) and its spline / arc-length helpers, with the
- * tach scale changed from 0-8 to 0-7: the 7 tick sits where the mockup's 8 tick was (tick8Y), 0 to 1,000 rpm keeps
- * its short first step, and the numerals 0..7 are re-placed along the bar at their ticks' heights.
- * tools/mtrack-art/art.html loads this file, so the art and the live fill agree.
+ * 0.1.7: the Codex-designed M display (ai-brain codex-mdash-test/out/m-display.html, HANDOFF.md), with Adam's two
+ * corrections: the tach scale runs 0 to 7 (the spine's 9 anchors now span 0-7,000 rpm) and the fuel and oil gauges are
+ * faceted solid bands, not round dials. Codex draws the left tach; the cover's art is the right one (x' = 1920 - x),
+ * mirrored back for the left by the tachs layer. tools/mtrack-art/art.html loads this file, so the art and the live
+ * fill agree.
  *
- *   fracOf(rpm, T)      0..1 along the scale (T: config tach)
- *   yOfRpm(rpm, T)      the height of the revs line on the bars (both bars: mirrored, same y)
- *   ticks(T), numerals(T)   every tick / numeral place on the right bar (x, y), mirrored for the left
+ *   point(rpm, T)       the right tach's spine point at rpm [x, y] (T: config tach)
+ *   yOfRpm(rpm, T)      the height of the revs line (both tachs: mirrored, same y)
+ *   ticks(T), numerals(T)   every tick / numeral place on the right tach, mirrored for the left
+ *   gaugeQuads(f, side), gaugePoint(f, side, off)   the corner gauges' faceted band (side -1 fuel, 1 oil)
  *   RECTS               every layer's rect; slotRect(side, half) the side panels' content boxes
  */
-const BARS = {
-    outer: [[1277, 626], [1287, 612], [1296.5, 585], [1311, 555], [1324.9, 525], [1337.5, 495], [1349.2, 465], [1360.2, 435], [1365.4, 410], [1367.5, 392], [1366.3, 375], [1363, 360], [1357.3, 345], [1348.9, 330], [1338.9, 315], [1328.6, 300], [1317.3, 285], [1305.8, 270], [1293.6, 255], [1280.8, 240], [1267.9, 225], [1253.9, 210], [1241, 197]],
-    inner: [[1220, 626], [1231, 612], [1244.2, 585], [1255.5, 555], [1265.8, 525], [1275.3, 495], [1284.1, 465], [1292.5, 435], [1297.7, 405], [1298.1, 390], [1293.7, 360], [1281.7, 330], [1265.6, 300], [1253.6, 285], [1239.6, 255], [1229.8, 240], [1219.9, 225], [1213.5, 210], [1209.5, 198], [1205.5, 186], [1203, 177.5]],
-    top: [[1241, 197], [1235, 187], [1225, 180], [1212, 177], [1203, 177.5]],
-    tail: [[1203, 177.5], [1183, 175.5], [1163, 174.5], [1144, 174]],
-    foot: [[1220, 626], [1194, 607], [1168, 588]],
-    tick0Y: 614, tickTopY: 197,         // the 0 tick and the top (7,000 rpm) tick; the mockup's 0 and 8
-    // the mockup's numeral centres for 0 2 4 6 8 on its 0-8 scale: how far in from the outer edge a numeral sits,
-    // interpolated at each new tick's height
-    nums8: [[1209, 610], [1240, 510], [1259, 394], [1233, 286], [1189, 197]],
-    numH: 25, numW: 31, numSW: 6.5, tickMajor: 0.45, tickMinor: 0.25,
-    capH: 12, glowH: 110, line: 5, gap: 3, line2: 2.4,
-};
-const MOCK_SCALE_MAX = 8000, MOCK_FIRST = 0.11;
+// Codex's spine, bottom to top: 9 anchors, now 0..7,000 rpm (left tach)
+const SPINE = [[635, 590], [606, 525], [580, 459], [555, 394], [542, 328], [554, 262], [589, 201], [635, 143], [681, 87]];
+// Codex's numeral offsets from the spine at s = 0, 2, 4, 6, 8: [label centre x - spine x, glyph top y - spine y]
+const LABEL_OFF = [[57, -22], [63, -20], [73, -21], [70, -17], [34, -12]];
+const TACH = { pointerHalf: 4.5, fillBottom: 605, labelW: 35, labelH: 26, tickX: 22, tickMajor: 24, tickMinor: 8 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const mirrorPt = (p) => [1920 - p[0], p[1]];
 const mirror = (pts) => pts.map(mirrorPt);
+const lerp = (a, b, t) => a + (b - a) * t;
 
-/** Catmull-Rom through pts, n steps a segment, with the cumulative arc length (the mockup's spline). */
-function spline(pts, n) {
-    const k = n || 12, out = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
-        for (let s = 0; s < k; s++) {
-            const t = s / k, t2 = t * t, t3 = t2 * t;
-            out.push([0, 1].map((j) => 0.5 * (2 * p1[j] + (p2[j] - p0[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (3 * p1[j] - p0[j] - 3 * p2[j] + p3[j]) * t3)));
-        }
-    }
-    out.push(pts[pts.length - 1].slice());
-    const cum = [0];
-    for (let i = 1; i < out.length; i++) cum.push(cum[i - 1] + Math.hypot(out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]));
-    return { pts: out, cum, len: cum[cum.length - 1] };
-}
-/** The point at share f of a path's length, with the unit normal (side 1: into the right bar's band). */
-function at(tr, f, side) {
-    const sd = side || 1, d = clamp(f, 0, 1) * tr.len;
-    let i = 1;
-    while (i < tr.cum.length - 1 && tr.cum[i] < d) i++;
-    const a = tr.pts[i - 1], b = tr.pts[i], s = (d - tr.cum[i - 1]) / ((tr.cum[i] - tr.cum[i - 1]) || 1);
-    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy) || 1;
-    return { x: a[0] + dx * s, y: a[1] + dy * s, nx: sd * dy / l, ny: -sd * dx / l };
-}
-/** x where a path first crosses height y, or null. */
-function xAtY(tr, y) {
-    for (let i = 1; i < tr.pts.length; i++) {
-        const x0 = tr.pts[i - 1][0], y0 = tr.pts[i - 1][1], x1 = tr.pts[i][0], y1 = tr.pts[i][1];
-        if ((y0 - y) * (y1 - y) <= 0 && y0 !== y1) return x0 + (x1 - x0) * (y - y0) / (y1 - y0);
-    }
-    return null;
-}
-/** Arc length where a path running up the screen reaches height y, clamped to its ends. */
-function arcAtY(tr, y) {
-    for (let i = 1; i < tr.pts.length; i++) {
-        const y0 = tr.pts[i - 1][1], y1 = tr.pts[i][1];
-        if ((y0 - y) * (y1 - y) <= 0 && y0 !== y1) return tr.cum[i - 1] + (tr.cum[i] - tr.cum[i - 1]) * (y - y0) / (y1 - y0);
-    }
-    return y < tr.pts[tr.pts.length - 1][1] ? tr.len : 0;
-}
-
-const OUTER = spline(BARS.outer), INNER = spline(BARS.inner);
-const S0 = arcAtY(OUTER, BARS.tick0Y), STOP = arcAtY(OUTER, BARS.tickTopY);
-
-/** Share of the scale at rpm: 0..firstStep for 0..1,000 rpm, the rest evenly to max; clamped. */
-function fracOf(rpm, T) {
+/** Spine position s (0..8) at rpm: 0 at 0 rpm, 8 at T.max; clamped, NaN is 0. */
+function spineS(rpm, T) {
     const r = typeof rpm === 'number' && isFinite(rpm) ? rpm : 0;
-    if (r <= 1000) return T.firstStep * clamp(r, 0, 1000) / 1000;
-    return T.firstStep + (1 - T.firstStep) * (Math.min(r, T.max) - 1000) / (T.max - 1000);
+    return 8 * clamp(r, 0, T.max) / T.max;
 }
-/** The point on the right bar's outer edge at rpm (normal into the band). */
-const rpmPoint = (rpm, T) => at(OUTER, (S0 + (STOP - S0) * fracOf(rpm, T)) / OUTER.len, 1);
-const yOfRpm = (rpm, T) => rpmPoint(rpm, T).y;
-const bandWidthAt = (y) => { const xo = xAtY(OUTER, y), xi = xAtY(INNER, y); return xo === null || xi === null ? 40 : Math.abs(xo - xi); };
+function spineAt(s) {           // the left tach's point at spine position s
+    const i = Math.min(7, Math.floor(s)), t = s - i;
+    return [lerp(SPINE[i][0], SPINE[i + 1][0], t), lerp(SPINE[i][1], SPINE[i + 1][1], t)];
+}
+/** The right tach's spine point at rpm: [x, y]. */
+const point = (rpm, T) => mirrorPt(spineAt(spineS(rpm, T)));
+const yOfRpm = (rpm, T) => spineAt(spineS(rpm, T))[1];
 
-/** Ticks every tickEvery rpm on the right bar: { rpm, x (outer edge), y, len, major }. */
+/** Ticks every tickEvery rpm on the right tach: { rpm, x (where it starts), y, len (toward the centre), major }. */
 function ticks(T) {
     const out = [];
     for (let r = 0; r <= T.max; r += T.tickEvery) {
-        const p = rpmPoint(r, T), xo = xAtY(OUTER, p.y), major = r % 1000 === 0;
-        out.push({ rpm: r, x: xo === null ? p.x : xo, y: p.y, len: bandWidthAt(p.y) * (major ? BARS.tickMajor : BARS.tickMinor), major });
+        const p = point(r, T), major = r % 1000 === 0;
+        out.push({ rpm: r, x: p[0] + TACH.tickX, y: p[1], len: major ? TACH.tickMajor : TACH.tickMinor, major });
+    }
+    return out;
+}
+/** Numerals 0..max/1000 on the right tach: { k, x, y } glyph centres (Codex's label offsets interpolated along s). */
+function numerals(T) {
+    const out = [], n = T.max / 1000;
+    for (let k = 0; k <= n; k++) {
+        const s = 8 * k / n, j = Math.min(3, Math.floor(s / 2)), t = s / 2 - j, p = spineAt(s);
+        const dx = lerp(LABEL_OFF[j][0], LABEL_OFF[j + 1][0], t), dy = lerp(LABEL_OFF[j][1], LABEL_OFF[j + 1][1], t);
+        out.push({ k, x: Math.round((1920 - (p[0] + dx)) * 10) / 10, y: Math.round((p[1] + dy + TACH.labelH / 2) * 10) / 10 });
     }
     return out;
 }
 
-// the mockup's numeral inset from the outer edge (px), at the heights of its 0 2 4 6 8 ticks
-const mockY = (rpm) => at(OUTER, (S0 + (STOP - S0) * (rpm <= 1000 ? MOCK_FIRST * rpm / 1000 : MOCK_FIRST + (1 - MOCK_FIRST) * (rpm - 1000) / (MOCK_SCALE_MAX - 1000))) / OUTER.len, 1).y;
-const INSET = BARS.nums8.map((p, k) => [mockY(2000 * k), xAtY(OUTER, mockY(2000 * k)) - p[0], p[1] - mockY(2000 * k)]);
-function insetAt(y) {           // [x inset, y offset] interpolated in y (the list runs bottom to top)
-    const L = INSET;
-    if (y >= L[0][0]) return [L[0][1], L[0][2]];
-    for (let i = 1; i < L.length; i++) {
-        if (y >= L[i][0]) { const f = (y - L[i - 1][0]) / (L[i][0] - L[i - 1][0]); return [L[i - 1][1] + (L[i][1] - L[i - 1][1]) * f, L[i - 1][2] + (L[i][2] - L[i - 1][2]) * f]; }
-    }
-    return [L[L.length - 1][1], L[L.length - 1][2]];
-}
-/** Numerals 0..max/1000 on the right bar: { k, x, y } glyph centres. */
-function numerals(T) {
+/* ---------- the corner gauges: a faceted band (Adam's correction 2) ---------- */
+// the left (fuel) gauge's centreline, low end to high end; the right (oil) one is its mirror
+const GAUGE = { line: [[290, 592], [176, 592], [116, 532], [116, 440]], half: 9, gap: 3, lowCut: 18 };
+const LEGS = GAUGE.line.slice(1).map((b, i) => {
+    const a = GAUGE.line[i], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.sqrt(dx * dx + dy * dy);
+    return { a, len, d: [dx / len, dy / len], n: [-dy / len, dx / len] };      // n: toward the inner side (the panel's centre)
+});
+GAUGE.len = LEGS.reduce((s, l) => s + l.len, 0);
+// each leg's edge start / end (distance along the leg) for the inner (+half) and outer (-half) edge: a mitre at each bend,
+// pulled back gap/2 into each leg; the low end cut at 45 deg (outer edge longest), the high end flat
+LEGS.forEach((L, i) => {
+    const mitre = (M, o) => {        // where the edge at offset o meets the bisector at a bend, along this leg from its start
+        const m = [M.n[0] + L.n[0], M.n[1] + L.n[1]], ml = Math.sqrt(m[0] * m[0] + m[1] * m[1]);
+        const dot = (m[0] * L.n[0] + m[1] * L.n[1]) / ml;
+        return o * (m[0] * L.d[0] + m[1] * L.d[1]) / ml / dot;
+    };
+    L.s = i === 0 ? { 1: GAUGE.lowCut, '-1': 0 } : { 1: mitre(LEGS[i - 1], GAUGE.half) + GAUGE.gap / 2, '-1': mitre(LEGS[i - 1], -GAUGE.half) + GAUGE.gap / 2 };
+    L.e = i === LEGS.length - 1 ? { 1: L.len, '-1': L.len } : { 1: L.len + mitre(LEGS[i + 1], GAUGE.half) - GAUGE.gap / 2, '-1': L.len + mitre(LEGS[i + 1], -GAUGE.half) - GAUGE.gap / 2 };
+});
+const gx = (side, x) => (side > 0 ? 1920 - x : x);
+const share = (f) => (typeof f === 'number' && isFinite(f) ? clamp(f, 0, 1) : 0);
+/** The quads (4 points each, panel px) covering share f of the gauge from its low end; [] at 0, all three legs at 1. */
+function gaugeQuads(f, side) {
+    let rest = share(f) * GAUGE.len;
     const out = [];
-    for (let k = 0; k <= T.max / 1000; k++) {
-        const y = yOfRpm(1000 * k, T), ins = insetAt(y);
-        out.push({ k, x: Math.round((xAtY(OUTER, y) - ins[0]) * 10) / 10, y: Math.round((y + ins[1]) * 10) / 10 });
-    }
+    if (rest <= 0) return out;
+    LEGS.forEach((L) => {
+        if (rest <= 0) return;
+        const c = rest;      // the partial leg ends in a cut perpendicular to it
+        rest -= L.len;
+        const at = (dist, o) => [L.a[0] + L.d[0] * dist + L.n[0] * o, L.a[1] + L.d[1] * dist + L.n[1] * o];
+        const e = (k) => Math.min(L.e[k], Math.max(L.s[k], c));
+        if (c <= Math.min(L.s[1], L.s['-1'])) return;
+        const q = [at(L.s['-1'], -GAUGE.half), at(e('-1'), -GAUGE.half), at(e(1), GAUGE.half), at(L.s[1], GAUGE.half)];
+        out.push(q.map((p) => [gx(side, p[0]), p[1]]));
+    });
     return out;
+}
+/** The centreline point at share f, off px toward the inner side: [x, y]. */
+function gaugePoint(f, side, off) {
+    let d = share(f) * GAUGE.len, i = 0;
+    while (i < LEGS.length - 1 && d > LEGS[i].len) { d -= LEGS[i].len; i++; }
+    const L = LEGS[i], o = off || 0;
+    return [gx(side, L.a[0] + L.d[0] * d + L.n[0] * o), L.a[1] + L.d[1] * d + L.n[1] * o];
 }
 
 /* ---------- rects (panel px) ---------- */
-const SLOTS = { x0: 1440, x1: 1640, upper: [268, 398], lower: [404, 534] };
-const CENTRE = { cx: 967.5, gearY: 394, gearH: 82, gearW: 101, gearSW: 18, lineY: 452, line: [153, 159, 211], speedY: 510, speedH: 52, speedW: 64, speedSW: 11.5,
-    unitX: 1075, unitY: 495, stackX: 1047, stackY: 406, tagY: 568 };
+// 0.1.7, Codex's layout: the side panels' slots (right; the left mirrored), the centre (gear over the line over the speed)
+const SLOTS = { x0: 1464, x1: 1698, upper: [208, 338], lower: [342, 472] };
+// gearY / speedY: the glyphs' middles (Codex tops 272 and 438); unitY: the unit's middle (Codex baseline 477)
+const CENTRE = { cx: 960, gearTop: 272, gearW: 91, gearH: 112, gearY: 272 + 112 / 2, speedTop: 438, speedW: 49, speedH: 61, speedY: 438 + 61 / 2,
+    unitX: 1087, unitY: 469, lineY: 406 };
 const box = (x, y, w, h) => ({ target: 'panel', x, y, w, h });
 const flipRect = (r) => box(1920 - r.x - r.w, r.y, r.w, r.h);
 const RECTS = {
-    tachs: box(0, 0, 1920, 720),               // the tachs layer: the whole panel, opaque (background, bars, fill, numerals)
-    band: box(1196, 168, 180, 462),            // the right band (mask), mirrored for the left
-    overR: box(1138, 160, 246, 474),           // the bars' edge lines, ticks, red and amber fields (right; mirrored for the left)
-    centre: box(748, 220, 440, 376),           // the centre layer: gear (letter or digit), speed, unit, drive-mode tag,
-                                               // the line, end caps and stack icon (CENTRE_CELL), the M badge
-    badge: box(890, 222, 132, 56),             // the M badge (in the slats' place)
-    panelR: box(1400, 262, 260, 278),          // a side panel's content (plates are in the background art)
-    cornerL: box(150, 470, 450, 232),          // fuel gauge, range, clock
-    cornerR: box(1420, 470, 340, 232),         // oil gauge, outside temperature (0.1.3: ends at 1760, KB-ANY-205's stray label gone)
+    tachs: box(0, 0, 1920, 720),               // the tachs layer: the whole panel, opaque (background, tachs, fill, numerals)
+    band: box(1232, 82, 192, 520),             // the right tach's shape, Codex path A (mask), mirrored for the left
+    overR: box(1228, 78, 194, 530),            // the right tach's edges, red edge, end line and ticks (mirrored for the left)
+    centre: box(730, 266, 460, 240),           // the centre layer: gear (letter or digit), speed, unit, the stack, line and caps
+    panelR: box(1450, 200, 260, 290),          // a side panel's content
+    cornerL: box(96, 420, 400, 290),           // fuel gauge, range, clock
+    cornerR: box(1530, 420, 320, 290),         // oil gauge, outside temperature
 };
 RECTS.overL = flipRect(RECTS.overR);
 RECTS.panelL = flipRect(RECTS.panelR);
-RECTS.panels = box(150, 262, 1610, 440);       // the panels layer: both side panels and both corners
-/** The centre's static line, end caps and stack icon, one atlas cell drawn at this panel rect (tools/mtrack-art/art.html). */
-const CENTRE_CELL = { x: 748, y: 400, w: 440, h: 66 };
+RECTS.panels = box(96, 200, 1754, 510);        // the panels layer: both side panels and both corners
+/** The centre's static stack, line and end caps, one atlas cell drawn at this panel rect (tools/mtrack-art/art.html). */
+const CENTRE_CELL = { x: 735, y: 340, w: 450, h: 72 };
 
 /** A side panel's content box in panel px. half: 'upper' | 'lower' | 'full'; side -1 left, 1 right. */
 function slotRect(side, half) {
@@ -158,10 +144,10 @@ function slatBar(st) {
 }
 
 /**
- * The centre block's glyph quads (the mockup's gearBlock), in the glyph layer's rect: [{ dst: [x, y, w, h], src: [x, y,
- * intensity, 0] }], at most 6. atlas: art.json's atlas table. f: { gear (logic.gearGlyph: 'P' 'R' 'N' 'D' '-' or the
- * engaged gear's digit '1'-'8', drawn in the one big gear spot; anything else a dash), speed (whole number shown, or null:
- * a dash), unit ('mph' | 'km/h'), tag (a drive-mode tag) }.
+ * The centre block's glyph quads, in the glyph layer's rect: [{ dst: [x, y, w, h], src: [x, y, intensity, 0] }], at
+ * most 5. atlas: art.json's atlas table. f: { gear (logic.gearGlyph: 'P' 'R' 'N' 'D' '-' or the engaged gear's digit
+ * '1'-'8', drawn in the one big gear spot; anything else a dash), speed (whole number shown, or null: a dash), unit
+ * ('mph' | 'km/h') }. 0.1.7: no drive-mode tag (neither Codex's design nor BMW's photo has one).
  */
 function centreQuads(atlas, f) {
     const R = RECTS.centre, X = CENTRE.cx, out = [];
@@ -175,14 +161,12 @@ function centreQuads(atlas, f) {
     let x = X - (cells.reduce((a, c) => a + c.adv + sp.gap, -sp.gap)) / 2;
     cells.forEach((c) => { put(c, x - c.ox, CENTRE.speedY - c.h / 2, 1); x += c.adv + sp.gap; });
     const u = atlas.labels[f.unit] || atlas.labels.mph;
-    put(u, CENTRE.unitX - u.ox, CENTRE.unitY - u.h / 2, 0.92);
-    const t = atlas.tags[f.tag];
-    if (t) put(t, X - t.w / 2, CENTRE.tagY - t.h / 2, 0.92);   // 0.1.5: near-white (was a grey 0.6)
+    put(u, CENTRE.unitX - u.ox, CENTRE.unitY - u.h / 2, 0.52);   // 0.1.7: Codex's muted #707581 over the glyph colour
     return out;
 }
 
 /**
- * The tachs' numerals 0..7 on both bars, from the atlas's bar style: [{ dst: [x, y, w, h] (panel px, whole), src: [x, y]
+ * The tachs' numerals 0..7 on both tachs, from the atlas's bar style: [{ dst: [x, y, w, h] (panel px, whole), src: [x, y]
  * (atlas px) }], the right bar's 8 then the left's (placed at the mirror of each centre, the glyph itself not mirrored).
  */
 function barNumeralQuads(atlas, T) {
@@ -196,6 +180,6 @@ function barNumeralQuads(atlas, T) {
 
 module.exports = {
     centreQuads, barNumeralQuads, CENTRE_CELL,
-    BARS, CENTRE, SLOTS, RECTS, spline, at, xAtY, arcAtY, mirror, mirrorPt, fracOf, rpmPoint, yOfRpm, ticks, numerals,
-    bandWidthAt, slotRect, slatBar, flipRect, OUTER, INNER,
+    SPINE, TACH, GAUGE, CENTRE, SLOTS, RECTS, mirror, mirrorPt, point, yOfRpm, ticks, numerals, gaugeQuads, gaugePoint,
+    slotRect, slatBar, flipRect,
 };

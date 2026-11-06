@@ -29,8 +29,8 @@ module.exports = [
         assert.ok(!('requireCheckControl' in cfg), 'the old config switch is gone (BMW popups replaces it)');
         assert.ok(st.steps.indexOf(S.speedStaleMs) >= 0);
     }],
-    ['app.json: id, title, version 0.1.6, installs with the cover off, Sport+ only, US units', () => {
-        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.6', 'OAD3']);
+    ['app.json: id, title, version 0.1.7, installs with the cover off, Sport+ only, US units', () => {
+        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.7', 'OAD3']);
         assert.strictEqual(item('coverOn').default, false);
         assert.strictEqual(item('whenToShow').default, 'sportplus');
         assert.strictEqual(item('units').default, 'us');
@@ -65,43 +65,43 @@ module.exports = [
             if (it.name !== 'atlas') { const r = it.rect; assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= 1920 && r.y + r.h <= 720, it.name); }
             assert.ok(it.w <= 2048 && it.h <= 2048, it.name + ' within an asset');
         });
-        assert.deepStrictEqual(ART.items.map((i) => i.name), ['bgR2', 'band', 'overR', 'atlas', 'badge', 'cornerL', 'cornerR_us', 'cornerR_metric']);
+        assert.deepStrictEqual(ART.items.map((i) => i.name), ['bgR2', 'band', 'overR', 'atlas', 'cornerL', 'cornerR_us', 'cornerR_metric'], 'no M badge (0.1.7)');
         const it = (n) => ART.items.filter((i) => i.name === n)[0], xywh = (r) => [r.x, r.y, r.w, r.h];
         assert.deepStrictEqual([it('bgR2').format, it('bgR2').w, it('bgR2').h, it('bgR2').sampling], ['r8', 480, 360, 'bilinear'], 'the background\'s right half at half resolution');
         assert.deepStrictEqual([it('overR').format, it('overR').w, it('overR').h], ['r8', 2 * G.RECTS.overR.w, G.RECTS.overR.h], 'the over-art as coverage + palette index');
-        ['band', 'badge', 'cornerL'].forEach((n) => assert.deepStrictEqual(xywh(it(n).rect), xywh(G.RECTS[n]), n + ' rect = geom'));
+        ['band', 'cornerL'].forEach((n) => assert.deepStrictEqual(xywh(it(n).rect), xywh(G.RECTS[n]), n + ' rect = geom'));
         assert.deepStrictEqual(xywh(it('cornerR_us').rect), xywh(G.RECTS.cornerR));
         const mem = ST.memoryOf(ART);
         assert.ok(mem <= cfg.memoryBudgetBytes && cfg.memoryBudgetBytes <= 3 * 1048576, 'renderer memory ' + mem);
-        assert.strictEqual(mem, 3135520, 'the measured 2.99 MiB (make-art prints it; 0.1.6: the gear digits at full size, 0.1.5 was 3049504)');
+        assert.strictEqual(mem, 3017808, 'the measured 2.88 MiB (make-art prints it; 0.1.7: no badge, Codex\'s layout; 0.1.6 was 3135520)');
         assert.ok(cfg.memoryBudgetBytes < cfg.renderer.pixelBytes / 5, 'far under the 16 MiB every app shares');
     }],
-    ['the over-art\'s palette index decodes to its colours: a pixel of each field and of the edge line', () => {
+    ['the over-art\'s palette index decodes to its colours: the outer edge, its gradient, the red edge and the ticks (0.1.7)', () => {
         const ov = it2('overR'), w = G.RECTS.overR.w, h = G.RECTS.overR.h, px = zlib.inflateRawSync(Buffer.from(ov.data, 'base64'));
         const seen = {};
         for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const l = px[y * 2 * w + x], k = px[y * 2 * w + w + x]; if (l > 200) { assert.strictEqual(k % 17, 0); seen[k / 17] = (seen[k / 17] || 0) + 1; } }
-        [1, 4, 5, 6].forEach((k) => assert.ok(seen[k] > 20, 'colour ' + k + ' (' + ST.OVER_PALETTE[k] + ') used: ' + JSON.stringify(seen)));
+        [2, 7, 10, 11, 12].forEach((k) => assert.ok(seen[k] > 20, 'colour ' + k + ' (' + ST.OVER_PALETTE[k] + ') used: ' + JSON.stringify(seen)));
         assert.ok(!seen[0], 'index 0 is never written where something is drawn');
     }],
-    ['no stray unit label right of the oil gauge (KB-ANY-205): art.html draws no text at x 1806, and the right corner\'s art ends at 1760', () => {
+    ['no stray unit label right of the oil gauge (KB-ANY-205): art.html draws no text at x 1806, and the right corner\'s art ends at the gauge (0.1.7: x 1814)', () => {
         const html = fs.readFileSync(path.join(__dirname, '../../tools/mtrack-art/art.html'), 'utf8');
         assert.ok(!/1806/.test(html), 'the 0.1.0 label call is gone');
         const c = it2('cornerR_us'), px = zlib.inflateRawSync(Buffer.from(c.data, 'base64'));
         let right = 0;
         for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (px[(y * c.w + x) * 4 + 3] > 0) right = Math.max(right, c.rect.x + x);
-        assert.ok(right < 1760, 'the oil gauge art ends at ' + right);
+        assert.ok(right < 1818, 'the oil gauge art ends at ' + right);
     }],
-    ['atlas: every gear (P R N D - and 0.1.6\'s digits 1-8, no small style) and speed glyph the centre draws, the tachs\' numerals 0..7; mph and km/h; the drive-mode tags; the centre\'s static cell', () => {
+    ['atlas: every gear (P R N D - and 0.1.6\'s digits 1-8, no small style) and speed glyph the centre draws, the tachs\' numerals 0..7; mph and km/h; no drive-mode tags (0.1.7); the centre\'s static cell', () => {
         const A = ART.atlas;
         'PRND-12345678'.split('').forEach((c) => assert.ok(A.styles.gear.glyphs[c], 'gear ' + c));
         assert.ok(!A.styles.small && !A.styles.gear.glyphs['9'], 'no small digit style, no gear 9');
-        assert.deepStrictEqual(Object.keys(A.tags), ['SPORT+', 'SPORT', 'COMFORT'], 'only the tags main.js draws (no ECO PRO)');
+        assert.ok(!('tags' in A), 'no tags key: neither Codex\'s design nor BMW\'s photo has a drive-mode tag');
         '01234567'.split('').forEach((c) => assert.ok(A.styles.bar.glyphs[c], 'bar numeral ' + c));
         assert.ok(!A.styles.bar.glyphs['8'] && !A.styles.gear.glyphs['0'], 'only what the cover draws');
         assert.deepStrictEqual([A.centre.px, A.centre.py], [G.CENTRE_CELL.x, G.CENTRE_CELL.y]);
         '0123456789-'.split('').forEach((c) => assert.ok(A.styles.speed.glyphs[c], 'speed ' + c));
         assert.ok(A.labels.mph && A.labels['km/h']);
-        ['SPORT+', 'SPORT', 'COMFORT'].forEach((x) => assert.ok(A.tags[x], x));
+        assert.deepStrictEqual([A.styles.gear.w, A.styles.gear.h, A.styles.speed.w, A.styles.speed.h, A.styles.bar.w, A.styles.bar.h], [91, 112, 49, 61, 35, 26], 'Codex\'s glyph boxes');
     }],
     ['0.1.6 full panel: no bgR2 byte under 15 (a 0 is the LCD\'s lit backlight, a lavender frame on the car); the corners too', () => {
         const it = it2('bgR2'), px = zlib.inflateRawSync(Buffer.from(it.data, 'base64'));
@@ -132,7 +132,7 @@ module.exports = [
             assert.ok(samplers.length <= 5, s.id + ': ' + samplers.length + ' samplers');
             assert.ok(/#ifdef GL_FRAGMENT_PRECISION_HIGH/.test(s.fs) || s.id === 'slats', s.id + ' picks highp only where the GPU has it');
         });
-        assert.ok(new RegExp('vec2\\(' + G.RECTS.centre.w + '\\.0, ' + G.RECTS.centre.h + '\\.0\\)').test(S.centreFs(G.RECTS.centre, ART.atlas, G.RECTS.badge)));
+        assert.ok(new RegExp('vec2\\(' + G.RECTS.centre.w + '\\.0, ' + G.RECTS.centre.h + '\\.0\\)').test(S.centreFs(G.RECTS.centre, ART.atlas)));
         assert.strictEqual((ST.coverStages(ART, cfg)[0].fs.match(/a = max\(a, num\(p, /g) || []).length, 16, 'the tachs bake 16 numeral quads');
     }],
     ['the emulator hook: only emufeed.js reads MTRACK_EMU_FEED, loaded only when it is set; no other env var in the app', () => {
@@ -141,15 +141,14 @@ module.exports = [
             envs.forEach((e) => assert.ok(f === 'main.js' && (e === 'process.env.MTRACK_CR_SOCKET' || e === 'process.env.MTRACK_EMU_FEED'), f + ': ' + e));
         });
         assert.ok(/if \(process\.env\.MTRACK_EMU_FEED\) require\('\.\/emufeed'\)/.test(fs.readFileSync(path.join(APP, 'main.js'), 'utf8')));
-    }],    ['0.1.5 colours: pale yellow shift markers (hue 47 deg), the oil gauge\'s cold end cyan (188 deg) and drawn in its art', () => {
-        const hue = (c) => { const mx = Math.max.apply(null, c), mn = Math.min.apply(null, c), d = mx - mn, r = c[0], g = c[1], b = c[2];
-            const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return (h * 60 + 360) % 360; };
-        assert.ok(Math.abs(hue(ST.OVER_PALETTE[6]) - 47.4) <= 10, 'shift marker hue ' + hue(ST.OVER_PALETTE[6]));
-        assert.ok(Math.abs(hue(ST.PALETTE[12]) - 187.5) <= 10, 'cold end hue ' + hue(ST.PALETTE[12]));
-        const ci = it2('cornerR_us'), px = zlib.inflateRawSync(Buffer.from(ci.data, 'base64'));
-        let cyan = 0;
-        for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 200 && ST.encodeLH(px.slice(i, i + 4), 1, { x: 0, y: 0, w: 1, h: 1 }, ST.PALETTE)[1] === 12 * 17) cyan++;
-        assert.ok(cyan > 100, 'cyan pixels in the right corner art: ' + cyan);
+    }],    ['0.1.7 colours: the corner art draws Codex\'s track, outline and red zone; the palettes hold the colours the shaders and widgets name', () => {
+        const ci = it2('cornerR_us'), px = zlib.inflateRawSync(Buffer.from(ci.data, 'base64')), seen = {};
+        for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 200) { const k = ST.encodeLH(px.slice(i, i + 4), 1, { x: 0, y: 0, w: 1, h: 1 }, ST.PALETTE)[1] / 17; seen[k] = (seen[k] || 0) + 1; }
+        [[6, 'track #161a22'], [5, 'zone #b3283e'], [1, 'labels #d7d9e1']].forEach((x) => assert.ok(seen[x[0]] > 30, x[1] + ': ' + JSON.stringify(seen)));
+        const has = (P, h) => P.some((c) => c.join() === [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)).join());
+        ['#d7d9e1', '#acb0bd', '#707581', '#626875', '#b3283e', '#161a22', '#596171', '#c4c8d2', '#d0d3db'].forEach((h) => assert.ok(has(ST.PALETTE, h), 'PALETTE ' + h));
+        ['#7e889e', '#151c27', '#78283a', '#8a3748', '#9da3b2', '#555d6c'].forEach((h) => assert.ok(has(ST.OVER_PALETTE, h), 'OVER_PALETTE ' + h));
+        assert.strictEqual(ST.PALETTE.length, 16); assert.strictEqual(ST.OVER_PALETTE.length, 16);
     }],
     ['0.1.5: the art\'s text face is committed (Liberation Sans, OFL beside it) and art.html names no system face', () => {
         const mk = fs.readFileSync(path.join(__dirname, '../../tools/mtrack-art/make-art.mjs'), 'utf8'), html = fs.readFileSync(path.join(__dirname, '../../tools/mtrack-art/art.html'), 'utf8');

@@ -2,7 +2,7 @@
   "id": "adam_mtrack",
   "title": "M Track Cluster",
   "description": "An M Track style cover on the instrument cluster in Sport+: bar tachs to 7,000 rpm, gear and mph, side panels, shift-light slats. Off until you turn it on",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "mguAppStartType": "autostart",
   "vendor": "custom",
   "loggingId": "OAD3",

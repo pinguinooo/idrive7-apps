@@ -174,20 +174,20 @@ module.exports = [
         assert.ok(r.lines.some((l) => /^kill switch file: /.test(l)));
         await r.done();
     }],
-    ['builds only after 1 s of every condition: 4 layers (content z 90 to 93, never exclusive), each made hidden after its assets and lifted; 11 assets under the memory budget; shown with u_alive 1', async () => {
+    ['builds only after 1 s of every condition: 4 layers (content z 90 to 93, never exclusive), each made hidden after its assets and lifted; 10 assets under the memory budget; shown with u_alive 1', async () => {
         const r = await shownApp({});
         const L4 = mine(r);
         assert.ok(L4[0].t - r.t0 >= 950, 'first layer after ' + (L4[0].t - r.t0) + ' ms');
         assert.deepStrictEqual(L4.map((l) => [l.target, l.class, l.z, l.exclusive, l.visible]), [90, 91, 92, 93].map((z) => ['panel', 'content', z, 0, 0]));
         L4.forEach((l) => assert.ok(r.msgs.some((m) => m.conn === l.conn && m.op === 'set' && m.ref === l.ref && m.visible === 1 && m.t >= l.t), 'lifted: z ' + l.z));
         const assets = r.msgs.filter((m) => m.op === 'asset');
-        assert.strictEqual(assets.length, 11);
+        assert.strictEqual(assets.length, 10);
         const mem = assets.reduce((b, a) => b + a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2, 0);
         assert.ok(mem <= cfg.memoryBudgetBytes, 'renderer memory ' + mem);
         const frames = r.msgs.filter((m) => m.op === 'frame');
         assert.ok(assets.every((a) => frames.some((f) => f.ref === a.ref && f.t <= r.shownAt)), 'every asset\'s pixels before the show');
         assert.ok(L4.every((l) => r.msgs.some((m) => m.conn === l.conn && m.ref === l.ref && m.op === 'uniform' && m.name === 'u_alive' && m.v === '1')), 'u_alive 1 on every layer');
-        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 11 assets, 3\.0 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 10 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
         await r.done();
     }],
     ['drop: Sport+ to Sport (Sport+ only), within one tick; back after 1 s in Sport+', async () => {
@@ -403,8 +403,8 @@ module.exports = [
         assert.strictEqual(r.msgs.filter((m) => m.op === 'animate' && m.name === 'u_alive').length, n, 'animates after the drop');
         r.mode(2);
         await until(() => coverUp(r), 4000, 'shown again');
-        assert.strictEqual(r.msgs.filter((m) => m.op === 'asset').length, 11, 'the art went once');
-        assert.strictEqual(r.msgs.filter((m) => m.op === 'frame' && m.t > r.shownAt && r.msgs.some((a) => a.op === 'asset' && a.ref === m.ref && a.w !== 520 && a.w !== 900 && a.w !== 680)).length, 0, 'static art re-sent');
+        assert.strictEqual(r.msgs.filter((m) => m.op === 'asset').length, 10, 'the art went once');
+        assert.strictEqual(r.msgs.filter((m) => m.op === 'frame' && m.t > r.shownAt && r.msgs.some((a) => a.op === 'asset' && a.ref === m.ref && [0, 1, 2].every((k) => a.w !== 2 * require(path.join(APP, 'geom.js')).RECTS[['panelR', 'cornerL', 'cornerR'][k]].w))).length, 0, 'static art re-sent');
         await r.done();
     }],
     ['exit: process exit disarms (the service sees the connection close)', async () => {
@@ -508,7 +508,7 @@ module.exports = [
         const d = fs.readFileSync(path.join(r.dataDir, 'mtrack-diag.log'), 'utf8');
         [new RegExp('start: M Track ' + SPEC.version.replace(/\./g, '\\.') + ', node v'), /> \{"op":"hello","app":"adam_mtrack","proto":1\}/, /> pixels bgR2 \(asset \d+, r8 480x360\): 172800 B/,
             /> \{"op":"layer","ref":\d+,"target":"panel","kind":"effect","class":"content","z":90,"x":0,"y":0,"w":1920,"h":720,"visible":0,"exclusive":0,"contend":0,"fs":"\d+ chars"\}/,
-            /cover: stage 1 TACHS made hidden \(layer \d+, 5 assets, 882448 B\)/, /> \{"op":"set","ref":\d+,"visible":1\}/, /> \{"op":"bind",/,
+            /cover: stage 1 TACHS made hidden \(layer \d+, 5 assets, 789640 B\)/, /> \{"op":"set","ref":\d+,"visible":1\}/, /> \{"op":"bind",/,
             /cover: stage 1 TACHS confirmed and written: bound/, /cover: stage 4 SLATS confirmed and written: bound/,
             /< \{"ev":"hello"/, /< \{"ev":"target","target":"panel","state":"shown"/, /< \{"ev":"layer","ref":\d+,"state":"shown"/,
             /< status: upload: cap .* \| target panel: /, /> \{"op":"drop","ref":\d+\}/, /release confirmed \(mode\): panel idle/].forEach((re) => assert.ok(re.test(d), re + '\n' + d.slice(0, 2500)));

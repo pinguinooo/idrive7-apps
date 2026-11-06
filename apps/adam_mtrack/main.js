@@ -44,7 +44,6 @@ const PRESS_UNITS = { 1: 'BAR', 2: 'KPA', 3: 'PSI', BAR: 'BAR', KPA: 'KPA', PSI:
 const CONS_L100 = { 1: (x) => x, 2: (x) => 282.481 / x, 3: (x) => 235.215 / x, 4: (x) => 100 / x,
     VERBRAUCH_IN_L_S_100KM: (x) => x, VERBRAUCH_IN_MPG_UK: (x) => 282.481 / x, VERBRAUCH_IN_MPG_US: (x) => 235.215 / x, VERBRAUCH_IN_KM_S_L: (x) => 100 / x };
 const SPEED_KMH = { 1: 1, 2: U.KM_PER_MI, KM_S_H__KM: 1, MPH__MLS: U.KM_PER_MI };
-const MODE_TAG = { sportplus: 'SPORT+', sport: 'SPORT', comfort: 'COMFORT' };
 const isNum = U.isNum;
 
 mgu.run({
@@ -288,9 +287,8 @@ mgu.run({
                 return {
                     mph: kmh === null ? null : kmh / U.KM_PER_MI, rpm: isNum(d.rpm) ? d.rpm : null,   // the KNOWN step's needles
                     yr: G.yOfRpm(isNum(ld.rpm) ? ld.rpm : 0, cfg.tach),
-                    quads: G.centreQuads(art.atlas, { gear: L.gearGlyph(d.stage, d.gear), speed: kmh === null ? null : U.SPD(kmh, u), unit: u.speed, tag: MODE_TAG[carMode] }),
+                    quads: G.centreQuads(art.atlas, { gear: L.gearGlyph(d.stage, d.gear), speed: kmh === null ? null : U.SPD(kmh, u), unit: u.speed }),
                     slats: v.coverSlats ? slat : null,
-                    badge: !v.coverSlats || slat.lit === 0,
                     level: L.levelOf(cfg, v),
                 };
             }

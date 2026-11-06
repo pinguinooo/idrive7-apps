@@ -4,10 +4,10 @@
  * order output.js builds them (each confirmed by the renderer's status before the next). Pure: no I/O, Node 8.
  *
  *   coverStages(art, cfg)  [tachs, panels, centre, slats]: 4 layers, 10 assets (stage 4 only with the slats on)
- *       1 TACHS   the whole panel, opaque: background, bars, fill, numerals    bgR2, overR, opal, band, atlas
+ *       1 TACHS   the whole panel, opaque: background, tachs, fill, numerals   bgR2, overR, opal, band, atlas
  *       2 PANELS  both side panels and both corners (live boxes)               panelL, panelR, cornerL, cornerR, pal
- *       3 CENTRE  gear, speed, unit, drive-mode tag, line, M badge             badge (and the atlas)
- *       4 SLATS   the shift-light slats in the badge's place                   none
+ *       3 CENTRE  gear, speed, unit, the stack, line and caps                  (the atlas)
+ *       4 SLATS   the shift-light slats above the gear                         none
  *   knownStages(card)      the KNOWN step: G's Dash's full-screen cluster test shape: one layer over the panel, one r8
  *                          1024 x 576 bilinear asset (card: its pixels)
  *   memoryOf(art)          the cover's share of the renderer's pixel memory: every asset, counted twice (cluster-render)
@@ -22,12 +22,13 @@ const S = require('./shader');
 const G = require('./geom');
 
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-/** The live boxes' colours (widgets.js and the corners' art), nearest wins; index 0 is never written. */
-const PALETTE = ['#000000', '#f2f5f8', '#dfe4ea', '#aeb6c0', '#b0b4bc', '#96989f', '#e2262a', '#ff2a1f', '#3ecf6a', '#c8c8e6',
-    '#8282c8', '#ff6a1a', '#28cdeb', '#aab0b8', '#e6eaee', '#f1141d'].map(hex);   // 12: the oil gauge's cold end, cyan (0.1.5, photo)
-/** The bars' over-art colours (art.html barOver: lines, the dark gap line and its blends, the red and amber fields). */
-const OVER_PALETTE = [[0, 0, 0], [238, 241, 244], [226, 232, 240], [214, 220, 236], [14, 14, 18], [200, 30, 42], [242, 214, 90],
-    [176, 176, 186], [128, 128, 134], [64, 64, 68], [96, 96, 100], [152, 152, 162], [198, 198, 206], [36, 36, 40], [240, 230, 170], [206, 92, 96]];
+/** The live boxes' colours (widgets.js and the corners' art: 0.1.7 Codex's), nearest wins; index 0 is never written. */
+const PALETTE = ['#000000', '#d7d9e1', '#acb0bd', '#707581', '#626875', '#b3283e', '#161a22', '#596171', '#c4c8d2', '#ff6a1a',
+    '#c8c8e6', '#8282c8', '#f1141d', '#d0d3db', '#df8e2d', '#9aa0ad'].map(hex);
+/** The tachs' over-art colours (art.html barOver, 0.1.7 Codex's: the bloom, the outer edge and its gradient, the inner
+ * edge, the red edge and the ticks). */
+const OVER_PALETTE = ['#000000', '#7e889e', '#151c27', '#2a303c', '#4a505e', '#6f7788', '#a0a8bb', '#b9bfd0', '#7f8798', '#424956',
+    '#78283a', '#8a3748', '#9da3b2', '#555d6c', '#bc364e', '#d7d9e1'].map(hex);
 const BOXES = ['panelL', 'panelR', 'cornerL', 'cornerR'];
 const TINT = [0.97, 0.98, 1];
 
@@ -85,13 +86,13 @@ function coverStages(art, cfg) {
     const level = (f) => (typeof f.level === 'number' ? f.level : 1);
     return [
         {
-            id: 'tachs', name: 'TACHS', what: 'the tachs: background, bars, fill, numerals', rect: R.tachs, z: B.z,
-            fs: S.tachsFs(art.atlas ? G.barNumeralQuads(A, cfg.tach) : [], A, R),
+            id: 'tachs', name: 'TACHS', what: 'the tachs: background, tachs, fill, numerals', rect: R.tachs, z: B.z,
+            fs: S.tachsFs(art.atlas ? G.barNumeralQuads(A, cfg.tach) : [], A, R, G.point(cfg.tach.redFrom, cfg.tach)[1]),
             assets: [artAsset(art, 'bgR2'), artAsset(art, 'overR'), { name: 'opal', format: 'rgba8', w: 16, h: 1, sampling: 'nearest', px: () => palPixels(OVER_PALETTE) },
                 artAsset(art, 'band'), artAsset(art, 'atlas')],
             binds: { u_bg: 'bgR2', u_over: 'overR', u_opal: 'opal', u_band: 'band', u_atlas: 'atlas' },
             statics: () => [],
-            live: (f) => [['u_tint', TINT.concat([level(f)])], ['u_fill', [Math.round((typeof f.yr === 'number' ? f.yr : 720) * 10) / 10, G.BARS.capH / 2, G.BARS.glowH, 0]]],
+            live: (f) => [['u_tint', TINT.concat([level(f)])], ['u_fill', [Math.round((typeof f.yr === 'number' ? f.yr : 720) * 10) / 10, G.TACH.pointerHalf, G.TACH.fillBottom, 0]]],
             on: () => true,
         },
         {
@@ -104,15 +105,15 @@ function coverStages(art, cfg) {
             on: () => true,
         },
         {
-            id: 'centre', name: 'CENTRE', what: 'gear, speed and the M badge', rect: R.centre, z: B.z + 2,
-            fs: S.centreFs(R.centre, A, R.badge),
-            assets: [artAsset(art, 'atlas'), artAsset(art, 'badge')],
-            binds: { u_atlas: 'atlas', u_badge: 'badge' },
+            id: 'centre', name: 'CENTRE', what: 'gear, speed and the line', rect: R.centre, z: B.z + 2,
+            fs: S.centreFs(R.centre, A),
+            assets: [artAsset(art, 'atlas')],
+            binds: { u_atlas: 'atlas' },
             statics: () => [],
             live: (f) => {
                 const q = (f.quads || []).slice(0, S.QUADS), dst = [], src = [];
                 for (let i = 0; i < S.QUADS; i++) { const x = q[i]; Array.prototype.push.apply(dst, x ? x.dst : [0, 0, 0, 0]); Array.prototype.push.apply(src, x ? x.src : [0, 0, 0, 0]); }
-                return [['u_dst', dst, { type: 'vec4' }], ['u_src', src, { type: 'vec4' }], ['u_misc', [level(f), f.badge ? 1 : 0, 0, 0]]];
+                return [['u_dst', dst, { type: 'vec4' }], ['u_src', src, { type: 'vec4' }], ['u_misc', [level(f), 0, 0, 0]]];
             },
             on: () => true,
         },

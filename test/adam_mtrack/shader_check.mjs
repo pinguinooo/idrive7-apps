@@ -1,8 +1,9 @@
 // Compiles every M Track shader in headless WebGL1 (swiftshader, GLSL ES 1.00 as on the KOMBI), counts each program's
 // uniform vectors (16 at most: the minimum GLSL ES 1.00 guarantees) and samplers (8 at most), and probes pixels through
-// the same renderer stand-in the emulator uses (crdraw.js): the tachs (fill below the revs line and none above, the red
-// cap, the left bar the mirror of the right, the over-art's palette colours, a numeral on each bar), the panels (a box's
-// coverage and palette colour, the corner over the panel), the centre (a glyph at its quad, the badge and its alpha),
+// the same renderer stand-in the emulator uses (crdraw.js): the tachs (0.1.7 Codex's: a dark track above the revs, the
+// fill lighter at the revs than near its bottom, the red pointer, the red zone, the left tach the mirror of the right, the
+// over-art's palette colours, a numeral on each tach, nothing under 15), the panels (a box's coverage and palette colour,
+// the corner over the panel), the centre (a glyph at its quad),
 // the slats, the KNOWN step's test card, and nothing at all once u_alive is 0 (the dead-man value). Exit 1 on failure.
 //   PLAYWRIGHT=<playwright index.mjs> node test/adam_mtrack/shader_check.mjs
 import fs from 'node:fs';
@@ -77,22 +78,28 @@ try {
     const tachsAssets = [{ key: 'bgR2', format: 'r8', w: 480, h: 360, fill: 100, sampling: 'bilinear' }, { key: 'overR', format: 'r8', w: 2 * ow, h: R.overR.h, data: Array.from(overData) },
         { key: 'opal', format: 'rgba8', w: 16, h: 1, data: pal(ST.OVER_PALETTE) }, { key: 'band', format: 'r8', w: R.band.w, h: R.band.h, fill: 255 },
         { key: 'atlas', format: 'r8', w: A.w, h: A.h, fill: 0, rects: [[c3.x, c3.y, c3.w, c3.h]] }];
-    const tachs = (alive, yr) => layer(STG[0], [['u_tint', [1, 1, 1, 1]], ['u_fill', [yr, 6, 110, 0]], ['u_alive', [alive]]], {});
+    const tachs = (alive, yr) => layer(STG[0], [['u_tint', [1, 1, 1, 1]], ['u_fill', [yr, G.TACH.pointerHalf, G.TACH.fillBottom, 0]], ['u_alive', [alive]]], {});
     const q3 = G.barNumeralQuads(A, cfg.tach)[3], q3l = G.barNumeralQuads(A, cfg.tach)[11];
     const ctr = (q) => [q.dst[0] + Math.floor(q.dst[2] / 2), q.dst[1] + Math.floor(q.dst[3] / 2)];
-    let r = await probe([tachs(1, 400)], tachsAssets, [[1290, 520], [1290, 250], [1290, 400], [960, 400], [1920 - 1291, 520], [R.overR.x + 15, R.overR.y + 15], [1920 - (R.overR.x + 15) - 1, R.overR.y + 15], ctr(q3), ctr(q3l), [1290, 380], [1293, 380]]);
-    const [below, above, cap, mid, leftBelow, red, redL, n3, n3l, gridLine, gridCell] = r.out;
-    check(below[0] > 115 && Math.abs(below[0] - below[1]) < 6, 'tachs: swept fill below the revs (' + below.slice(0, 3) + ' over art 100)');
-    check(Math.abs(above[0] - 100) <= 2, 'tachs: no fill above the glow (' + above.slice(0, 3) + ')');
-    check(cap[0] > 200 && cap[1] > 60 && cap[1] < 120 && cap[2] < 80, 'tachs: BMW\'s orange-red block at the revs line (' + cap.slice(0, 3) + ')');
-    check(gridCell[0] > gridCell[1] + 60 && gridLine[1] < gridCell[1] - 8 && gridLine[0] < gridCell[0], 'tachs: the glow above the revs is a crimson wash under a 6 px grid of darker lines (line ' +
-        gridLine.slice(0, 3) + ', cell ' + gridCell.slice(0, 3) + ')');
-    check(Math.abs(mid[0] - 100) <= 2, 'tachs: background untouched outside the bands (' + mid.slice(0, 3) + ')');
-    check(Math.abs(leftBelow[0] - below[0]) <= 2, 'tachs: the left bar mirrors the right (' + leftBelow.slice(0, 3) + ')');
-    check(Math.abs(red[0] - 200) <= 3 && Math.abs(red[1] - 30) <= 3 && Math.abs(red[2] - 42) <= 3, 'tachs: the over-art\'s palette index 5 draws its red (' + red.slice(0, 3) + ')');
-    check(Math.abs(redL[0] - red[0]) <= 2 && Math.abs(redL[1] - red[1]) <= 2, 'tachs: the over-art mirrored on the left bar, pixel for pixel (' + redL.slice(0, 3) + ')');
-    check(n3[0] > 240 && n3l[0] > 240, 'tachs: numeral 3 on both bars (' + n3.slice(0, 3) + ' / ' + n3l.slice(0, 3) + ')');
-    r = await probe([tachs(0, 400)], tachsAssets, [[1290, 520], [960, 400]]);
+    // x 1330 is inside the right tach's band from y 100 to 590 (Codex path A mirrored)
+    let r = await probe([tachs(1, 400)], tachsAssets, [[1330, 300], [1330, 410], [1330, 580], [1330, 400], [1330, 398], [1920 - 1331, 410], [R.overR.x + 15, R.overR.y + 15],
+        [1920 - (R.overR.x + 15) - 1, R.overR.y + 15], ctr(q3), ctr(q3l), [1258, 100], [5, 5], [960, 600]]);
+    const [above, justBelow, low, ptr, ptrLine, leftBelow, red, redL, n3, n3l, zone, corner, mid] = r.out;
+    const sum = (p) => p[0] + p[1] + p[2];
+    check(above.slice(0, 3).every((v) => v >= 15 && v < 50), 'tachs: the track above the revs is dark and never under 15 (' + above.slice(0, 3) + ')');
+    check(sum(justBelow) > sum(low) + 60, 'tachs: the fill is lighter just below the revs than near its bottom (' + justBelow.slice(0, 3) + ' vs ' + low.slice(0, 3) + ')');
+    check(ptr[0] > ptr[1] + 50 && ptr[0] > ptr[2] + 30, 'tachs: the pointer at the revs is red (' + ptr.slice(0, 3) + ')');
+    check(ptrLine[0] > 160 && ptrLine[0] > ptrLine[1] + 100, 'tachs: its bright line 2 px above (' + ptrLine.slice(0, 3) + ')');
+    check(Math.abs(leftBelow[0] - justBelow[0]) <= 2, 'tachs: the left tach mirrors the right (' + leftBelow.slice(0, 3) + ')');
+    check(zone[0] > zone[2] && zone[0] > above[0], 'tachs: the red zone at y 100 is redder than the track at y 300 (' + zone.slice(0, 3) + ')');
+    const o5 = ST.OVER_PALETTE[5];
+    check([0, 1, 2].every((i) => Math.abs(red[i] - o5[i]) <= 3), 'tachs: the over-art\'s palette index 5 draws its colour ' + o5 + ' (' + red.slice(0, 3) + ')');
+    check(Math.abs(redL[0] - red[0]) <= 2 && Math.abs(redL[1] - red[1]) <= 2, 'tachs: the over-art mirrored on the left tach, pixel for pixel (' + redL.slice(0, 3) + ')');
+    check(n3[0] > 200 && n3l[0] > 200, 'tachs: numeral 3 on both tachs (' + n3.slice(0, 3) + ' / ' + n3l.slice(0, 3) + ')');
+    check(corner.slice(0, 3).every((v) => v >= 15) && Math.abs(mid[0] - 100) <= 2, 'tachs: a panel corner at least 15 a channel (' + corner.slice(0, 3) + '), the background elsewhere (' + mid.slice(0, 3) + ')');
+    r = await probe([tachs(1, 400)], tachsAssets.map((a) => (a.key === 'bgR2' ? Object.assign({}, a, { fill: 0 }) : a)), [[5, 5], [960, 600]]);
+    check(r.out.every((p) => p.slice(0, 3).every((v) => v >= 15)), 'tachs: a 0 background still draws 15 (the LCD\'s lit black never shows, ' + JSON.stringify(r.out) + ')');
+    r = await probe([tachs(0, 400)], tachsAssets, [[1330, 500], [960, 400]]);
     check(r.out.every((p) => p[0] + p[1] + p[2] === 0), 'tachs: u_alive 0 draws nothing (' + JSON.stringify(r.out) + ')');
 
     // the panels: a red pixel block in panelR's box (coverage 255, index 6), the corner's grey band over the panel
@@ -102,23 +109,20 @@ try {
         { key: 'pal', format: 'rgba8', w: 16, h: 1, data: pal(ST.PALETTE) }];
     const panels = (alive) => layer(STG[1], [['u_bright', [1]], ['u_alive', [alive]]], {});
     r = await probe([panels(1)], panelAssets, [[R.panelR.x + 12, R.panelR.y + 12], [R.panelL.x + 12, R.panelL.y + 12], [R.cornerR.x + 12, R.cornerR.y + 12]]);
-    check(Math.abs(r.out[0][0] - 0xe2) <= 3 && Math.abs(r.out[0][1] - 0x26) <= 3, 'panels: coverage + palette index 6 draws #e2262a (' + r.out[0].slice(0, 3) + ')');
+    check(Math.abs(r.out[0][0] - 0x16) <= 3 && Math.abs(r.out[0][2] - 0x22) <= 3, 'panels: coverage + palette index 6 draws #161a22 (' + r.out[0].slice(0, 3) + ')');
     check(r.out[1][0] + r.out[1][1] + r.out[1][2] === 0, 'panels: an empty box draws nothing (' + r.out[1].slice(0, 3) + ')');
-    check(Math.abs(r.out[2][0] - 0xe2) <= 3, 'panels: the corner drawn over the panel where they overlap (' + r.out[2].slice(0, 3) + ', panel white under it)');
+    check(Math.abs(r.out[2][0] - 0x16) <= 3, 'panels: the corner drawn over the panel where they overlap (' + r.out[2].slice(0, 3) + ', panel white under it)');
     r = await probe([panels(0)], panelAssets, [[R.panelR.x + 12, R.panelR.y + 12]]);
     check(r.out[0][0] + r.out[0][1] + r.out[0][2] === 0, 'panels: u_alive 0 draws nothing');
 
-    // the centre: a glyph cell at a quad, the badge (solid) with its alpha
+    // the centre: a glyph cell at a quad (0.1.7: no badge)
     const C = R.centre, gq = [40, 40, 20, 20];
-    const centre = (alive, badge) => layer(STG[2], [['u_dst', gq.concat(new Array(24).fill(0)), 'vec4'], ['u_src', [10, 10, 1, 0].concat(new Array(24).fill(0)), 'vec4'],
-        ['u_misc', [1, badge, 0, 0]], ['u_alive', [alive]]], {});
-    const centreAssets = [{ key: 'atlas', format: 'r8', w: A.w, h: A.h, fill: 0, rects: [[10, 10, 20, 20]] }, { key: 'badge', format: 'rgba8', w: R.badge.w, h: R.badge.h, data: Array.from(Buffer.alloc(R.badge.w * R.badge.h * 4, 0)).map((v, i) => (i % 4 === 0 ? 40 : i % 4 === 2 ? 220 : i % 4 === 3 ? 255 : 90)) }];
-    r = await probe([centre(1, 1)], centreAssets, [[C.x + 50, C.y + 50], [C.x + 30, C.y + 30], [R.badge.x + 60, R.badge.y + 28]]);
-    check(r.out[0][0] > 240 && r.out[1][0] === 0, 'centre: the atlas cell shows at its quad only (' + JSON.stringify(r.out.slice(0, 2)) + ')');
-    check(Math.abs(r.out[2][0] - 40) <= 3 && Math.abs(r.out[2][2] - 220) <= 3, 'centre: the badge (' + r.out[2].slice(0, 3) + ')');
-    r = await probe([centre(1, 0)], centreAssets, [[R.badge.x + 60, R.badge.y + 28]]);
-    check(r.out[0][0] + r.out[0][2] === 0, 'centre: badge alpha 0 hides it (the slats lit)');
-    r = await probe([centre(0, 1)], centreAssets, [[C.x + 50, C.y + 50], [R.badge.x + 60, R.badge.y + 28]]);
+    const centre = (alive) => layer(STG[2], [['u_dst', gq.concat(new Array(24).fill(0)), 'vec4'], ['u_src', [10, 10, 1, 0].concat(new Array(24).fill(0)), 'vec4'],
+        ['u_misc', [1, 0, 0, 0]], ['u_alive', [alive]]], {});
+    const centreAssets = [{ key: 'atlas', format: 'r8', w: A.w, h: A.h, fill: 0, rects: [[10, 10, 20, 20]] }];
+    r = await probe([centre(1)], centreAssets, [[C.x + 50, C.y + 50], [C.x + 30, C.y + 30]]);
+    check(Math.abs(r.out[0][0] - 0xd7) <= 3 && Math.abs(r.out[0][2] - 0xe1) <= 3 && r.out[1][0] === 0, 'centre: the atlas cell shows at its quad only, #d7d9e1 (' + JSON.stringify(r.out.slice(0, 2)) + ')');
+    r = await probe([centre(0)], centreAssets, [[C.x + 50, C.y + 50]]);
     check(r.out.every((p) => p[0] + p[1] + p[2] === 0), 'centre: u_alive 0 draws nothing');
 
     // the slats (unchanged from 0.1.2)

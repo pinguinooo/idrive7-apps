@@ -1,17 +1,45 @@
-# M Track Cluster (`adam_mtrack`) 0.1.6
+# M Track Cluster (`adam_mtrack`) 0.1.7
 
 An M Track style cover over the instrument cluster, drawn by the cluster-render service on its `panel` target
-(1920 x 720): two bar tachs from 0 to 7 (x1000 rpm, the B58's 7,000 rpm limit), the gear over a line over the speed
-in mph, the M badge with our shift-light slats in its place, side panels you pick, fuel and oil corner gauges, range,
-clock and outside temperature. Built for a 2024 X3 M40i (G01 LCI, iDrive 7, US units). **Off when installed.**
+(1920 x 720): two bracket tachs from 0 to 7 (x1000 rpm, the B58's 7,000 rpm limit), the gear over a line over the speed
+in mph, our shift-light slats above the gear, side panels you pick, fuel and oil corner gauges, range, clock and outside
+temperature. Built for a 2024 X3 M40i (G01 LCI, iDrive 7, US units). **Off when installed.**
 
 It covers the real speedometer, so it only shows while every guard holds, and drops at once when one fails.
 
-**There is no photo of BMW's stock M view yet.** The 2026-11-05 car photo that 0.1.4 and 0.1.5 were compared with is
-M Track 0.1.3's own cover running on the car (its clock reads 3:37 am, before 0.1.4 existed; iDrive-Apps KB-ANY-213),
-so those "matches BMW" measurements compared the cover with itself and are void. This README makes no claim about how
-close the cover is to BMW's display until Adam's Cover Off photo of the stock Sport+ view is in iDrive-Apps
-`tools/oem-compare/photos/oem-<date>/`.
+**No OEM-exact claim.** The 2026-11-05 car photo that 0.1.4 and 0.1.5 were compared with is M Track 0.1.3's own cover
+running on the car (iDrive-Apps KB-ANY-213), so those "matches BMW" measurements are void. The one real photo of BMW's
+stock M display is from another car (iDrive-Apps `docs/reference/mtrack/stock-bmw-m-other-car.jpg`: 0-8 scale, km/h,
+oblique and cropped); 0.1.7 is compared with it for structure only (iDrive-Apps `docs/emulator/mtrack-0.1.7/compare.md`).
+Adam's own Cover Off photo of the stock Sport+ view is still the reference to get.
+
+**0.1.7: the Codex-designed M display.** Adam saw a Codex design of the M display (ai-brain `codex-mdash-test/out/`)
+and said it looks a lot better than ours; 0.1.7 ports it with his two corrections.
+- *Tachs.* Codex's twin brackets: a dark track, a grey fill that fades from the revs line down, a deep red pointer with
+  a bright line, a thin red zone at the top, a soft bloom on the outer edge, ticks every 500 rpm and numerals in
+  Codex's own digit outlines. **The scale runs 0 to 7** (Adam: on his car the stock display stops at 7, not 8): Codex's
+  9 spine anchors now span 0 to 7,000 rpm, so every numeral 0..7 sits on its tick and 7 is at the top. The red zone
+  and red ticks start at 6,500 (the top 7 % of the scale); 0.1.5's amber dashes are gone. Shift Lights' slats and
+  Look > Tach lead work as before (the lead moves the revs line along the same scale).
+- *Fuel and oil gauges.* Not round any more (Adam: BMW's are bar-like with flat and angled ends): each is a faceted
+  band of three straight legs with 3 px gaps at the bends, the high end cut flat, the low end cut at 45 deg, filled solid
+  from the low end, no needle. The fill turns red under 12 % fuel or in the oil gauge's hot zone.
+- *Centre.* Codex's gear (91 x 112) over the three-bar stack and a thin line with bright caps, over the speed; the unit
+  in muted grey. **The M badge and the SPORT+ tag are gone**: neither Codex's design nor BMW's photo has them, the badge
+  would collide with the gear at its new height, and they freed about 59 KB of the renderer budget. The slats moved up
+  to y 190. DSC OFF, PARK and the stability warning are not drawn: the app has no signal for them and a drawn one would be
+  a false warning over the real cluster (BMW's own telltales still draw over our layer).
+- *Side panels and bottom row.* Codex's strips (a thin baseline, ticks and labels at the ends and middle, the reading
+  over it, an indicator, a red end), Codex's tyre block and bottom row. US units throughout (mph, mi, psi, F); Metric
+  still follows the Units setting.
+- *Background.* Codex draws pure black; this cluster's LCD shows 0 as its lit backlight (KB-ANY-214), so the panel is a
+  flat 16 and the tachs shader never outputs under 15 before brightness.
+- Renderer memory 2.88 MiB (3,017,808 bytes counted; 0.1.6: 3,135,520). No settings change and no `reset`; the
+  dead-man, the 40 ms rpm poll, Tach lead (default Off), the rpm log line and the M0 recovery are unchanged.
+- Compared with the other-car stock photo: the same structure (mirrored brackets with a rising fill and pointer, gear
+  over a line over the speed, the three-bar stack, the tyre block on the right, lower corner gauges, a dark field);
+  different on purpose in the scale (7, not 8), the units, the gauge shapes (Adam's correction) and the missing
+  telltales; no BMW font.
 
 **0.1.6: the whole panel dark, the gear as a digit, Tach lead, the rpm log line.**
 - *Full panel.* The car photo showed a lit lavender frame around the drawn dash: the art painted everything outside the
@@ -171,18 +199,18 @@ and, if it stopped, why) and then the release check. Run them in order and note 
 | 5 TACHS | the cover's stage 1 (its opaque tachs layer, 5 assets, 1.6 MiB), built as the cover builds it | the big shader and its art |
 | 6 COVER | the whole cover, 4 stages (4 layers, 11 assets, 3.0 MiB), each confirmed before the next | everything |
 
-## How it draws (0.1.3)
+## How it draws (0.1.3, art 0.1.7)
 
-The static art is the approved mockup's (iDrive-Apps `docs/mockups/mtrack-cluster.html`) drawn by its own code in
-headless Chromium (`tools/mtrack-art/`, re-run gives the same bytes) into `art/art.json` (v2), with the tach scale 0-7
-from `geom.js`. Four effect layers on `panel`, content class z 90 to 93, never exclusive, never contending (G's
+The static art (0.1.7: Codex's design, ai-brain `codex-mdash-test/out/HANDOFF.md`) is drawn in headless Chromium
+(`tools/mtrack-art/`, re-run gives the same bytes) into `art/art.json` (v2), placed by `geom.js` (the tach scale 0-7,
+the faceted gauges). Four effect layers on `panel`, content class z 90 to 93, never exclusive, never contending (G's
 Dash's), one a stage (`stages.js`):
 
 | Stage | Layer | Assets (as cluster-render counts them, twice) |
 |---|---|---|
-| 1 TACHS | the whole panel, opaque: the background (its right half at half resolution, mirrored), the bars' art (the right bar's lines, ticks and fields as coverage + palette index, mirrored for the left), the fill to the revs, the numerals 0..7 from the glyph atlas | bgR2, overR, its palette, band, atlas: 1.6 MiB |
-| 2 PANELS | both side panels and both corners (drawn in software, sent as coverage + palette index, only the changed rows, at most twice a second) | 4 boxes, palette: 1.25 MiB |
-| 3 CENTRE | gear (letter or digit), speed, unit, drive-mode tag, the line and stack icon, the M badge | badge (the atlas shared): 0.06 MiB |
+| 1 TACHS | the whole panel, opaque: the background (its right half at half resolution, mirrored); inside the tach's shape the track, the red zone, the fill from the revs down and the red pointer (in the shader, no glow); the edges and ticks (the right tach's, as coverage + palette index, mirrored for the left); the numerals 0..7 from the glyph atlas | bgR2, overR, its palette, band, atlas: 1.5 MiB |
+| 2 PANELS | both side panels and both corners (drawn in software, sent as coverage + palette index, only the changed rows, at most twice a second) | 4 boxes, palette: 1.37 MiB |
+| 3 CENTRE | gear (letter or digit), speed, unit, the stack, line and caps (0.1.7: no badge, no tag) | the atlas only (shared) |
 | 4 SLATS | the shift-light slats (Shift Lights' shader), only with "Shift lights in the cover" on | none |
 
 The build follows G's Dash's call sequence: nothing before the first status answer; each stage's assets (checked against

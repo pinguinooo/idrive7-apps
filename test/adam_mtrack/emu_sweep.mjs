@@ -188,8 +188,8 @@ try {
     check(live().length === LAYERS && live().every((m, i) => m.class === 'content' && m.z === cfg.build.z + i && m.exclusive === 0 && m.visible === 0), '3 four layers, content z 90 to 93, never exclusive, each made hidden');
     const built = since(t).filter((m) => m.op === 'asset'), mem = built.reduce((b, a) => b + a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2, 0);
     results.memory = mem;
-    check(built.length === 11 && mem <= cfg.memoryBudgetBytes, '3 11 assets, ' + (mem / 1048576).toFixed(2) + ' MiB of the renderer\'s 16 (budget ' + (cfg.memoryBudgetBytes / 1048576) + ')');
-    check((await appLog(t)).some((l) => /^cover: shown \(4 layers, 11 assets, 3\.0 MiB of renderer memory, built in \d+ ms\)$/.test(l)), '3 the app logs the build: 4 layers, 11 assets, 3.0 MiB');
+    check(built.length === 10 && mem <= cfg.memoryBudgetBytes, '3 10 assets, ' + (mem / 1048576).toFixed(2) + ' MiB of the renderer\'s 16 (budget ' + (cfg.memoryBudgetBytes / 1048576) + ')');
+    check((await appLog(t)).some((l) => /^cover: shown \(4 layers, 10 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), '3 the app logs the build: 4 layers, 10 assets, 2.9 MiB');
     const assetFrames = since(t).filter((m) => m.op === 'frame');
     await wait(600);
     let r = await shot('mtrack-01-idle-P-0mph');
@@ -207,20 +207,21 @@ try {
         // no renderer animations holds u_alive at the client's 1
         const t3 = shots['mtrack-01-idle-P-0mph'].t;
         const b = await comp.render(replay.at(t3), t3, { backlight: true });
-        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.6-full-panel-normal.png'), r.png);
-        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.6-full-panel-backlight.png'), b.png);
+        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.7-full-panel-normal.png'), r.png);
+        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.7-full-panel-backlight.png'), b.png);
         results.uncovered = b.uncovered;
         check(b.uncovered === 0, '3 full panel at Brightness 100: no pixel shows the backlight (uncovered ' + b.uncovered + ')');
         const n = await comp.render(replay.at(t3), t3, { backlight: true, anims: false });
-        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.6-full-panel-backlight-anims-off.png'), n.png);
+        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.7-full-panel-backlight-anims-off.png'), n.png);
         results.uncoveredNoAnims = n.uncovered;
         check(n.uncovered === 0, '3 full panel, a renderer that plays no animation: uncovered ' + n.uncovered);
     }
 
     console.log('step 4 pull to 7,000 rpm');
-    const pull = { t0: Date.now(), at: {} };
+    const pull = { t0: Date.now(), at: {}, sent: [] };
     for (let i = 0; i <= 62; i++) {
         const rpm = 800 + 100 * i, f = i / 62, gear = f < 0.35 ? 'D1' : f < 0.7 ? 'D2' : 'D3';
+        pull.sent.push([Date.now(), rpm]);
         await sig({ rpm, speed: Math.round(96.56 * f), gear, torque: 300 + 200 * f, oil: 95, gLong: 0.4 });
         for (const k of [1000, 2000, 3000, 4000, 5000, 6000, 6500, 7000]) if (rpm >= k && !pull.at[k]) pull.at[k] = Date.now() + 120;
         await wait(100);
@@ -231,8 +232,18 @@ try {
     await shot('mtrack-03-7000rpm-60mph');
     const fills = since(pull.t0).filter((m) => m.op === 'uniform' && m.name === 'u_fill').map((m) => Number(m.v.split(' ')[0]));
     results.fillAt7000 = fills[fills.length - 1];
-    check(Math.abs(fills[fills.length - 1] - G.yOfRpm(7000, cfg.tach)) < 0.5 && Math.abs(G.yOfRpm(7000, cfg.tach) - G.BARS.tickTopY) < 0.5,
-        '4 at 7,000 rpm the fill top is the 7 tick (y ' + fills[fills.length - 1] + ' vs ' + G.BARS.tickTopY + ')');
+    check(Math.abs(fills[fills.length - 1] - G.yOfRpm(7000, cfg.tach)) < 0.5 && Math.abs(G.yOfRpm(7000, cfg.tach) - 87) < 0.5,
+        '4 at 7,000 rpm the fill top is the 7 (y ' + fills[fills.length - 1] + ' vs 87, Codex\'s top anchor)');
+    {   // 0.1.7: at each pull shot the revs line is at the height of the rpm last sent before it on the 0-7 scale (Tach lead
+        // Off by default; a sample 100 ms on can land before the shot, so the rpm is the one sent, not the shot's k)
+        const off = [1000, 2000, 3000, 4000, 5000, 6000, 6500, 7000].map((k) => {
+            const u = since(pull.t0).filter((m) => m.op === 'uniform' && m.name === 'u_fill' && m.t <= pull.at[k]).pop();
+            const sent = u ? pull.sent.filter((x) => x[0] <= u.t).slice(-2).map((x) => x[1]) : [];
+            const y = u ? Number(u.v.split(' ')[0]) : null;
+            return [k, y, sent, sent.some((r) => Math.abs(y - G.yOfRpm(r, cfg.tach)) <= 0.5)];
+        }).filter((x) => !x[3]);
+        check(off.length === 0, '4 the fill at each pull shot is yOfRpm(the rpm sent) within 0.5 px' + (off.length ? ': ' + JSON.stringify(off) : ''));
+    }
     check(since(pull.t0).some((m) => m.op === 'uniform' && m.name === 'u_st' && /^10 1 /.test(m.v)), '4 the slats flash at the limiter');
     check(!since(assetFrames.length ? assetFrames[assetFrames.length - 1].t + 1 : pull.t0).some((m) => m.op === 'asset'), '4 no asset made again during the drive');
     await sig({ rpm: 1500, speed: 60, gear: 'D3', gLong: 0 });
@@ -263,7 +274,7 @@ try {
             // own gear again: the D with no gear value lasts only until then)
             const t4 = seenAt + 1, x = await comp.render(replay.at(t4), t4, { crop: CROP });
             fs.writeFileSync(path.join(OUT, 'gear-' + name + '.png'), x.png);
-            check(ok && quads().length <= 6, '4b ' + name + ': the gear spot shows "' + c + '" (' + quads().length + ' quads, no small digit)');
+            check(ok && quads().length <= 5, '4b ' + name + ': the gear spot shows "' + c + '" (' + quads().length + ' quads, no small digit, no tag)');
         };
         await gearStep('3', '3', () => sig({ gear: 'D3' }));
         await gearStep('1', '1', () => sig({ gear: 'D1' }));
@@ -274,6 +285,19 @@ try {
         // stage D, then DataPowerTrain2's "N or P" (gear 0, no stage): stage stays D, no gear number -> "D"
         await gearStep('D-nogear', 'D', async () => { await sig({ gear: 'D3', speed: 60 }); await wait(400); feed({ iface: 'de.bmw.infrastructure.VehicleInformation', field: 'DataPowerTrain2', value: { statusGearSelectionDrive: 'NP' } }); });
         await sig({ gear: 'D3', speed: 60 });
+        await wait(400);
+    }
+
+    console.log('step 4c Codex\'s demo state: 4,200 rpm, gear 3, 54 mph, coolant 94 C, oil 102 C, fuel 40 L');
+    {
+        await sig({ rpm: 4200, speed: 87, gear: 'D3', coolant: 94, oil: 102 });
+        feed({ iface: I.KOMBI, field: 'statusRangeTankStatus', value: { fluidLevelFuelTank: 40, range: 512 } });
+        await wait(1500);       // the panels redraw at most twice a second
+        const r4 = await shot('mtrack-0.1.7-4200-gear3');
+        const u = since(0).filter((m) => m.op === 'uniform' && m.name === 'u_fill' && m.t <= shots['mtrack-0.1.7-4200-gear3'].t).pop();
+        check(r4.lit > COVER && u && Math.abs(Number(u.v.split(' ')[0]) - G.yOfRpm(4200, cfg.tach)) < 0.5, '4c drawn, the revs line at 4,200 rpm (' + (u && u.v) + ')');
+        await sig({ rpm: 1500, speed: 60, coolant: 90, oil: 92 });
+        feed({ iface: I.KOMBI, field: 'statusRangeTankStatus', value: { fluidLevelFuelTank: 41, range: 512 } });
         await wait(400);
     }
 
@@ -362,6 +386,13 @@ try {
     await set('swapSides', false);
     for (const k of ['leftPanel', 'rightPanel', 'rightLower']) await set(k, SPEC.settings.filter((x) => x.key === k)[0].default);   // back to app.json's defaults
     await sig({ gLat: 0, gLong: 0 });
+    console.log('step 14b the right panel full: tyres (Codex\'s layout)');
+    await set('rightPanel', 'tyres');
+    await wait(1500);
+    r = await shot('mtrack-0.1.7-tyres-right');
+    check(r.lit > COVER, '14b tyres on the right drawn (' + r.lit + ' lit px)');
+    await set('rightPanel', SPEC.settings.filter((x) => x.key === 'rightPanel')[0].default);
+    await wait(500);
 
     console.log('step 15 units');
     await set('units', 'metric');

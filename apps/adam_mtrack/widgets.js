@@ -2,9 +2,10 @@
 /**
  * widgets.js - the cover's live boxes, drawn in software into the kit's Canvas (kit/canvas) and sent as asset
  * updates (only the changed rows, output.js): the two side panels and the two corner gauges with the bottom row.
- * Ported from the approved mockup's barWidget, rowsWidget, tyres, gmeter, modeColumn, corner and bottomRow, at the
- * same panel coordinates (each box draws with its rect's origin taken off). The plates, the gauges' scales and
- * their labels are static art (art/art.json); here: values, bars, needles, texts.
+ * Ported from the approved mockup's rowsWidget, gmeter and modeColumn; 0.1.7: the bar strips, tyres, corner gauges and
+ * bottom row are Codex's M display (ai-brain codex-mdash-test/out/HANDOFF.md), at its panel coordinates (each box draws
+ * with its rect's origin taken off). The corner gauges' bands, outlines and labels are static art (art/art.json); here:
+ * values, strips, the gauges' solid fill, texts.
  * Values stay in the car's units (C, bar, Nm, kW, km, km/h, l/100km) and are converted only here (units.js).
  * Text is the kit's label face (Ubuntu Sans, width 85, weight 400): measured the closest open face to BMW's cluster
  * text (0.1.5, iDrive-Apps docs/emulator/mtrack-0.1.5/font-pick.md). A degree sign is drawn as a small ring: it
@@ -25,10 +26,10 @@ const SCALES = {
     torque: { 'lb-ft': [0, 400, 800], Nm: [0, 500, 1000] },
     power: { hp: [0, 200, 400], kW: [0, 150, 300] },
 };
-const FUEL_ARC = [[182, 488], [175, 518], [176, 552], [189, 588], [214, 617], [250, 636], [298, 645], [330, 646]];
-const FUEL_TR = G.spline(FUEL_ARC.slice().reverse()), OIL_TR = G.spline(G.mirror(FUEL_ARC).reverse());
-const BOTTOM = { y: 673, rangeX: 300, clockX: 452, tempX: 1450 };
-const WHITE = '#f2f5f8', LABEL = '#aeb6c0';
+// Codex's bottom row (alphabetic baselines): range number left edge, clock, outside temperature
+const BOTTOM = { rangeX: 150, rangeY: 662, clockX: 365, clockY: 665, tempX: 1551, tempY: 668 };
+const WHITE = '#d7d9e1', LABEL = '#acb0bd', MUTED = '#707581', RED = '#b3283e', FILL = '#c4c8d2';
+const FUEL_LOW = 0.12;          // the fuel gauge's red zone and its fill turning red below it (share of the tank)
 const isNum = U.isNum;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const round = (v, d) => (isNum(v) ? Number(v.toFixed(d || 0)) : null);
@@ -39,6 +40,8 @@ function pen(cv, rect) {
     const g = {
         // y = the text's middle (the mockup's textBaseline 'middle'); the kit draws from the baseline
         text(s, x, y, size, c, align, font) { return cv.text(String(s), X(x), Y(y) + size * 0.36, size, c, { align: align || 'left', font: font || 'label', literal: true }); },
+        /** y = the text's alphabetic baseline (Codex's coordinates). */
+        textB(s, x, y, size, c, align, font) { return cv.text(String(s), X(x), Y(y), size, c, { align: align || 'left', font: font || 'label', literal: true }); },
         line(pts, w, c) { for (let i = 1; i < pts.length; i++) cv.line(X(pts[i - 1][0]), Y(pts[i - 1][1]), X(pts[i][0]), Y(pts[i][1]), w, c); },
         rect(x, y, w, h, c) { cv.fillRect(X(x), Y(y), w, h, c); },
         quad(pts, c) { cv.quad(pts.map((p) => [X(p[0]), Y(p[1])]), c); },
@@ -71,8 +74,8 @@ function scaleOf(id, u, cfg) {
     const L = S[key];
     return { ends: [L[0], L[2]], labels: L.map((n, i) => [id === 'boost' && key === 'bar' ? n.toFixed(1) : String(n), i / 2]), zone: S.zone || null, unit: key };
 }
-function icon(g, kind, x, y) {      // the mockup's small white pictograms (simplified)
-    const c = '#e6eaee';
+function icon(g, kind, x, y) {      // the mockup's small pictograms (simplified), centred on x, y
+    const c = LABEL;
     // 0.1.5: BMW's coolant pictogram (a thermometer stem over two bars) and oil can, at the photo's ink box and weight
     if (kind === 'coolant') { g.rect(x - 3, y - 15, 6, 17, c); g.rect(x - 13, y + 3, 26, 4, c); g.rect(x - 13, y + 9, 26, 3, c); }
     else if (kind === 'oil') { g.quad([[x - 15, y + 6], [x + 9, y + 6], [x + 17, y - 3], [x - 15, y - 3]], c); g.quad([[x - 15, y - 3], [x + 3, y - 3], [x - 1, y - 9], [x - 11, y - 9]], c); }
@@ -80,20 +83,22 @@ function icon(g, kind, x, y) {      // the mockup's small white pictograms (simp
     else if (kind === 'fuel') { g.rect(x - 8, y - 12, 13, 22, c); g.line([[x + 5, y - 8], [x + 11, y - 2], [x + 11, y + 8]], 2.5, c); }
     else if (kind === 'torque' || kind === 'power') { g.ring(x, y, 10, 3.4, 0, 360, c); g.text(kind === 'torque' ? 'T' : 'P', x, y + 1, 13, c, 'center', 'bold'); }
 }
+/** Codex's strip (HANDOFF "Coolant strip"): the baseline at 0.6 of the slot, ticks and labels at the ends and middle, the
+ * reading over it, an indicator; no fill bar. */
 function barWidget(g, r, id, v, u, cfg) {
-    const sc = scaleOf(id, u, cfg), val = shown(id, v, u), y = r.y0 + r.h * 0.6, ty = y - 34, x0 = r.x0 + 8, x1 = r.x1 - 18;
-    icon(g, id, r.x0 + 22, ty);
-    if (id === 'coolant' || id === 'oil') g.tempUnit(u, r.x1 - 10, ty, 22, '#f2f5f8', 'right');
-    else if (sc.unit) g.text(sc.unit, r.x1 - 10, ty, 22, '#f2f5f8', 'right');
-    g.line([[x0, y], [x1, y]], 3, [238, 241, 244, 235]);      // 0.1.5: BMW's track is a bright white 3 px line
-    if (sc.zone) g.rect(x0 + (x1 - x0) * sc.zone[0], y - 3.5, (x1 - x0) * (sc.zone[1] - sc.zone[0]), 7, '#e2262a');
-    if (val === null) g.text('NO DATA', (x0 + x1) / 2, y - 16, 16, LABEL, 'center', 'bold');
-    else {
-        const f = clamp((val - sc.ends[0]) / (sc.ends[1] - sc.ends[0]), 0, 1);
-        if (f > 0.004) g.rect(x0, y - 4, (x1 - x0) * f, 8, '#eef1f4');
-        g.rect(x0 + (x1 - x0) * f - 2, y - 9, 4, 18, '#e2262a');
-    }
-    sc.labels.forEach((l) => { const x = x0 + (x1 - x0) * l[1]; g.line([[x, y - 7], [x, y + 5]], 2.4, '#f2f5f8'); g.text(l[0], x, y + 27, 22, '#f2f5f8', 'center'); });
+    const sc = scaleOf(id, u, cfg), val = shown(id, v, u), y = r.y0 + r.h * 0.6, a = r.x0 + 10, b = r.x0 + 224, temp = id === 'coolant' || id === 'oil';
+    icon(g, id, r.x0 + 15, y - 39);
+    if (temp) g.tempUnit(u, b, y - 26 - 23 * 0.36, 23, LABEL, 'right');
+    else if (sc.unit) g.textB(sc.unit, b, y - 26, 23, LABEL, 'right');
+    g.line([[a, y], [b, y]], 2, '#626875');
+    if (sc.zone) { const z = sc.zone[1] === 1 ? [b - 25, b] : [a, a + 25]; g.line([[z[0], y], [z[1], y]], 4, RED); }
+    sc.labels.forEach((l) => { const x = a + (b - a) * l[1]; g.line([[x, y - 6], [x, y + 6]], 2, LABEL); g.textB(l[0], x, y + 31, 25, LABEL, 'center'); });
+    if (val === null) { g.textB('NO DATA', r.x0 + 116, y - 26, 18, LABEL, 'center', 'bold'); return; }
+    const x = a + (b - a) * clamp((val - sc.ends[0]) / (sc.ends[1] - sc.ends[0]), 0, 1);
+    g.line([[x, y - 9], [x, y + 9]], 4, '#d0d3db');
+    if (id === 'fuel') return;
+    const s = id === 'boost' && u.press === 'bar' ? val.toFixed(1) : String(Math.round(val)), w = g.textB(s, r.x0 + 116, y - 26, 25, WHITE, 'center');
+    if (temp) g.ring(r.x0 + 116 + w / 2 + 5, y - 26 - 17, 3.2, 1.8, 0, 360, WHITE);    // the degree sign (0.1.5: a small ring)
 }
 function rowsWidget(g, r, rows) {
     const n = rows.length, step = Math.min(44, r.h / n);
@@ -122,20 +127,19 @@ function rowsOf(id, v, u, cfg) {
     }
     return [];
 }
+/** Codex's tyre block: the header icon and units, four readings [FL, FR, RL, RR] (pressure over temperature). */
 function tyres(g, r, v, u) {
-    const cx = r.cx - 50 * r.side, cy = r.cy + 12, t = v.tyres || {}, p = t.p || [], tc = t.t || [];
-    g.ring(cx - 46, r.y0 + 34, 11, 2.5, 0, 360, '#e6eaee');
-    g.text(u.press, cx - 28, r.y0 + 34, 24, '#e6eaee', 'left');
-    g.tempUnit(u, cx - 4, r.y0 + 62, 21, '#e6eaee', 'center');
-    [[-48, -42], [48, -42], [-48, 42], [48, 42]].forEach((d, i) => {
+    const x0 = r.x0, y0 = r.y0, t = v.tyres || {}, p = t.p || [], tc = t.t || [];       // Codex's y = y0 (208) + these
+    const ix = x0 + 81, iy = y0 + 40, k = 10.5 * Math.SQRT1_2;
+    g.ring(ix, iy, 10.5, 1.8, 0, 360, MUTED);
+    [[0, 10.5], [10.5, 0], [k, k], [k, -k]].forEach((d) => g.line([[ix - d[0], iy - d[1]], [ix + d[0], iy + d[1]]], 1.3, MUTED));
+    g.textB(u.press, x0 + 103, y0 + 47, 23, MUTED, 'left');
+    g.tempUnit(u, x0 + 107, y0 + 74 - 23 * 0.36, 23, MUTED, 'left');
+    [[71, 114], [174, 114], [71, 194], [174, 194]].forEach((d, i) => {
         const ps = U.P(p[i], u), ts = U.T(tc[i], u);
-        g.text(ps === null ? dash : u.press === 'psi' ? String(Math.round(ps)) : ps.toFixed(1), cx + d[0], cy + d[1] - 14, 27, WHITE, 'center', 'bold');
-        g.text(ts === null ? dash : String(Math.round(ts)), cx + d[0], cy + d[1] + 14, 25, '#dfe4ea', 'center', 'bold');
+        g.textB(ps === null ? dash : u.press === 'psi' ? String(Math.round(ps)) : ps.toFixed(1), x0 + d[0], y0 + d[1], 28, LABEL, 'center');
+        g.textB(ts === null ? dash : String(Math.round(ts)), x0 + d[0], y0 + d[1] + 30, 28, LABEL, 'center');
     });
-    const ln = [230, 234, 238, 178];
-    g.line([[cx - 72, cy], [cx - 22, cy]], 1.6, ln); g.line([[cx + 22, cy], [cx + 72, cy]], 1.6, ln);
-    g.line([[cx, cy - 68], [cx, cy - 26]], 1.6, ln); g.line([[cx, cy + 26], [cx, cy + 68]], 1.6, ln);
-    g.line([[cx - 9, cy - 19], [cx + 9, cy - 19], [cx + 9, cy + 19], [cx - 9, cy + 19], [cx - 9, cy - 19]], 2.5, '#3ecf6a');
 }
 function gmeter(g, r, v) {
     const cx = r.cx, cy = r.cy + 6, R1 = 100, R2 = 66, ringC = [200, 200, 230, 216];
@@ -217,26 +221,27 @@ function cornerKey(side, v, u, cfg) {
     const o = oilFrac(v, u);
     return JSON.stringify([o === null ? null : round(o, 3), round(U.T(v.ambient, u)), u.temp]);
 }
-/** A corner: the static art (base, rgba of the rect) then its needle and the bottom row's live texts. */
+/** A corner: the static art (base, rgba of the rect), then the gauge's solid fill (0.1.7: a faceted band, no needle) and
+ * the bottom row's live texts. */
 function drawCorner(cv, rect, side, base, v, u, cfg) {
     cv.d.set(base);
     const g = pen(cv, rect), Bt = BOTTOM;
-    const needle = (tr, sd, f, w, c) => { const p = G.at(tr, f, sd); g.line([[p.x, p.y], [p.x + p.nx * 42, p.y + p.ny * 42]], w, c); };
+    const band = (f, red) => G.gaugeQuads(f, side).forEach((q) => g.quad(q, red ? RED : FILL));
     if (side < 0) {
-        if (isNum(v.fuelL)) needle(FUEL_TR, -1, clamp(v.fuelL / cfg.tankLitres, 0, 1), 6, '#ff2a1f');
+        if (isNum(v.fuelL)) { const f = clamp(v.fuelL / cfg.tankLitres, 0, 1); band(f, f < FUEL_LOW); }
         const range = U.DST(v.rangeKm, u);
-        g.text(range === null ? dash : String(Math.round(range)), Bt.rangeX - 38, Bt.y, 32, WHITE, 'left');
-        g.text(u.dist, Bt.rangeX + 30, Bt.y + 4, 21, WHITE, 'left');
+        const w = g.textB(range === null ? dash : String(Math.round(range)), Bt.rangeX, Bt.rangeY, 31, WHITE, 'left');
+        g.textB(u.dist, Bt.rangeX + w + 6, Bt.rangeY, 22, LABEL, 'left');
         const ck = clockText(v, u);
-        if (ck) { const w = g.text(ck.t, Bt.clockX, Bt.y, 32, WHITE, 'left'); if (ck.ap) g.text(ck.ap, Bt.clockX + w + 6, Bt.y + 4, 21, WHITE, 'left'); }
+        if (ck) { const cw = g.textB(ck.t, Bt.clockX, Bt.clockY, 32, WHITE, 'left'); if (ck.ap) g.textB(ck.ap, Bt.clockX + cw + 6, Bt.clockY, 22, LABEL, 'left'); }
     } else {
         const o = oilFrac(v, u);
-        if (o !== null) needle(OIL_TR, 1, o, 3, [236, 240, 244, 230]);
+        if (o !== null) band(o, o >= SCALES.oil.zone[0]);
         const t = U.T(v.ambient, u);
-        const w = g.text(t === null ? dash : (t >= 0 ? '+' : '') + Math.round(t), Bt.tempX, Bt.y, 32, WHITE, 'left');
-        g.tempUnit(u, Bt.tempX + w + 6, Bt.y + 4, 21, WHITE, 'left');
+        const w = g.textB(t === null ? dash : (t >= 0 ? '+' : '') + Math.round(t), Bt.tempX, Bt.tempY, 36, WHITE, 'left');
+        g.tempUnit(u, Bt.tempX + w + 6, Bt.tempY - 24 * 0.36, 24, LABEL, 'left');
     }
     return cv;
 }
 
-module.exports = { drawPanel, drawCorner, panelKey, cornerKey, shown, scaleOf, rowsOf, oilFrac, clockText, SCALES, MODE_TAG };
+module.exports = { drawPanel, drawCorner, panelKey, cornerKey, shown, scaleOf, rowsOf, oilFrac, clockText, SCALES, MODE_TAG, FUEL_LOW };

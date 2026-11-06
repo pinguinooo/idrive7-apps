@@ -9,11 +9,9 @@
 module.exports = Object.freeze({
     // the bar tachs: 0 to 7 (x1000 rpm), the B58's limit is 7000 (Adam: "my BMW doesn't go up to 8")
     tach: {
-        max: 7000,              // the top of the scale = the top tick (the mockup's old "8" tick place)
-        firstStep: 0.11,        // 0 to 1,000 rpm takes this share of the scale (shorter than the rest, mockup)
+        max: 7000,              // the top of the scale: 0.1.7, Codex's spine's top anchor (its old 8,000) is 7,000 rpm
         tickEvery: 500,         // a tick every 500 rpm: majors at the 1000s, minors between
-        amberFrom: 6000,        // amber dashes along the edge from here to redFrom (static)
-        redFrom: 6500,          // red field from here to max (static; the cold limit shows on the slats)
+        redFrom: 6500,          // red zone from here to max (static; the cold limit shows on the slats)
     },
     engine: {
         limitWarm: 7000,        // the engine's allowed maximum, warm (rpm)
@@ -30,9 +28,9 @@ module.exports = Object.freeze({
         sportplus: { start: 6000, shift: 6800 },
     },
     flashHz: 4,                 // limiter flash rate [U]
-    // our shift-light slats in the M badge's place (Shift Lights' "large" M slats, mockup CONFIG.row, cy 250)
+    // our shift-light slats above the gear (Shift Lights' "large" M slats, mockup CONFIG.row; 0.1.7 cy 190)
     row: { palette: 'aaaaaaaacc', reds: 2, fill: 'inward', lean: 'mirror', perSide: 10, slat: 15.6, pitch: 18.6, inner: 36,
-        centre: 0, h: 83, shear: 29.88, cx: 960, cy: 250, glow: 30, dim: 0.2 },
+        centre: 0, h: 83, shear: 29.88, cx: 960, cy: 190, glow: 30, dim: 0.2 },
     colors: { a: '#ffa800', c: '#ff1a22' },
     safety: {
         errorLimit: 5,          // errors within errorWindowMs stop the cover (Shift Lights' rule)

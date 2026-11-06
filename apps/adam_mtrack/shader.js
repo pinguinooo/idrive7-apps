@@ -6,13 +6,15 @@
  * dead-man value: 0.1.3 keeps it at 1 while shown and re-arms a renderer animation that holds it (G's Dash's recipe,
  * output.js), 0 while a stage is lifted but not shown. The 0.1.3 programs pick highp only where the GPU has it.
  *
- *   tachsFs(quads, atlas)   the cover's stage 1: the whole panel, opaque: the background (its right half at half
- *                 resolution, mirrored), the bars' art (the right bar's, mirrored for the left), the fill to the revs
- *                 (a band mask; u_fill.x = the revs line's y) and the numerals 0..7 from the atlas (quads baked in)
+ *   tachsFs(quads, atlas, R, redY)   the cover's stage 1: the whole panel, opaque: the background (its right half at
+ *                 half resolution, mirrored), 0.1.7's Codex tach inside a band mask (the right tach's, mirrored for the
+ *                 left): the track, the red zone above redY, the fill from the revs line (u_fill.x) down and the red
+ *                 pointer on it, then the edge art and the numerals 0..7 from the atlas (quads baked in); no output
+ *                 byte under 15 before brightness (a 0 is the LCD's lit backlight, KB-ANY-214)
  *   boxFs(boxes)  stage 2: both side panels and both corners: each box is an r8 asset twice its width, coverage in
  *                 the left half and a palette index in the right (output.js encodeBox), u_pal the palette
- *   centreFs(rect, atlas, badge)  stage 3: up to 7 quads from the r8 glyph atlas (gear, small gear digit, three speed
- *                 digits, the unit, the drive-mode tag), the centre's static line and stack icon, the M badge
+ *   centreFs(rect, atlas)  stage 3: up to 7 quads from the r8 glyph atlas (0.1.7: the gear, three speed digits and the
+ *                 unit), the centre's static stack, line and caps (0.1.7: no M badge)
  *   FS_SLATS      stage 4: apps/adam_shiftlights/shader.js FS_SLATS with u_alive and a 9-colour palette
  *   knownFs()     the Safety page's KNOWN step: G's Dash's full-screen cluster test shape (one layer over the panel,
  *                 one r8 1024 x 576 asset): two procedural dials with live needles, the test card, an edge ruler
@@ -23,22 +25,36 @@ const f1 = (v) => (Math.round(v) === v ? v.toFixed(1) : String(v));
 const v2 = (x, y) => 'vec2(' + f1(x) + ', ' + f1(y) + ')';
 const v4 = (a) => 'vec4(' + a.map(f1).join(', ') + ')';
 
-/** The tachs layer (stage 1). quads: geom.barNumeralQuads (the right bar's 8, then the left's); atlas: art.json's. */
-function tachsFs(quads, atlas, R) {
-    const num = (q) => '        a = max(a, num(p, ' + v4(q.dst) + ', ' + v2(q.src[0], q.src[1]) + '));';
+/** The tachs layer (stage 1). quads: geom.barNumeralQuads (the right tach's 8, then the left's); atlas: art.json's;
+ * redY: the red zone's lower edge (geom point(redFrom)). Colours: Codex's gradients (HANDOFF.md), the track's floored at 15. */
+function tachsFs(quads, atlas, R, redY) {
+    const num = (q) => '            a = max(a, num(p, ' + v4(q.dst) + ', ' + v2(q.src[0], q.src[1]) + '));';
+    const bb = (qs) => {         // the quads' bounding box: x0, y0, x1, y1
+        const b = [1e4, 1e4, -1e4, -1e4];
+        qs.forEach((q) => { b[0] = Math.min(b[0], q.dst[0]); b[1] = Math.min(b[1], q.dst[1]); b[2] = Math.max(b[2], q.dst[0] + q.dst[2]); b[3] = Math.max(b[3], q.dst[1] + q.dst[3]); });
+        return qs.length ? b : [0, 0, 0, 0];
+    };
+    const inBox = (b) => 'p.x >= ' + f1(b[0]) + ' && p.y >= ' + f1(b[1]) + ' && p.x < ' + f1(b[2]) + ' && p.y < ' + f1(b[3]);
+    const qR = quads.slice(0, quads.length / 2), qL = quads.slice(quads.length / 2);
     return PREC.concat([
         'varying vec2 v_uv;',
         'uniform sampler2D u_bg;     // r8 480 x 360: the background\'s right half at half resolution (bilinear), mirrored',
-        'uniform sampler2D u_over;   // r8, twice the over-art\'s width: the right bar\'s lines, ticks and fields as coverage',
-        '                            // (left half) and a palette index (right half, x 17), mirrored for the left bar',
+        'uniform sampler2D u_over;   // r8, twice the over-art\'s width: the right tach\'s edges and ticks as coverage',
+        '                            // (left half) and a palette index (right half, x 17), mirrored for the left tach',
         'uniform sampler2D u_opal;   // rgba8 16 x 1: the over-art\'s colours',
-        'uniform sampler2D u_band;   // r8: the right band (where the fill goes), mirrored for the left',
+        'uniform sampler2D u_band;   // r8: the right tach\'s shape (where the track, fill and pointer go), mirrored for the left',
         'uniform sampler2D u_atlas;  // r8: the numerals 0..7 (the atlas\'s bar style)',
-        'uniform vec4 u_tint;        // the art\'s colour (rgb), brightness',
-        'uniform vec4 u_fill;        // the revs line y, the cap\'s half height, the glow height above it, 0',
+        'uniform vec4 u_tint;        // the background\'s colour (rgb), brightness',
+        'uniform vec4 u_fill;        // the revs line y, the pointer\'s half height, the fill\'s bottom y, 0',
         'uniform float u_alive;',
         'vec3 over(vec3 d, vec4 s) { return mix(d, s.rgb, clamp(s.a, 0.0, 1.0)); }',
         'bool inside(vec2 u) { return u.x >= 0.0 && u.x <= 1.0 && u.y >= 0.0 && u.y <= 1.0; }',
+        'vec3 ramp3(float t, vec3 a, vec3 b, vec3 c, float tb) { return t < tb ? mix(a, b, t / tb) : mix(b, c, (t - tb) / (1.0 - tb)); }',
+        'vec3 track(float y) { return ramp3(clamp((y - 85.0) / 513.0, 0.0, 1.0), vec3(0.0588, 0.0588, 0.0706), vec3(0.0824, 0.098, 0.1373), vec3(0.0902, 0.102, 0.1412), 0.5); }',
+        'vec3 rpmFill(float t) {     // Codex rpmFill: #777684 .15 #555562 .55 #343640 1 #13151d',
+        '    if (t < 0.15) return mix(vec3(0.4667, 0.4627, 0.5176), vec3(0.3333, 0.3333, 0.3843), t / 0.15);',
+        '    return ramp3((t - 0.15) / 0.85, vec3(0.3333, 0.3333, 0.3843), vec3(0.2039, 0.2118, 0.251), vec3(0.0745, 0.0824, 0.1137), 0.4 / 0.85);',
+        '}',
         'vec4 art(vec2 q) {          // q: px in the over-art (whole pixels picked, so the mirror is exact)',
         '    vec2 t = (floor(q) + 0.5) / ' + v2(2 * R.overR.w, R.overR.h) + ';',
         '    float l = texture2D(u_over, t).r;',
@@ -59,30 +75,26 @@ function tachsFs(quads, atlas, R) {
         '    if (inside(bu)) {',
         '        float k = texture2D(u_band, bu).r;',
         '        if (k > 0.0) {',
-        '            float dy = p.y - u_fill.x, gh = u_fill.z;',
-        '            if (dy >= 0.0) c = over(c, vec4(0.839, 0.839, 0.863, 0.28 * k));',
-        '            if (dy < 0.0 && dy > -gh) {     // 0.1.5, BMW\'s glow (OEM photo): a crimson wash fading through pink into',
-        '                float t = -dy / gh;          // the band, under a 6 px grid of darker crimson lines that fades with it',
-        '                float g = t < 0.5 ? mix(0.8, 0.4, t / 0.5) : mix(0.4, 0.0, (t - 0.5) / 0.5);',
-        '                c = over(c, vec4(0.93, 0.2, 0.22, g * k));',
-        '                if (t < 0.8 && (mod(floor(p.x), 6.0) < 1.0 || mod(floor(p.y), 6.0) < 1.0)) c = over(c, vec4(0.6, 0.02, 0.06, 0.5 * (1.0 - t / 0.8) * k));',
-        '            }',
-        '            float d = abs(dy) - u_fill.y;    // the cap: BMW\'s solid orange-red block, a crisp edge',
-        '            if (d <= 0.0) c = over(c, vec4(0.957, 0.353, 0.188, k));',
-        '            else if (d < 4.0) { float e = 1.0 - d / 4.0; c = over(c, vec4(0.957, 0.353, 0.188, 0.5 * e * k)); }',
+        '            c = over(c, vec4(track(p.y), k));',
+        '            if (p.y < ' + f1(Math.round(redY * 10) / 10) + ') c = over(c, vec4(mix(vec3(0.2353, 0.0627, 0.1059), vec3(0.5412, 0.1412, 0.2196), clamp((p.y - 80.0) / ' + f1(Math.round((redY - 80) * 10) / 10) + ', 0.0, 1.0)), 0.18 * k));',
+        '            float dy = p.y - u_fill.x;',
+        '            if (dy >= 0.0) c = over(c, vec4(rpmFill(dy / max(u_fill.z - u_fill.x, 1.0)), k));',
+        '            if (abs(dy) <= u_fill.y) c = over(c, vec4(0.4275, 0.1216, 0.1961, k));     // the pointer, 9 px #6d1f32',
+        '            if (abs(dy + 2.0) <= 1.0) c = over(c, vec4(0.7373, 0.2118, 0.3059, k));   // and its 2 px #bc364e line',
         '        }',
         '    }',
         '    vec2 oq = m - ' + v2(R.overR.x, R.overR.y) + ';',
-        '    if (oq.x >= 0.0 && oq.y >= 0.0 && oq.x < ' + f1(R.overR.w) + ' && oq.y < ' + f1(R.overR.h) + ') {',
-        '        c = over(c, art(oq));',
-        '        float a = 0.0;',
-        '        if (p.x >= 960.0) {',
-    ]).concat(quads.slice(0, quads.length / 2).map(num)).concat([
-        '        } else {',
-    ]).concat(quads.slice(quads.length / 2).map(num)).concat([
+        '    if (oq.x >= 0.0 && oq.y >= 0.0 && oq.x < ' + f1(R.overR.w) + ' && oq.y < ' + f1(R.overR.h) + ') c = over(c, art(oq));',
+        '    float a = 0.0;',
+        '    if (p.x >= 960.0) {',
+        '        if (' + inBox(bb(qR)) + ') {',
+    ]).concat(qR.map(num)).concat([
         '        }',
-        '        c = over(c, vec4(0.957, 0.965, 0.973, a));',
+        '    } else if (' + inBox(bb(qL)) + ') {',
+    ]).concat(qL.map(num)).concat([
         '    }',
+        '    c = over(c, vec4(0.8431, 0.851, 0.8824, a));   // #d7d9e1',
+        '    c = max(c, vec3(15.0 / 255.0));',
         '    gl_FragColor = vec4(c * u_tint.a, u_alive);',
         '}',
     ]).join('\n');
@@ -124,16 +136,15 @@ function boxFs(boxes, layer) {
 }
 
 const QUADS = 7;
-/** The centre layer (stage 3): rect its panel rect, atlas art.json's (with its centre cell), badge the M badge's rect. */
-function centreFs(rect, atlas, badge) {
+/** The centre layer (stage 3): rect its panel rect, atlas art.json's (with its centre cell). 0.1.7: glyphs #d7d9e1, no badge. */
+function centreFs(rect, atlas) {
     const c = atlas.centre;
     return PREC.concat([
         'varying vec2 v_uv;',
         'uniform sampler2D u_atlas;',
-        'uniform sampler2D u_badge;',
         'uniform vec4 u_dst[' + QUADS + '];   // x, y, w, h in the layer (px); w 0: unused',
         'uniform vec4 u_src[' + QUADS + '];   // x, y in the atlas (px), intensity, 0',
-        'uniform vec4 u_misc;     // brightness, the badge\'s alpha (0 while the slats are lit), 0, 0',
+        'uniform vec4 u_misc;     // brightness, 0, 0, 0',
         'uniform float u_alive;',
         'void main() {',
         '    vec2 p = v_uv * ' + v2(rect.w, rect.h) + ';',
@@ -145,12 +156,7 @@ function centreFs(rect, atlas, badge) {
         '    }',
         '    vec2 q = p - ' + v2(c.px - rect.x, c.py - rect.y) + ';',
         '    if (q.x >= 0.0 && q.y >= 0.0 && q.x < ' + f1(c.w) + ' && q.y < ' + f1(c.h) + ') a = max(a, texture2D(u_atlas, (' + v2(c.x, c.y) + ' + q) / A).r);',
-        '    vec4 b = vec4(0.0);',
-        '    vec2 bu = (p - ' + v2(badge.x - rect.x, badge.y - rect.y) + ') / ' + v2(badge.w, badge.h) + ';',
-        '    if (bu.x >= 0.0 && bu.x <= 1.0 && bu.y >= 0.0 && bu.y <= 1.0) { vec4 t = texture2D(u_badge, bu); b = vec4(t.rgb, t.a * u_misc.y); }',
-        '    float oa = a + b.a * (1.0 - a);',
-        '    vec3 rgb = oa > 0.0 ? (vec3(0.965, 0.973, 0.98) * a + b.rgb * b.a * (1.0 - a)) / oa : vec3(0.0);',
-        '    gl_FragColor = vec4(rgb * u_misc.x, oa * u_alive);',
+        '    gl_FragColor = vec4(vec3(0.8431, 0.851, 0.8824) * u_misc.x, a * u_alive);',
         '}',
     ]).join('\n');
 }
