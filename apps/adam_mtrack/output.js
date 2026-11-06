@@ -12,6 +12,7 @@
  *                      coverage + palette index (stages.encodeBox)
  *   out.tick(now)      the build's status asks, the hand-over wait, the stuck check; a release check's deadline
  *   out.pump(now)      the dead-man re-arm while shown (every cfg.safety.aliveRearmMs)
+ *   out.wireStats()    { blocked, ticks }: pump ticks since the last call, and how many found the socket blocked; resets
  *   out.drop(why)      every layer dropped (removed, not hidden), the opaque tachs first; the build starts over on the
  *                      next show. The release is checked on this connection (status().release)
  *   out.disarm(why)    drop, then close the connection (the service removes the assets with it)
@@ -69,6 +70,7 @@ function createOutput(o) {
     const allStages = o.stages || ST.coverStages(o.art || {}, cfg);
     let cr = null, link = 'none', armedUnits = null, uploaded = 0, shown = false;
     let assets = {}, layers = {}, targets = {}, layerSt = {}, lastError = null, cap = null, renderer = null, statusWhy = '', check = null, release = null;
+    let wire = { blocked: 0, ticks: 0 };   // wireStats
     let mineTill = 0;                   // after our own drop the panel's state is still ours until it says lingering or idle
     let asked = 0, answered = 0, askAt = 0, freeAt = -Infinity, busyWas = '', errRefs = {};
     let run = null, lastStop = null, frame = {}, lastRearm = -Infinity, lastOld = -Infinity, flash = -1, flashAnim = 0;
@@ -372,6 +374,7 @@ function createOutput(o) {
     /** Step 2's blue bar: exactly 0.1.1's dead-man, the same animation number sent again (the pinned client has no "again"). */
     const restartOld = (l) => cr._send({ op: 'animate', ref: l.ref, anim: l.anim, property: 'uniform', name: 'u_alive', keys: cfg.test.oldAliveKeys, loop: 0, interp: 'linear' });
     function pump(now) {
+        if (cr) { wire.ticks++; if (cr.blocked) wire.blocked++; }   // the socket's backlog, for the 30 s log line (read only)
         if (!cr || !shown) return false;
         let did = false;
         // a backward clock jump re-arms at once (KB-ANY-204)
@@ -441,6 +444,8 @@ function createOutput(o) {
 
     return {
         arm, disarm, show, showTest, update, drop, tick, pump, box, requestStatus,
+        /** Pump ticks since the last call, and how many found the socket blocked (its write buffer full); then resets. */
+        wireStats: () => { const w = wire; wire = { blocked: 0, ticks: 0 }; return w; },
         status: () => {
             const p = targets.panel || {};
             return {

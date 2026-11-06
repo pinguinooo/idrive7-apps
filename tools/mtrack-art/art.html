@@ -30,9 +30,9 @@ for (const f of faces) {
 }
 const T = MCFG.tach, BARS = GEOM.BARS, C = GEOM.CENTRE;
 const SANS = `"${FAMILY}", sans-serif`;
-// 0.1.5: the shift markers pale yellow (the OEM photo's hue 47 deg, not orange)
+// 0.1.5: the shift markers pale yellow (hue 47 deg in the 2026-11-05 car photo, M Track 0.1.3's own cover: KB-ANY-213)
 const COL = { cap: '#f1141d', redField: '#c81e2a', yellowField: '#f2d65a', line: '#eef1f4' };
-const BASE = { edge: [[960, 112], [1120, 118], [1280, 126], [1400, 140], [1520, 163], [1620, 196], [1700, 240], [1748, 300], [1752, 360], [1752, 712]], centre: '#15161b', side: '#1f2023' };
+const BASE = { centre: '#15161b', side: '#1f2023' };
 const PLATE = [[1262, 207], [1468, 211], [1520, 218], [1556, 232], [1590, 252], [1618, 272], [1645, 302], [1676, 342], [1700, 380], [1712, 405],
   [1708, 445], [1690, 485], [1668, 525], [1640, 565], [1614, 592], [1590, 600], [1310, 600]];
 const FUEL_ARC = [[182, 488], [175, 518], [176, 552], [189, 588], [214, 617], [250, 636], [298, 645], [330, 646]];
@@ -99,15 +99,16 @@ const bar = (side) => SIDES[side > 0 ? 1 : 0];
 const bandPoly = (b) => b.outer.pts.concat(b.top.pts.slice(1), b.inner.pts.slice().reverse());
 const sc = (b, r) => (b.s0 + (b.s7 - b.s0) * GEOM.fracOf(r, T)) / b.outer.len;
 
+// 0.1.6: the whole panel, glass edge to glass edge. The LCD shows a pure 0 as its lit backlight (a lavender frame on the
+// car, KB-ANY-213's photo), so nothing here is 0: past r 900 the gradient holds at BASE.side, the dash edge's own tone,
+// and every byte of bgR2 stays >= 15 (manifest_art.test.js). No vignette toward the edge (it would bring the frame back).
 function base() {
-  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 1920, 720);
-  const pts = BASE.edge.concat([[1752, 720], [168, 720]], mirror(BASE.edge).reverse());
   const g = ctx.createRadialGradient(960, 400, 120, 960, 420, 900);
   g.addColorStop(0, BASE.centre); g.addColorStop(0.55, BASE.centre); g.addColorStop(1, BASE.side);
-  fill(pts, g);
-  const v = ctx.createLinearGradient(0, 110, 0, 260);
-  v.addColorStop(0, 'rgba(0,0,0,0.45)'); v.addColorStop(1, 'rgba(0,0,0,0)');
-  fill(pts, v);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 1920, 720);
+  const v = ctx.createLinearGradient(0, 0, 0, 260);
+  v.addColorStop(0, 'rgba(0,0,0,0.30)'); v.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = v; ctx.fillRect(0, 0, 1920, 260);
 }
 function plate(side) {
   const pts = PLATE.concat(BARS.outer.map(([x, y]) => [x - 20, y])), P = side > 0 ? pts : mirror(pts);
@@ -118,7 +119,7 @@ function plate(side) {
 function barUnder(side) {           // the translucent band and its darker top (under the live fill)
   const b = bar(side), band = bandPoly(b);
   const xo = xAtY(b.outer, 420), xi = xAtY(b.inner, 420), g = ctx.createLinearGradient(xo, 0, xi, 0);
-  // 0.1.5: flat and lighter, as BMW's (the photo's band is one even light grey across, not a dark-to-light ramp)
+  // 0.1.5: flat and lighter (one even light grey across, not a dark-to-light ramp)
   g.addColorStop(0, 'rgba(156,154,158,0.66)'); g.addColorStop(0.5, 'rgba(164,162,166,0.66)'); g.addColorStop(1, 'rgba(172,170,174,0.66)');
   fill(band, g);
   ctx.save(); poly(band); ctx.clip();
@@ -191,17 +192,16 @@ function cornerR(units) {
 }
 
 /* ---------- the glyph atlas: white on transparent, one cell a glyph ---------- */
-// v2 (0.1.3): only the glyphs the cover draws (gear P R N D -, the small gear digit, the speed, the tachs' numerals),
-// plus one static cell: the centre's line, end caps and stack icon (CENTRE_CELL, panel px), drawn by the centre layer
+// v2 (0.1.3): only the glyphs the cover draws (gear P R N D - and, 0.1.6, the engaged gear's digit 1-8 at the same size,
+// the speed, the tachs' numerals), plus one static cell: the centre's line, end caps and stack icon (CENTRE_CELL, panel px), drawn by the centre layer
 const STYLES = {
-  gear: { chars: 'PRND-', h: C.gearH, o: { box: true, w: C.gearW, sw: C.gearSW, glow: 'rgba(255,255,255,0.3)' } },
-  small: { chars: '12345678', h: 38, o: { box: true, w: 30, sw: 7 } },
+  gear: { chars: 'PRND-12345678', h: C.gearH, o: { box: true, w: C.gearW, sw: C.gearSW, glow: 'rgba(255,255,255,0.3)' } },
   speed: { chars: '0123456789-', h: C.speedH, o: { box: true, w: C.speedW, sw: C.speedSW, glow: 'rgba(255,255,255,0.25)' } },
   bar: { chars: '01234567', h: BARS.numH, o: { box: true, w: BARS.numW, sw: BARS.numSW, glow: 'rgba(255,255,255,0.35)' } },
 };
 const CENTRE_CELL = GEOM.CENTRE_CELL;
 const LABELS = { mph: [22, 500, 'left'], 'km/h': [22, 500, 'left'] };
-const TAGS = ['SPORT+', 'SPORT', 'COMFORT', 'ECO PRO'];
+const TAGS = ['SPORT+', 'SPORT', 'COMFORT'];      // main.js MODE_TAG
 function atlasLayout() {             // cells packed in rows, 1024 wide
   const W = 1024, cells = [], meta = { w: W, h: 0, styles: {}, labels: {}, tags: {} };
   let x = 0, y = 0, rowH = 0;
@@ -216,7 +216,6 @@ function atlasLayout() {             // cells packed in rows, 1024 wide
       cells.push(() => sq(c, r.x + pad, r.y + ch / 2, S.h, '#ffffff', Object.assign({ align: 'left' }, S.o)));
     }
   });
-  x = 0; y += rowH; rowH = 0;
   const measure = (s, size, weight) => { const c = document.createElement('canvas').getContext('2d'); c.font = `${weight} ${size}px ${SANS}`; return Math.ceil(c.measureText(s).width); };
   Object.keys(LABELS).forEach((s) => {
     const [size, weight] = LABELS[s], w = measure(s, size, weight) + 8, h = size + 12, r = place(w, h);

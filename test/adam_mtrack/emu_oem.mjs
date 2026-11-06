@@ -1,9 +1,10 @@
-// The cover in the state of Adam's OEM photo (iDrive-Apps docs/reference/mtrack/car-2026-11-05-oem.jpg), for
+// The cover in a car photo's state (iDrive-Apps docs/reference/mtrack/car-2026-11-05-cover-0.1.3.jpg: M Track 0.1.3's
+// own cover on the car, not BMW's display, KB-ANY-213; no stock photo exists yet), for
 // iDrive-Apps tools/oem-compare/fidelity.py: P, 0 mph, engine off (0 rpm: the photo's red block sits at the 0 tick),
 // SPORT+, cold engine (coolant 60 C, oil 40 C: both needles at the scale's start), torque and power 0, range 87 mi,
 // outside +64 F, the fuel needle near the photo's. Coolant over oil left, torque over power right (the defaults), US.
 // The clock: emu-run.sh's EMU_FAKETIME starts the emulator's clock so the shot reads 3:37 (libfaketime, emulator only).
-// Shots: oem-cover.png (renderer animations on) and oem-cover-noanims.png (a renderer that plays none). Exit 1 on failure.
+// Shots (file names kept): oem-cover.png (renderer animations on) and oem-cover-noanims.png (a renderer that plays none). Exit 1 on failure.
 //   SCRIPT=emu_oem.mjs EMU_DIR=... OUT=... bash test/adam_mtrack/emu-run.sh
 // env: PORT, CR_LOG, FEED, DATA_DIR, OUT (as emu_sweep.mjs).
 import fs from 'node:fs';
@@ -71,7 +72,7 @@ try {
     const bad = (await appLog()).filter((l) => /STOPPED|error in /.test(l));
     check(bad.length === 0, 'no "error in" / STOPPED lines in the app log' + (bad.length ? ': ' + bad.slice(0, 3).join(' / ') : ''));
 } catch (e) {
-    check(false, 'oem state threw: ' + (e && e.stack || e));
+    check(false, 'car photo state threw: ' + (e && e.stack || e));
 } finally {
     fs.writeFileSync(path.join(OUT, 'raw', 'app.log'), (await appLog().catch(() => [])).join('\n') + '\n');
     await browser.close();

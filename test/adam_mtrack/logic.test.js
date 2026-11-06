@@ -250,4 +250,98 @@ module.exports = [
         assert.strictEqual(reasonOf(Object.assign(OK(), { busy: '' })), '', 'no other app: shows');
         assert.strictEqual(reasonOf(Object.assign(OK(), { busy: 'the HUD is shown', heldUntil: NOW + 5 })), 'busy', 'another app outranks the backoff');
     }],
+    ['0.1.6 gearGlyph: P R N letters; D or no stage with a whole gear 1-8 its digit; D with no usable gear D; no stage -1 R; else a dash', () => {
+        ['P', 'R', 'N'].forEach((st) => [undefined, null, 0, 3, -1, 'x', NaN].forEach((g) => assert.strictEqual(L.gearGlyph(st, g), st, st + ' ' + String(g))));
+        [1, 2, 3, 4, 5, 6, 7, 8].forEach((g) => { assert.strictEqual(L.gearGlyph('D', g), String(g)); assert.strictEqual(L.gearGlyph(undefined, g), String(g)); assert.strictEqual(L.gearGlyph(null, g), String(g)); });
+        [undefined, null, 0, 9, 10, -1, 2.5, NaN, Infinity, '4', 'G4', {}].forEach((g) => assert.strictEqual(L.gearGlyph('D', g), 'D', 'D ' + String(g)));
+        assert.strictEqual(L.gearGlyph(undefined, -1), 'R');
+        assert.strictEqual(L.gearGlyph(null, -1), 'R');
+        [0, undefined, null, 9, 10, NaN, '3'].forEach((g) => assert.strictEqual(L.gearGlyph(undefined, g), '-', 'no stage ' + String(g)));
+        ['M', 'S', 'M1', 'd', '', 4, {}].forEach((st) => [3, -1, undefined].forEach((g) => assert.strictEqual(L.gearGlyph(st, g), '-', JSON.stringify(st) + ' ' + String(g))));
+        ['1', '2', '3', '4', '5', '6', '7', '8'].forEach((c) => assert.ok(!/M/.test(L.gearGlyph('D', Number(c))), 'no M prefix'));
+    }],
+    /* makeLead: apps/adam_shiftlights/logic.js's, its tests ported (test/adam_shiftlights/logic.test.js) on cfg.rpmLead, plus the maxAddRpm cap */
+    ['lead: leadMs 0 adds nothing; flat, falling and noisy-flat rpm get no lead', () => {
+        const ramp = (f, rpmAt, n, hz, ms) => { const out = []; for (let i = 0; i < n; i++) out.push(f(rpmAt(i * 1000 / hz), i * 1000 / hz, ms)); return out; };
+        ramp(L.makeLead(cfg.rpmLead), (t) => 5000 + 3 * t, 40, 20, 0).forEach((r) => assert.strictEqual(r.add, 0));
+        let seed = 7;
+        const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+        [(t) => 6200, (t) => 6800 - 2 * t, (t) => 6200 + Math.round((rnd() * 2 - 1) * 25)].forEach((g, i) => {
+            [10, 20, 50].forEach((hz) => ramp(L.makeLead(cfg.rpmLead), g, 60, hz, 80).forEach((r) => assert.strictEqual(r.add, 0, 'case ' + i + ' at ' + hz + ' Hz')));
+        });
+    }],
+    ['lead: a 3 rpm/ms rise at 20 Hz leads 180 rpm at 60 ms once the window is full; capped at maxAddRpm (300)', () => {
+        const f = L.makeLead(cfg.rpmLead);
+        let r;
+        for (let t = 0; t <= 400; t += 50) r = f(5000 + 3 * t, t, 60);
+        assert.ok(Math.abs(r.add - 180) <= 2, String(r.add));
+        assert.strictEqual(r.rpm, 5000 + 3 * 400 + r.add);
+        const g = L.makeLead(cfg.rpmLead);
+        for (let t = 0; t <= 400; t += 50) r = g(1000 + 6 * t, t, 80);
+        assert.strictEqual(r.add, cfg.rpmLead.maxAddRpm, '6 rpm/ms x 80 ms = 480, capped');
+        assert.strictEqual(r.rpm, 1000 + 6 * 400 + cfg.rpmLead.maxAddRpm);
+        assert.strictEqual(g(1000 + 6 * 410, 410, 80).add, cfg.rpmLead.maxAddRpm, 'the kept slope is capped too');
+        assert.strictEqual(cfg.rpmLead.maxAddRpm, 300);
+    }],
+    ['lead: the soft gate gives none at 1 rpm/ms, half the slope at 1.5, all of it from 2', () => {
+        const at = (slope) => { const f = L.makeLead(cfg.rpmLead); let r; for (let t = 0; t <= 400; t += 20) r = f(5000 + slope * t, t, 60); return r.add / (slope * 60); };
+        assert.ok(Math.abs(at(1.0)) < 0.01, String(at(1.0)));
+        assert.ok(Math.abs(at(1.5) - 0.5) < 0.01, String(at(1.5)));
+        assert.ok(Math.abs(at(2.0) - 1) < 0.01, String(at(2.0)));
+    }],
+    ['lead: a gap over 2 x the window, an invalid rpm or time, or a clock set back an hour starts again with no lead', () => {
+        const f = L.makeLead(cfg.rpmLead);
+        for (let t = 0; t <= 400; t += 50) f(5000 + 3 * t, t, 60);
+        assert.strictEqual(f(6500, 400 + 2 * cfg.rpmLead.slopeWindowMs + 10, 60).add, 0, 'gap');
+        [undefined, NaN, -1, '6000'].forEach((bad) => {
+            const g = L.makeLead(cfg.rpmLead);
+            for (let t = 0; t <= 400; t += 50) g(5000 + 3 * t, t, 60);
+            const r = g(bad, 450, 60);
+            assert.ok(Object.is(r.rpm, bad) && r.add === 0, String(bad));     // Object.is: Node 8's deepStrictEqual has NaN !== NaN
+            assert.strictEqual(g(6400, 500, 60).add, 0, 'history cleared after ' + String(bad));
+        });
+        assert.strictEqual(L.makeLead(cfg.rpmLead)(6000, NaN, 60).add, 0);
+        const T0 = 1.7e12, h = L.makeLead(cfg.rpmLead);
+        let r;
+        for (let t = 0; t <= 400; t += 50) r = h(3000 + 3 * t, T0 + t, 60);
+        assert.ok(r.add > 100, 'leading before the jump: ' + r.add);
+        assert.strictEqual(h(4300, T0 + 450 - 3600e3, 60).add, 0, 'wall clock set back an hour: no lead (KB-ANY-204)');
+        assert.strictEqual(h(4450, T0 + 500 - 3600e3, 60).add, 0, 'and none from the stale history after it');
+    }],
+    ['lead: an unchanged rpm (a speed tick) keeps the last lead inside the window, then decays to 0', () => {
+        const f = L.makeLead(cfg.rpmLead);
+        let r;
+        for (let t = 0; t <= 400; t += 50) r = f(5000 + 3 * t, t, 60);
+        assert.strictEqual(f(6200, 410, 60).add, r.add);
+        assert.strictEqual(f(6200, 540, 60).add, r.add);
+        assert.strictEqual(f(6200, 400 + cfg.rpmLead.slopeWindowMs + 1, 60).add, 0);
+    }],
+    ['step with a lead: lit at once when a boundary is crossed, off only lead + hysteresis under it; a falling lead never flickers', () => {
+        const th = L.thresholds(cfg, 'sportplus', 95);
+        [0, 100].forEach((add) => {
+            let s = null, prev = -1;
+            for (let r = 5900; r <= 6700; r++) {
+                s = L.step(s, r, th, cfg, add);
+                assert.ok(s.lit >= prev, 'rising never goes down: rpm ' + r);
+                prev = s.lit;
+            }
+        });
+        const s = L.step(null, 6450, th, cfg, 100);
+        assert.strictEqual(s.lit, 5);
+        // the lead falls away (6450 shown -> the raw 6350 a moment later): still 5 lit, as hysteresis + lead covers it
+        assert.strictEqual(L.step(s, 6350, th, cfg, 100).lit, 5, 'no flicker as the lead falls away');
+        assert.strictEqual(L.step(s, 6350, th, cfg, 0).lit, 4, 'without the lead it goes off (hysteresis 50 only)');
+        assert.deepStrictEqual([-5, NaN, 'x', undefined].map((a) => L.step(s, 6350, th, cfg, a).lit), [4, 4, 4, 4], 'a bad lead counts as 0');
+    }],
+    ['readSettings: tachLead outside its steps (55, 100, "40", null, -20) falls back to the default with its key listed; every step kept', () => {
+        const def = SPEC.settings.filter((x) => x.key === 'tachLead')[0].default;
+        assert.strictEqual(def, cfg.rpmLead.leadMs);
+        assert.strictEqual(L.readSettings(() => undefined, SPEC.settings).values.tachLead, def);
+        [55, 100, '40', null, -20, true].forEach((x) => {
+            const r = L.readSettings((k) => (k === 'tachLead' ? x : undefined), SPEC.settings);
+            assert.strictEqual(r.values.tachLead, def, JSON.stringify(x));
+            assert.ok(r.bad.indexOf('tachLead') >= 0, JSON.stringify(x));
+        });
+        cfg.LEAD_STEPS.forEach((x) => assert.strictEqual(L.readSettings((k) => (k === 'tachLead' ? x : undefined), SPEC.settings).values.tachLead, x));
+    }],
 ];

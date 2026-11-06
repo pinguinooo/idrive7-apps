@@ -193,6 +193,8 @@ function look(m) {
             row('bright', 'stepper', 'Brightness', 'The whole cover', stepper(m, 'look', 'bright', v.bright, steps), { value: v.bright + '%' }),
             row('nightDim', 'toggle', 'Night dim', 'Dims to ' + dim + '%. Manual: the car\'s light signal is not read', toggle('look', 'nightDim', v.nightDim === true)),
             row('coverSlats', 'toggle', 'Shift lights in the cover', 'Amber and red slats in the M badge\'s place', toggle('look', 'coverSlats', v.coverSlats === true)),
+            row('tachLead', 'stepper', 'Tach lead', 'The rev bar runs ahead to cover slow rpm updates', stepper(m, 'look', 'tachLead', v.tachLead, itemOf(m, 'tachLead').steps || []),
+                { value: (v.tachLead === 0 ? 'Off' : v.tachLead + ' ms') + (v.tachLead === itemOf(m, 'tachLead').default ? ' (default)' : '') }),
         ],
         note: 'Speed shows in ' + (v.units === 'metric' ? 'km/h' : v.units === 'car' ? 'the car\'s unit' : 'mph') + '. The tachs go 0 to 7 (x1000 rpm)', noteTone: 'dim',
     };

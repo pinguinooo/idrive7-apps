@@ -56,7 +56,13 @@ module.exports = Object.freeze({
     },
     // speed (and rpm) are only notified on change: a parked car goes quiet, so the getter is polled
     speedPoll: { pollMs: 250, pollIdleMs: 500, pollTimeoutMs: 400, pollMaxBackoffMs: 2000 },
-    rpmPoll: { pollMs: 50, pollIdleMs: 500, pollTimeoutMs: 200, pollMaxBackoffMs: 2000 },
+    rpmPoll: { pollMs: 40, pollIdleMs: 500, pollTimeoutMs: 200, pollMaxBackoffMs: 2000 },   // 0.1.6: 40 ms, Shift Lights' value
+    // 0.1.6: the bar and the slats a moment ahead of the car's slow rpm updates (Shift Lights' makeLead, logic.js). leadMs is
+    // the "Tach lead" default (app.json steps LEAD_STEPS), chosen by test/adam_mtrack/lead_sim.js (iDrive-Apps
+    // docs/emulator/mtrack-0.1.6/lead-sim.md): no step met its rule (blips overshoot the peak by the full maxAddRpm), so the
+    // default is 0 = Off and the lead is Adam's car-day A/B; the lead never adds more than maxAddRpm [U]
+    rpmLead: { leadMs: 0, slopeWindowMs: 150, slopeMinSpanMs: 60, minSlope: 1, maxSlope: 20, maxAddRpm: 300 },
+    LEAD_STEPS: [0, 20, 40, 60, 80],
     speedFactor: 1.0,           // shown speed = true speed x this; calibrate against the OEM reading on car day [U]
     tankLitres: 65,             // G01 tank for the fuel gauge (no signal for it) [U]
     nightDim: 0.35,             // "Night dim" on: brightness x this [U] (no lights-on signal is read)

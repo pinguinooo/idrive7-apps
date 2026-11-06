@@ -29,15 +29,15 @@ module.exports = [
         assert.ok(!('requireCheckControl' in cfg), 'the old config switch is gone (BMW popups replaces it)');
         assert.ok(st.steps.indexOf(S.speedStaleMs) >= 0);
     }],
-    ['app.json: id, title, version 0.1.5, installs with the cover off, Sport+ only, US units', () => {
-        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.5', 'OAD3']);
+    ['app.json: id, title, version 0.1.6, installs with the cover off, Sport+ only, US units', () => {
+        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.6', 'OAD3']);
         assert.strictEqual(item('coverOn').default, false);
         assert.strictEqual(item('whenToShow').default, 'sportplus');
         assert.strictEqual(item('units').default, 'us');
         assert.deepStrictEqual(item('bright').steps.indexOf(item('bright').default) >= 0, true);
         assert.deepStrictEqual(SPEC.screens[0].buttons.map((b) => b[0]), ['BTN_COVER', 'BTN_ALL'], 'no BTN_SETTINGS (the kit would add a sixth tab)');
     }],
-    ['app.json 0.1.4: panels default to the OEM M display (coolant over oil, torque over power); the left two reset once for saved settings', () => {
+    ['app.json 0.1.4: panels default to coolant over oil, torque over power; the left two reset once for saved settings', () => {
         assert.deepStrictEqual(['leftPanel', 'leftLower', 'rightPanel', 'rightLower'].map((k) => item(k).default), ['coolant', 'oil', 'torque', 'power']);
         assert.deepStrictEqual(['leftPanel', 'leftLower'].map((k) => item(k).reset), [1, 1]);
         assert.deepStrictEqual(SPEC.settings.filter((s) => s.reset).map((s) => s.key), ['leftPanel', 'leftLower'], 'nothing else resets');
@@ -73,7 +73,7 @@ module.exports = [
         assert.deepStrictEqual(xywh(it('cornerR_us').rect), xywh(G.RECTS.cornerR));
         const mem = ST.memoryOf(ART);
         assert.ok(mem <= cfg.memoryBudgetBytes && cfg.memoryBudgetBytes <= 3 * 1048576, 'renderer memory ' + mem);
-        assert.strictEqual(mem, 3049504, 'the measured 2.9 MiB (make-art prints it)');
+        assert.strictEqual(mem, 3135520, 'the measured 2.99 MiB (make-art prints it; 0.1.6: the gear digits at full size, 0.1.5 was 3049504)');
         assert.ok(cfg.memoryBudgetBytes < cfg.renderer.pixelBytes / 5, 'far under the 16 MiB every app shares');
     }],
     ['the over-art\'s palette index decodes to its colours: a pixel of each field and of the edge line', () => {
@@ -91,16 +91,31 @@ module.exports = [
         for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) if (px[(y * c.w + x) * 4 + 3] > 0) right = Math.max(right, c.rect.x + x);
         assert.ok(right < 1760, 'the oil gauge art ends at ' + right);
     }],
-    ['atlas: every gear, small and speed glyph the centre draws, the tachs\' numerals 0..7; mph and km/h; the drive-mode tags; the centre\'s static cell', () => {
+    ['atlas: every gear (P R N D - and 0.1.6\'s digits 1-8, no small style) and speed glyph the centre draws, the tachs\' numerals 0..7; mph and km/h; the drive-mode tags; the centre\'s static cell', () => {
         const A = ART.atlas;
-        'PRND-'.split('').forEach((c) => assert.ok(A.styles.gear.glyphs[c], 'gear ' + c));
+        'PRND-12345678'.split('').forEach((c) => assert.ok(A.styles.gear.glyphs[c], 'gear ' + c));
+        assert.ok(!A.styles.small && !A.styles.gear.glyphs['9'], 'no small digit style, no gear 9');
+        assert.deepStrictEqual(Object.keys(A.tags), ['SPORT+', 'SPORT', 'COMFORT'], 'only the tags main.js draws (no ECO PRO)');
         '01234567'.split('').forEach((c) => assert.ok(A.styles.bar.glyphs[c], 'bar numeral ' + c));
         assert.ok(!A.styles.bar.glyphs['8'] && !A.styles.gear.glyphs['0'], 'only what the cover draws');
         assert.deepStrictEqual([A.centre.px, A.centre.py], [G.CENTRE_CELL.x, G.CENTRE_CELL.y]);
-        '12345678'.split('').forEach((c) => assert.ok(A.styles.small.glyphs[c], 'small ' + c));
         '0123456789-'.split('').forEach((c) => assert.ok(A.styles.speed.glyphs[c], 'speed ' + c));
         assert.ok(A.labels.mph && A.labels['km/h']);
         ['SPORT+', 'SPORT', 'COMFORT'].forEach((x) => assert.ok(A.tags[x], x));
+    }],
+    ['0.1.6 full panel: no bgR2 byte under 15 (a 0 is the LCD\'s lit backlight, a lavender frame on the car); the corners too', () => {
+        const it = it2('bgR2'), px = zlib.inflateRawSync(Buffer.from(it.data, 'base64'));
+        let min = 255;
+        for (let i = 0; i < px.length; i++) min = Math.min(min, px[i]);
+        assert.ok(min >= 15, 'darkest background byte ' + min);
+        [0, it.w - 1, (it.h - 1) * it.w, it.h * it.w - 1].forEach((i) => assert.ok(px[i] >= 15, 'corner ' + i + ': ' + px[i]));
+    }],
+    ['0.1.6 Tach lead: a number setting, steps = config LEAD_STEPS (0 = Off), default = config rpmLead.leadMs, marked', () => {
+        const t = item('tachLead');
+        assert.deepStrictEqual([t.type, t.unit, t.steps, t.default, t.markDefault, t.labels['0']], ['number', 'ms', cfg.LEAD_STEPS, cfg.rpmLead.leadMs, true, 'Off']);
+        assert.ok(cfg.LEAD_STEPS.indexOf(cfg.rpmLead.leadMs) >= 0);
+        assert.ok(!t.reset, 'additive: no reset needed');
+        assert.strictEqual(cfg.rpmPoll.pollMs, 40, 'rpm poll at Shift Lights\' 40 ms');
     }],
     ['the over-art tachs draw numerals 0..7 only (no 8): geom places 8 numerals', () => {
         assert.strictEqual(G.numerals(cfg.tach).length, 8);
@@ -126,7 +141,7 @@ module.exports = [
             envs.forEach((e) => assert.ok(f === 'main.js' && (e === 'process.env.MTRACK_CR_SOCKET' || e === 'process.env.MTRACK_EMU_FEED'), f + ': ' + e));
         });
         assert.ok(/if \(process\.env\.MTRACK_EMU_FEED\) require\('\.\/emufeed'\)/.test(fs.readFileSync(path.join(APP, 'main.js'), 'utf8')));
-    }],    ['0.1.5 OEM colours: pale yellow shift markers (photo hue 47 deg), the oil gauge\'s cold end cyan (photo 188 deg) and drawn in its art', () => {
+    }],    ['0.1.5 colours: pale yellow shift markers (hue 47 deg), the oil gauge\'s cold end cyan (188 deg) and drawn in its art', () => {
         const hue = (c) => { const mx = Math.max.apply(null, c), mn = Math.min.apply(null, c), d = mx - mn, r = c[0], g = c[1], b = c[2];
             const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return (h * 60 + 360) % 360; };
         assert.ok(Math.abs(hue(ST.OVER_PALETTE[6]) - 47.4) <= 10, 'shift marker hue ' + hue(ST.OVER_PALETTE[6]));

@@ -1,4 +1,4 @@
-# M Track Cluster (`adam_mtrack`) 0.1.5
+# M Track Cluster (`adam_mtrack`) 0.1.6
 
 An M Track style cover over the instrument cluster, drawn by the cluster-render service on its `panel` target
 (1920 x 720): two bar tachs from 0 to 7 (x1000 rpm, the B58's 7,000 rpm limit), the gear over a line over the speed
@@ -7,26 +7,47 @@ clock and outside temperature. Built for a 2024 X3 M40i (G01 LCI, iDrive 7, US u
 
 It covers the real speedometer, so it only shows while every guard holds, and drops at once when one fails.
 
-**0.1.5: drawn like BMW's, measured against the OEM photo.** 0.1.4 matched where things sit; this pass matched how
-they are drawn, region by region against Adam's photo of BMW's own M display (iDrive-Apps tools/oem-compare: the photo
-straightened into panel pixels, then structure, stroke width, ink size, hue and tone per region). The rpm fill is now
-BMW's: a solid orange-red block at the revs with a crimson-to-pink glow above it under a 6 px grid of darker crimson
-lines (the photo's grid pitch is 6 px too). The shift markers are pale yellow, not orange; the band is flat and
-lighter with a bright white inner edge; the side gauges' tracks, ticks and labels are bright white instead of grey;
-the coolant and oil icons have BMW's shapes and weight; SPORT+ and mph are near-white; the corner arcs have BMW's
-thicker glowing edge and the oil gauge's cold end is cyan. The text face stays the kit's label face (Ubuntu Sans,
-condensed regular): of 49 face, weight and width combinations from 11 open families scored against the photo it
-fits BMW's text best in width and stroke weight. The art's text (mph, the drive-mode tags) is now drawn from a committed Liberation Sans (SIL OFL 1.1), the face
-0.1.4 fell back to, so the art no longer depends on the build machine. No change to the dead-man, the recovery or
-settings.
+**There is no photo of BMW's stock M view yet.** The 2026-11-05 car photo that 0.1.4 and 0.1.5 were compared with is
+M Track 0.1.3's own cover running on the car (its clock reads 3:37 am, before 0.1.4 existed; iDrive-Apps KB-ANY-213),
+so those "matches BMW" measurements compared the cover with itself and are void. This README makes no claim about how
+close the cover is to BMW's display until Adam's Cover Off photo of the stock Sport+ view is in iDrive-Apps
+`tools/oem-compare/photos/oem-<date>/`.
 
-**0.1.4: the panel already fills; OEM left panels.** On Adam's car (2026-11-05) Test 1 KNOWN drew. The two round
+**0.1.6: the whole panel dark, the gear as a digit, Tach lead, the rpm log line.**
+- *Full panel.* The car photo showed a lit lavender frame around the drawn dash: the art painted everything outside the
+  dash silhouette pure black (0), and the cluster's LCD shows 0 as its lit backlight, not as black. The tachs layer
+  already covered the whole 1920 x 720 opaque, so nothing was "uncovered" in the layer sense. The background now fills
+  the whole panel with the dash's own dark gradient (no byte darker than 15), so the frame is gone and there is no
+  seam where the silhouette was. No geometry, shader, layer, dead-man or recovery change. The tone holds at Brightness
+  100; Brightness 20 or Night dim scales the whole panel down evenly towards the LCD's black.
+- *Gear.* The engaged gear's digit replaces the letter in the big gear spot, the same size (Shift Lights' convention):
+  P, R and N stay letters, D with a gear number (drive or manual: the car's selector enums have no M or S, so manual
+  stays D with its gear) shows that number, D with no gear number shows D. No M prefix, no small digit, no guessing
+  from rpm and speed. Both car fields are in app.json already (`statusGearboxDrive`, `DataPowerTrain2`); the app logs
+  the first 12 distinct raw `gearbox:` values (and the kit `gear selection:`) for the car-day check.
+- *RPM.* The app adds no smoothing; the lag is the car's update rate. The rpm getter is polled every 40 ms while the
+  cover shows (was 50); the side boxes redraw one per 100 ms tick, round robin (one box is ~7 ms of drawing under
+  Node 8), so an rpm sample is never held behind two. **Look > Tach lead** (Off, 20 to 80 ms; default Off) runs the bar
+  and the slats ahead of the rpm by its recent slope (Shift Lights' lead, capped at 300 rpm). Its default is Off
+  because in simulation every lead overshot a throttle blip's peak by the full 300 rpm (iDrive-Apps
+  docs/emulator/mtrack-0.1.6/lead-sim.md); try it on the car. Every 30 s the log has
+  `rpm notified/s ... (gap p50/p90), rpm poll .../s (rtt p50, fails), sample->send max, box draw max, socket blocked k of
+  m pump ticks, tach lead`.
+
+**0.1.5: the art redrawn after a car photo** (which turned out to be 0.1.3's own cover, above). The rpm fill became a
+solid orange-red block at the revs with a crimson-to-pink glow under a 6 px grid; the shift markers pale yellow; the
+band flat and lighter with a bright white inner edge; the side gauges' tracks, ticks and labels bright white; new
+coolant and oil icons; SPORT+ and mph near-white; thicker glowing corner arcs and a cyan cold end on the oil gauge. The
+art's text (mph, the drive-mode tags) is drawn from a committed Liberation Sans (SIL OFL 1.1), so the art no longer
+depends on the build machine. No change to the dead-man, the recovery or settings.
+
+**0.1.4: the panel already fills; coolant over oil on the left.** On Adam's car (2026-11-05) Test 1 KNOWN drew. The two round
 dials in that photo are M Track's own (the KNOWN shader's), not BMW's: the layer is one 1920 x 720 effect that the car
 maps 1:1 onto the whole visible panel (dial centres within about 20 px of the code's), and the cover's tachs layer is
 the same full rect, so there is nothing larger to scale to; only the sensor housing at the top centre and the rounded
 top corners hide pixels. Step 1 now adds a 2 px frame and an edge ruler (ticks every 40 px, long every 200 px) so the
 next photo shows exactly where the glass clips the panel, and its card says the dials are ours. The left side now
-defaults to the OEM M display's coolant (160/210/270 F) over oil (120/210/300 F) instead of tyre data; both settings
+defaults to coolant (160/210/270 F) over oil (120/210/300 F) instead of tyre data (Adam's pick from the car photo); both settings
 carry `"reset": 1`, so a car that saved tyres from 0.1.3 moves to coolant over oil once, and later choices are kept. A refused
 test step now says "parked only (in P or barely moving)" with no speed unit, so a US car no longer sees km/h.
 
@@ -47,8 +68,8 @@ bar is exactly 0.1.1's dead-man.
 | Page | What |
 |---|---|
 | Home | **Cover the cluster** On/Off (default Off); **When to show**: Sport+ only (default), Sport and above (Sport, Sport individual, Sport+), Always; "Why the cover is off right now: ..." and the signals it reads (speed, drive mode, BMW popups) |
-| Panels | Left panel, left lower half, right panel, right lower half (from the 22-widget catalogue: a whole widget takes both halves), Swap sides. Defaults (0.1.4): Coolant over Oil left, Torque over Power right, as BMW's M display. Widgets with no signal on the car are skipped and say "No signal on this car" |
-| Look | Units: US (mph, psi, F, lb-ft, hp, mi, mpg), Metric, Follow car; Brightness; Night dim; Shift lights in the cover |
+| Panels | Left panel, left lower half, right panel, right lower half (from the 22-widget catalogue: a whole widget takes both halves), Swap sides. Defaults (0.1.4): Coolant over Oil left, Torque over Power right. Widgets with no signal on the car are skipped and say "No signal on this car" |
+| Look | Units: US (mph, psi, F, lb-ft, hp, mi, mpg), Metric, Follow car; Brightness; Night dim; Shift lights in the cover; Tach lead (0.1.6: Off, 20 to 80 ms, default Off) |
 | Safety | **BMW popups**: Use if sent (default), Require, Ignore; **Drop the cover if the drive-mode signal is missing** (default Off); **Speed timeout** 0.5 to 3 s (default 1 s, the guard itself is always on); **Test pattern (parked)**: steps 1 to 6 and STOP (below); why the cover is off right now (or which build stage it is at, or where it stopped and why); every signal the guards read (present / missing / stale) and what cluster-render says (the panel's and the HUD's state, the last error event); every always-on guard with its state and why it has no switch, the cover's build stage, and the last release check (or, after a test step, what the renderer said) |
 | About | Version, what is unproven on the car, the widgets not in this version, how to remove it safely, Shift Lights |
 
@@ -148,7 +169,7 @@ and, if it stopped, why) and then the release check. Run them in order and note 
 | 3 TINT | a translucent blue over the whole 1920 x 720 panel | a whole-panel layer |
 | 4 IMAGE | a 256 x 128 test card as an image layer (left, blue) and as an asset sampled by an effect (right, orange), 131 KB each | uploads |
 | 5 TACHS | the cover's stage 1 (its opaque tachs layer, 5 assets, 1.6 MiB), built as the cover builds it | the big shader and its art |
-| 6 COVER | the whole cover, 4 stages (4 layers, 11 assets, 2.9 MiB), each confirmed before the next | everything |
+| 6 COVER | the whole cover, 4 stages (4 layers, 11 assets, 3.0 MiB), each confirmed before the next | everything |
 
 ## How it draws (0.1.3)
 
@@ -161,7 +182,7 @@ Dash's), one a stage (`stages.js`):
 |---|---|---|
 | 1 TACHS | the whole panel, opaque: the background (its right half at half resolution, mirrored), the bars' art (the right bar's lines, ticks and fields as coverage + palette index, mirrored for the left), the fill to the revs, the numerals 0..7 from the glyph atlas | bgR2, overR, its palette, band, atlas: 1.6 MiB |
 | 2 PANELS | both side panels and both corners (drawn in software, sent as coverage + palette index, only the changed rows, at most twice a second) | 4 boxes, palette: 1.25 MiB |
-| 3 CENTRE | gear, small gear digit, speed, unit, drive-mode tag, the line and stack icon, the M badge | badge (the atlas shared): 0.06 MiB |
+| 3 CENTRE | gear (letter or digit), speed, unit, drive-mode tag, the line and stack icon, the M badge | badge (the atlas shared): 0.06 MiB |
 | 4 SLATS | the shift-light slats (Shift Lights' shader), only with "Shift lights in the cover" on | none |
 
 The build follows G's Dash's call sequence: nothing before the first status answer; each stage's assets (checked against

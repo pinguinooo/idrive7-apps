@@ -126,7 +126,7 @@ module.exports = [
         assert.strictEqual(r.ops('asset').length, 11);
         assert.ok(mem <= cfg.memoryBudgetBytes, 'renderer memory ' + mem);
         assert.strictEqual(mem, ST.memoryOf(ART));
-        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 11 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 11 assets, 3\.0 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
         assert.deepStrictEqual(r.out.status().build, { state: 'shown', n: 4, of: 4, name: '', word: 'shown', why: '', stop: null });
     }],
     ['the dead-man: a new animation first, then the previous one stopped, every aliveRearmMs while shown; a backward clock jump re-arms at once; none after the drop', () => {
@@ -147,6 +147,23 @@ module.exports = [
         r.out.drop('test');
         assert.strictEqual(r.ops('drop')[0].ref, stageRef(r, 90), 'the opaque tachs dropped first');
         assert.strictEqual(r.out.pump(t + 10 * H), false, 'nothing after the drop');
+    }],
+    ['0.1.6 wireStats: counts pump ticks and the ones that found the socket blocked, then resets; reading it sends nothing', () => {
+        const r = rig();
+        r.out.show(FRAME);
+        r.buildAll();
+        const t = Date.now();
+        r.out.wireStats();
+        r.out.pump(t + 1);
+        r.c.blocked = true; r.out.pump(t + 2); r.out.pump(t + 3);
+        r.c.blocked = false;
+        const n0 = r.c.ops.length;
+        assert.deepStrictEqual(r.out.wireStats(), { blocked: 2, ticks: 3 });
+        assert.deepStrictEqual(r.out.wireStats(), { blocked: 0, ticks: 0 }, 'reset');
+        assert.strictEqual(r.c.ops.length, n0, 'nothing sent');
+        r.out.disarm('test');
+        r.out.pump(t + 4);
+        assert.deepStrictEqual(r.out.wireStats(), { blocked: 0, ticks: 0 }, 'no connection: not counted');
     }],
     ['a refusal at a stage stops the build there: its layers dropped, one fault, status().build names the stage and the reason', () => {
         const r = rig();
@@ -185,7 +202,7 @@ module.exports = [
         assert.strictEqual(r.ops('asset').length, 0, 'nothing sent');
         assert.strictEqual(layerOps(r).length, 0);
         assert.strictEqual(r.faults.length, 1);
-        assert.ok(/stage 1 TACHS not sent: the renderer's pixel memory is full \(14\.5 MiB in use: robertn_waze_cluster 14\.5 MiB, 1\.6 MiB needed\)/.test(r.faults[0]), r.faults[0]);
+        assert.ok(/stage 1 TACHS not sent: the renderer's pixel memory is full \(14\.5 MiB in use: robertn_waze_cluster 14\.5 MiB, 1\.7 MiB needed\)/.test(r.faults[0]), r.faults[0]);
     }],
     ['another app\'s HUD let go of the shared scene: the build waits cfg.build.handoverMs (3.5 s) before making anything', () => {
         const r = rig();

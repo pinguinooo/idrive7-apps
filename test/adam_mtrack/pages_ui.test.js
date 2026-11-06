@@ -114,6 +114,21 @@ module.exports = [
         assert.strictEqual(P.view(0, model({ coverOn: true }, { reason: 'showing', sig: Object.assign({}, SIG_OK, { cc: 'missing' }) })).status.signals,
             'Signals: speed present, drive mode Sport+ (present), BMW popups missing (no answer)');
     }],
+    ['0.1.6 Look: Tach lead is the last row, a stepper over app.json\'s steps; Off at 0, "<n> ms", " (default)" after the default; the ends stop', () => {
+        const def = item('tachLead').default, look = (v) => P.view(2, model({ tachLead: v }));
+        const rowOf = (v) => look(v).rows.filter((x) => x.id === 'tachLead')[0];
+        const rows = look(def).rows;
+        assert.strictEqual(rows[rows.length - 1].id, 'tachLead');
+        assert.deepStrictEqual([rowOf(def).kind, rowOf(def).label, rowOf(def).desc], ['stepper', 'Tach lead', 'The rev bar runs ahead to cover slow rpm updates']);
+        const shown = (v) => (v === 0 ? 'Off' : v + ' ms') + (v === def ? ' (default)' : '');
+        item('tachLead').steps.forEach((v) => assert.strictEqual(rowOf(v).value, shown(v), String(v)));
+        assert.ok(/\(default\)$/.test(rowOf(def).value) && !/\(default\)/.test(rowOf(def === 0 ? 40 : 0).value));
+        assert.strictEqual(rowOf(0).value.indexOf('Off'), 0);
+        assert.deepStrictEqual(rowOf(0).controls.map((c) => c.end), [true, false], 'Off: minus stops');
+        assert.deepStrictEqual(rowOf(80).controls.map((c) => c.end), [false, true], '80: plus stops');
+        assert.deepStrictEqual(rowOf(0).controls[1].writes, [['tachLead', 20]]);
+        assert.strictEqual(rowOf(55).value, shown(def), 'a bad saved value shows the default it falls back to');
+    }],
     ['Safety: its own tab between Look and About with the three Safety settings; the always-on guards have no control', () => {
         assert.deepStrictEqual(P.PAGES, ['Home', 'Panels', 'Look', 'Safety', 'About']);
         const v = P.view(3, model({}, { sig: SIG_OK }));
@@ -308,7 +323,7 @@ module.exports = [
                 W.drawCorner(c, r, side, Buffer.alloc(r.w * r.h * 4), {}, u, cfg);
             });
         });
-    }],    ['0.1.5 OEM style: a gauge\'s track, ticks and labels are bright white (BMW\'s), not 0.1.4\'s grey', () => {
+    }],    ['0.1.5 style: a gauge\'s track, ticks and labels are bright white, not 0.1.4\'s grey', () => {
         const R = G.RECTS.panelL, cv = new Canvas(R.w, R.h), u = U.resolve('us'), sr = G.slotRect(-1, 'upper');
         W.drawPanel(cv, R, -1, { upper: 'coolant', lower: 'oil' }, { coolant: 60, oil: 40 }, u, () => true, cfg);
         const y = Math.round(sr.y0 + sr.h * 0.6), x = Math.round((sr.x0 + 8 + sr.x1 - 18) * 0.5 + 20);   // mid-track, clear of a tick

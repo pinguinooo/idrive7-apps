@@ -11,6 +11,8 @@
  *                                 drop if no drive mode, speed timeout) come in s; anything unknown is the strict side.
  *   speedStatus(at, now, ms, cfg) 'present' | 'stale' | 'missing': the speed signal as the speed guard sees it
  *   thresholds / step             the slats (Shift Lights' logic: cold-oil limit, hysteresis, limiter flash)
+ *   makeLead(R)                   Shift Lights' rpm lead (the bar and the slats a moment ahead of slow rpm updates)
+ *   gearGlyph(stage, gear)        what the centre's gear spot shows: P R N, the engaged gear's digit, D, or '-'
  *   readSettings(get, schema)     the saved settings checked against app.json (bad -> default, or the strict side
  *                                 for a Safety setting), plus
  *   layoutOf(v)                   the panels as drawn: whole widgets take both halves, swap, hidden -> default
@@ -146,17 +148,66 @@ function rawState(rpm, th, n, band, reds) {
     const flashing = rpm >= th.limit - band, red = rpm >= th.shift;
     return { lit: red || flashing ? n : fillLit(rpm, th, n, reds), red, flashing };
 }
-/** The next slat state with hysteresis (a slat goes off only hysteresisRpm under where it came on). */
-function step(prev, rpm, th, cfg) {
+/**
+ * The next slat state with hysteresis (a slat goes off only hysteresisRpm under where it came on). leadAdd: the rpm a
+ * lead (makeLead) added; a predicted rpm goes off by its own lead too, so the prediction falling away never flickers.
+ */
+function step(prev, rpm, th, cfg, leadAdd) {
     const n = cfg.row.perSide, reds = cfg.row.reds;
     if (!validRpm(rpm)) return { lit: 0, red: false, flashing: false };
-    const H = cfg.engine.hysteresisRpm, band = cfg.engine.limiterBand;
+    const H = cfg.engine.hysteresisRpm + (num(leadAdd) && leadAdd > 0 ? leadAdd : 0), band = cfg.engine.limiterBand;
     const p = prev || { lit: 0, red: false, flashing: false };
     const raw = rawState(rpm, th, n, band, reds);
     const flashing = raw.flashing || (p.flashing && rpm >= th.limit - band - H);
     const red = raw.red || (p.red && rpm >= th.shift - H);
     const lit = red || flashing ? n : Math.max(raw.lit, Math.min(p.lit, fillLit(rpm + H, th, n, reds)));
     return { lit, red, flashing };
+}
+
+/**
+ * The rpm a moment ahead (apps/adam_shiftlights/logic.js makeLead, plus the maxAddRpm cap): makeLead(cfg.rpmLead) ->
+ * lead(rpm, tMs, leadMs) -> { rpm: rpm + add, add } with 0 <= add <= maxAddRpm. add = slope (rpm/ms over the last
+ * slopeWindowMs, at most maxSlope) x leadMs (0 to 150). Only a rise leads: a slope under minSlope gives none (noise, a
+ * steady rpm, a fall), ramping in to the full slope at 2 x minSlope. Speed ticks re-send the same rpm: an unchanged rpm
+ * inside the window keeps the last slope. An invalid rpm or time clears the history (no lead), and so does a time that
+ * went back (a new source, or the wall clock set back: KB-ANY-204). Never throws.
+ */
+function makeLead(R) {
+    let h = [], k = 0;      // h: [tMs, rpm] at each change, oldest first; k: the gated slope (rpm/ms)
+    const out = (rpm, ms) => { const add = Math.min(k * ms, R.maxAddRpm); return { rpm: rpm + add, add }; };
+    return function lead(rpm, tMs, leadMs) {
+        const ms = num(leadMs) ? clamp(leadMs, 0, 150) : 0;
+        if (!validRpm(rpm) || !num(tMs)) { h = []; k = 0; return { rpm, add: 0 }; }
+        const top = h[h.length - 1];
+        if (top && tMs < top[0]) h = [];        // time went back (a new source): start again
+        else if (top && top[1] === rpm && tMs - top[0] < R.slopeWindowMs) return out(rpm, ms);
+        if (!top || top[1] !== rpm || !h.length) h.push([tMs, rpm]);
+        h = h.filter((x) => tMs - x[0] <= 2 * R.slopeWindowMs);
+        let ref = h[0];
+        h.forEach((x) => { if (tMs - x[0] >= R.slopeWindowMs) ref = x; });
+        k = 0;
+        if (ref && tMs - ref[0] >= R.slopeMinSpanMs) {
+            const s = Math.min((rpm - ref[1]) / (tMs - ref[0]), R.maxSlope);
+            k = s > R.minSlope ? s * clamp((s - R.minSlope) / R.minSlope, 0, 1) : 0;
+        }
+        return out(rpm, ms);
+    };
+}
+
+/**
+ * What the centre's gear spot shows (Shift Lights' gearGlyph, with M Track's centre never empty while driving). stage:
+ * the selector 'P' / 'R' / 'N' / 'D' (kit/car.js; manual mode stays D, the car's enums have no M or S), gear: the engaged
+ * gear (1 up, 0 = N or P not told apart, -1 = R). P R N -> that letter; D (or no stage) with a whole gear 1 to 8 -> its
+ * digit; D with no usable gear -> 'D'; no stage and gear -1 -> 'R'; anything else -> '-'. No M prefix, no guess.
+ */
+function gearGlyph(stage, gear) {
+    if (stage === 'P' || stage === 'R' || stage === 'N') return stage;
+    const none = stage === undefined || stage === null;
+    if (stage !== 'D' && !none) return '-';
+    const whole = typeof gear === 'number' && Math.floor(gear) === gear;
+    if (whole && gear >= 1 && gear <= 8) return String(gear);
+    if (stage === 'D') return 'D';
+    return whole && gear === -1 ? 'R' : '-';
 }
 
 /* ---------- settings ---------- */
@@ -237,5 +288,5 @@ const levelOf = (cfg, v) => Math.round((num(v.bright) ? v.bright : 100) / 100 * 
 
 module.exports = {
     SETTINGS_V, RANK, REASONS, PANEL_KEYS, POPUP_GUARDS, STRICT, driveModeOf, allowed, decide, blocker, popupGuardOf,
-    staleMsOf, speedStatus, thresholds, rawState, step, readSettings, layoutOf, sideOf, migrateSettings, levelOf, timerStep,
+    staleMsOf, speedStatus, thresholds, rawState, step, makeLead, gearGlyph, readSettings, layoutOf, sideOf, migrateSettings, levelOf, timerStep,
 };

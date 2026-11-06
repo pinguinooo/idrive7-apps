@@ -181,8 +181,8 @@ try {
     r = await step(6, 'COVER', 4, null, true);
     if (r) { results.step6Lit = r.lit; check(r.lit > 0.25 * 1920 * 720 && Math.abs(r.noAnim.lit - r.lit) < 0.02 * r.lit, '6 the whole cover drawn, the same without renderer animations (' + r.lit + ', ' + r.noAnim.lit + ' lit px)'); }
     const lg = await appLog();
-    check(lg.some((l) => /^test: shown \(1 layers, 1 assets, 1\.1 MiB of renderer memory, built in \d+ ms\)$/.test(l)) && lg.some((l) => /^test: shown \(1 layers, 5 assets, 1\.6 MiB/.test(l)) &&
-        lg.some((l) => /^test: shown \(4 layers, 11 assets, 2\.9 MiB/.test(l)), 'KNOWN 1.1 MiB, TACHS 1.6 MiB, COVER 2.9 MiB of the renderer\'s memory, each built stage by stage');
+    check(lg.some((l) => /^test: shown \(1 layers, 1 assets, 1\.1 MiB of renderer memory, built in \d+ ms\)$/.test(l)) && lg.some((l) => /^test: shown \(1 layers, 5 assets, 1\.7 MiB/.test(l)) &&
+        lg.some((l) => /^test: shown \(4 layers, 11 assets, 3\.0 MiB/.test(l)), 'KNOWN 1.1 MiB, TACHS 1.7 MiB, COVER 3.0 MiB of the renderer\'s memory (0.1.6: the gear digits), each built stage by stage');
 
     console.log('another app on the HUD');
     const other = new ClusterRender('adam_shiftlights', SOCK);

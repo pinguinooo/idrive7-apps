@@ -55,12 +55,21 @@ module.exports = [
         const sb = G.slatBar(cfg.row);
         assert.ok(sb.rect.x + sb.rect.w / 2 - 960 < 1 && sb.rect.y < cfg.row.cy && sb.rect.y + sb.rect.h > cfg.row.cy);
     }],
-    ['centre quads: gear, the small digit only in D, speed digits centred, the unit and the tag; at most 7; a dash without data', () => {
+    ['centre quads: the gear (letter or 0.1.6\'s digit) in the one big spot, speed digits centred, the unit and the tag; at most 6; a dash without data', () => {
         const art = JSON.parse(fs.readFileSync(path.join(__dirname, '../../apps/adam_mtrack/art/art.json'), 'utf8'));
-        const q = G.centreQuads(art.atlas, { gear: 'D', gearNo: 3, speed: 123, unit: 'mph', tag: 'SPORT+' });
-        assert.strictEqual(q.length, 7);
-        assert.deepStrictEqual(q[5].src.slice(0, 2), [art.atlas.labels.mph.x, art.atlas.labels.mph.y]);
-        assert.ok(G.centreQuads(art.atlas, { gear: 'P', gearNo: 3, speed: 5, unit: 'km/h' }).length === 3, 'P: no small digit, one speed digit, unit, no tag');
+        const gs = art.atlas.styles.gear, src = (c) => [gs.glyphs[c].x, gs.glyphs[c].y];
+        const q = G.centreQuads(art.atlas, { gear: '3', speed: 123, unit: 'mph', tag: 'SPORT+' });
+        assert.strictEqual(q.length, 6, 'gear, 3 speed digits, unit, tag: no small digit');
+        assert.deepStrictEqual(q[0].src.slice(0, 2), src('3'), 'the digit 3 from the gear style');
+        assert.deepStrictEqual(q[4].src.slice(0, 2), [art.atlas.labels.mph.x, art.atlas.labels.mph.y]);
+        const qd = G.centreQuads(art.atlas, { gear: 'D', speed: 123, unit: 'mph', tag: 'SPORT+' });
+        assert.deepStrictEqual([qd[0].dst[1], qd[0].dst[3]], [q[0].dst[1], q[0].dst[3]], 'the digit sits where D sits, same size');
+        assert.deepStrictEqual(qd[0].dst[0], q[0].dst[0], 'every digit but 1 is as wide as D: same x');
+        const one = G.centreQuads(art.atlas, { gear: '1', speed: 0, unit: 'mph' })[0], c1 = gs.glyphs['1'];
+        near(one.dst[0] + G.RECTS.centre.x + c1.ox + c1.adv / 2, G.CENTRE.cx, 1, '1 centred on the axis by its own advance');
+        '12345678PRND-'.split('').forEach((c) => assert.deepStrictEqual(G.centreQuads(art.atlas, { gear: c, speed: 1, unit: 'mph' })[0].src.slice(0, 2), src(c), c));
+        ['9', '0', 'M1', 'S', '', 4].forEach((c) => assert.deepStrictEqual(G.centreQuads(art.atlas, { gear: c, speed: 1, unit: 'mph' })[0].src.slice(0, 2), src('-'), JSON.stringify(c) + ' draws a dash'));
+        assert.ok(G.centreQuads(art.atlas, { gear: 'P', speed: 5, unit: 'km/h' }).length === 3, 'P: one speed digit, unit, no tag');
         const none = G.centreQuads(art.atlas, { gear: null, speed: null, unit: 'mph' });
         assert.deepStrictEqual(none.map((x) => x.src.slice(0, 2)), [[art.atlas.styles.gear.glyphs['-'].x, art.atlas.styles.gear.glyphs['-'].y], [art.atlas.styles.speed.glyphs['-'].x, art.atlas.styles.speed.glyphs['-'].y], [art.atlas.labels.mph.x, art.atlas.labels.mph.y]]);
         const sp = G.centreQuads(art.atlas, { gear: 'N', speed: 88, unit: 'mph' }).slice(1, 3), mid = (sp[0].dst[0] + sp[1].dst[0] + sp[1].dst[2]) / 2 + G.RECTS.centre.x;

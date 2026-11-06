@@ -39,7 +39,7 @@ const CDS = 'de.bmw.infotainment.vehicle.CDS', V2 = 'de.bmw.infotainment.vehicle
 const FES = 'de.bmw.infotainment.drivingexcitement.FES', TPMS = 'de.bmw.infotainment.vehicle.TPMS';
 const KOMBI = 'de.bmw.infotainment.KombiIF', ENV = 'de.bmw.infrastructure.EnvironmentalInformation';
 const VEH = 'de.bmw.infotainment.vehicle.Vehicle', CCM = 'de.bmw.infotainment.checkcontrol.CheckControlMaster';
-const KI2 = 'de.bmw.infotainment.KombiInterface_2';
+const KI2 = 'de.bmw.infotainment.KombiInterface_2', VI = 'de.bmw.infrastructure.VehicleInformation';
 const PRESS_UNITS = { 1: 'BAR', 2: 'KPA', 3: 'PSI', BAR: 'BAR', KPA: 'KPA', PSI: 'PSI' }, TEMP_UNITS = { 1: 'C', 2: 'F', C: 'C', F: 'F' };
 const CONS_L100 = { 1: (x) => x, 2: (x) => 282.481 / x, 3: (x) => 235.215 / x, 4: (x) => 100 / x,
     VERBRAUCH_IN_L_S_100KM: (x) => x, VERBRAUCH_IN_MPG_UK: (x) => 282.481 / x, VERBRAUCH_IN_MPG_US: (x) => 235.215 / x, VERBRAUCH_IN_KM_S_L: (x) => 100 / x };
@@ -131,6 +131,17 @@ mgu.run({
                 enabled: () => output.status().armed || !!(ladder && ladder.running()) || (pages.page() === 3 && ui.isVisible('MAIN')) });
             const rpmPoll = createPoll({ field: 'statusEngineSpeed2', name: 'rpm', cfg: cfg.rpmPoll, log, enabled: () => output.status().shown && !d.demo });
             const watched = [];
+            // 0.1.6: the car's raw gearbox values, the first 12 distinct ones (no G01 log of manual mode or the gears exists yet)
+            const gearSeen = Object.create(null);
+            let gearCount = 0;
+            const gearboxLog = (x) => {
+                let k = '';
+                try { k = JSON.stringify(x); } catch (e) { k = String(x); }
+                k = String(k).slice(0, 200);
+                if (gearCount >= 12 || gearSeen[k]) return;
+                gearSeen[k] = true; gearCount++;
+                log.info('gearbox: ' + k); diag('gearbox: ' + k);
+            };
             const signals = ctx.signals && Object.assign({}, ctx.signals, {
                 watch(iface, inst, handlers, lg, opts) {
                     const h = {};
@@ -138,6 +149,7 @@ mgu.run({
                     let poll = null, own = null;
                     if (iface === V2 && h.statusCarSpeed2) { const f0 = h.statusCarSpeed2; own = (x) => { if (speedIn(x) !== false) f0(x); }; poll = speedPoll; h.statusCarSpeed2 = poll.wrap(own); }
                     if (iface === CDS && h.statusEngineSpeed2) { own = h.statusEngineSpeed2; poll = rpmPoll; h.statusEngineSpeed2 = poll.wrap(own); }
+                    if (iface === VI && h.statusGearboxDrive) { const f0 = h.statusGearboxDrive; h.statusGearboxDrive = (x) => { gearboxLog(x); return f0(x); }; }
                     (hooks.handlers[iface] = hooks.handlers[iface] || []).push(h);
                     const p = Promise.resolve(ctx.signals.watch(iface, inst, h, lg, opts));
                     watched.push(p);
@@ -223,8 +235,12 @@ mgu.run({
             /* ---------- the cover ---------- */
             /** Shown, or a build under way (its layers made or about to be): a failing guard drops it. */
             const active = (st) => st.shown || ['waiting', 'handover', 'confirming', 'writing'].indexOf(st.build.state) >= 0;
-            let since = null, dec = { want: false, reason: 'off' }, slat = null, lastPanels = -Infinity, lastStats = Date.now();
+            let since = null, dec = { want: false, reason: 'off' }, slat = null, lastStats = Date.now();
             let sigKey = '', ccWas = '', heldUntil = null, busyWas = '';
+            // 0.1.6: the rpm lead (sampleMs: Car's wall-clock time of the newest sample) and the rpm path's timings for the log
+            let lead = L.makeLead(cfg.rpmLead), sampleMs = null;
+            const perf = { sendMs: 0, boxMs: 0 };
+            const msSince = (t0) => { const t = process.hrtime(t0); return t[0] * 1e3 + t[1] / 1e6; };
             const recentError = (now) => { const e = safety.lastErrorAt(); return isNum(e) && now - e >= 0 && now - e < cfg.safety.showHoldMs; };
             /** Parked enough for a test step: in P, or the last valid speed under cfg.test.parkedKmh. */
             const parked = () => d.stage === 'P' || (isNum(speedKmh) && speedKmh < cfg.test.parkedKmh);
@@ -263,20 +279,16 @@ mgu.run({
                     checkRelease(why);
                 }
             }
-            function gearOf() {
-                const st = d.stage, g = d.gear;
-                if (st === 'P' || st === 'R' || st === 'N') return { gear: st, gearNo: null };
-                if (st === 'D' || (isNum(g) && g >= 1)) return { gear: 'D', gearNo: isNum(g) && g >= 1 && g <= 8 ? g : null };
-                return { gear: null, gearNo: null };
-            }
             function frame() {
                 const u = units(), th = L.thresholds(cfg, carMode || 'sportplus', d.oil);
-                slat = L.step(slat, d.rpm, th, cfg);
-                const kmh = isNum(speedKmh) ? speedKmh * cfg.speedFactor : null, g = gearOf();
+                // the bar and the slats a moment ahead of the car's rpm (Tach lead); the KNOWN step's needle stays raw
+                const ld = lead(d.rpm, isNum(sampleMs) ? sampleMs : Date.now(), v.tachLead);
+                slat = L.step(slat, ld.rpm, th, cfg, ld.add);
+                const kmh = isNum(speedKmh) ? speedKmh * cfg.speedFactor : null;
                 return {
                     mph: kmh === null ? null : kmh / U.KM_PER_MI, rpm: isNum(d.rpm) ? d.rpm : null,   // the KNOWN step's needles
-                    yr: G.yOfRpm(isNum(d.rpm) ? d.rpm : 0, cfg.tach),
-                    quads: G.centreQuads(art.atlas, { gear: g.gear, gearNo: g.gearNo, speed: kmh === null ? null : U.SPD(kmh, u), unit: u.speed, tag: MODE_TAG[carMode] }),
+                    yr: G.yOfRpm(isNum(ld.rpm) ? ld.rpm : 0, cfg.tach),
+                    quads: G.centreQuads(art.atlas, { gear: L.gearGlyph(d.stage, d.gear), speed: kmh === null ? null : U.SPD(kmh, u), unit: u.speed, tag: MODE_TAG[carMode] }),
                     slats: v.coverSlats ? slat : null,
                     badge: !v.coverSlats || slat.lit === 0,
                     level: L.levelOf(cfg, v),
@@ -290,28 +302,48 @@ mgu.run({
                     clock: { h: now.getHours(), m: now.getMinutes() },
                 });
             }
-            const boxCv = {}, boxKey = {};
-            let cornerBase = null;
-            /** The four live boxes into out (the cover's output, or a test step's: always whole, never cached). */
-            function drawBoxes(out, force) {
+            const boxCv = {}, boxKey = {}, boxAt = {}, BOX_ORDER = ['panelL', 'panelR', 'cornerL', 'cornerR'];
+            let cornerBase = null, boxNext = 0;
+            /**
+             * The four live boxes into out (the cover's output, or a test step's: always whole, never cached). one (the
+             * cover loop's call, 0.1.6): at most one changed box this call, round robin, each box at most panelHz; a box
+             * takes ~7 ms to draw under Node 8 (iDrive-Apps docs/emulator/mtrack-0.1.6/latency.md), so two in one tick would
+             * hold an rpm sample back twice as long.
+             */
+            function drawBoxes(out, force, one) {
                 if (!out.status().armed) return;
+                const t0 = process.hrtime();
+                drawBoxesNow(out, force, one && out === output && !force);
+                perf.boxMs = Math.max(perf.boxMs, msSince(t0));
+            }
+            function drawBoxesNow(out, force, one) {
                 const u = units(), lay = L.layoutOf(v), x = liveVals(), own = out === output;
                 if (!cornerBase) cornerBase = { cornerL: null, cornerR_us: null, cornerR_metric: null };
                 const baseOf = (n) => {
                     if (!cornerBase[n]) { const it = art.items.filter((i) => i.name === n)[0]; cornerBase[n] = require('zlib').inflateRawSync(Buffer.from(it.data, 'base64')); }
                     return cornerBase[n];
                 };
+                const now = Date.now(), gap = 1000 / cfg.panelHz;
                 const put = (n, key, draw) => {
-                    if (own && !force && boxKey[n] === key) return;
-                    if (own) boxKey[n] = key;
+                    if (own && !force && boxKey[n] === key) return false;
+                    if (one && now >= boxAt[n] && now - boxAt[n] < gap) return false;   // drawn too recently (a clock that went back: due)
+                    if (own) { boxKey[n] = key; boxAt[n] = now; }
                     const r = G.RECTS[n], cv = boxCv[n] || (boxCv[n] = new Canvas(r.w, r.h));
                     draw(cv, r);
                     out.box(n, Buffer.from(cv.d.buffer, cv.d.byteOffset, cv.d.length));
+                    return true;
                 };
-                put('panelL', W.panelKey(lay.left, x, u, avail, cfg), (cv, r) => W.drawPanel(cv, r, -1, lay.left, x, u, avail, cfg));
-                put('panelR', W.panelKey(lay.right, x, u, avail, cfg), (cv, r) => W.drawPanel(cv, r, 1, lay.right, x, u, avail, cfg));
-                put('cornerL', W.cornerKey(-1, x, u, cfg), (cv, r) => W.drawCorner(cv, r, -1, baseOf('cornerL'), x, u, cfg));
-                put('cornerR', W.cornerKey(1, x, u, cfg) + (u.temp === 'C' ? 'm' : 'u'), (cv, r) => W.drawCorner(cv, r, 1, baseOf(u.temp === 'C' ? 'cornerR_metric' : 'cornerR_us'), x, u, cfg));
+                const box = {
+                    panelL: () => put('panelL', W.panelKey(lay.left, x, u, avail, cfg), (cv, r) => W.drawPanel(cv, r, -1, lay.left, x, u, avail, cfg)),
+                    panelR: () => put('panelR', W.panelKey(lay.right, x, u, avail, cfg), (cv, r) => W.drawPanel(cv, r, 1, lay.right, x, u, avail, cfg)),
+                    cornerL: () => put('cornerL', W.cornerKey(-1, x, u, cfg), (cv, r) => W.drawCorner(cv, r, -1, baseOf('cornerL'), x, u, cfg)),
+                    cornerR: () => put('cornerR', W.cornerKey(1, x, u, cfg) + (u.temp === 'C' ? 'm' : 'u'), (cv, r) => W.drawCorner(cv, r, 1, baseOf(u.temp === 'C' ? 'cornerR_metric' : 'cornerR_us'), x, u, cfg)),
+                };
+                if (!one) { BOX_ORDER.forEach((n) => box[n]()); return; }
+                for (let k = 0; k < BOX_ORDER.length; k++) {
+                    const i = (boxNext + k) % BOX_ORDER.length;
+                    if (box[BOX_ORDER[i]]()) { boxNext = (i + 1) % BOX_ORDER.length; return; }
+                }
             }
             function coverTick() {
                 const now = Date.now(), st = output.status(), ccs = ifaceState(CCM);
@@ -353,10 +385,15 @@ mgu.run({
                 coverTick();
                 const now = Date.now();
                 if (ladder) ladder.tick(now, { parked: parked() });
-                if (now < lastPanels || now - lastPanels >= 1000 / cfg.panelHz) { lastPanels = now; drawBoxes(output, false); }
+                drawBoxes(output, false, true);       // at most one changed box a tick, each at most panelHz
                 if (now < lastStats || now - lastStats >= cfg.statsLogMs) {
                     const sp = speedPoll.stats();
                     log.info('speed alive ' + (isNum(speedAt) ? (now - speedAt) + ' ms ago' : 'never') + ', notified/s ' + sp.notified.toFixed(1) + ', speed poll ' + sp.polled.toFixed(1) + '/s, poll failures ' + sp.fails + ', cover ' + dec.reason + ', popups ' + ifaceState(CCM) + ', drive mode ' + (carMode || 'missing'));
+                    const rp = rpmPoll.stats(), w = output.wireStats(), f1 = (x) => (x === null ? '-' : x.toFixed(x < 10 ? 1 : 0));
+                    log.info('rpm notified/s ' + rp.notified.toFixed(1) + ' (gap p50/p90 ' + f1(rp.gapP50) + '/' + f1(rp.gapP90) + ' ms), rpm poll ' + rp.polled.toFixed(1) +
+                        '/s (rtt p50 ' + f1(rp.rttP50) + ' ms, fails ' + rp.fails + '), sample->send max ' + f1(perf.sendMs) + ' ms, box draw max ' + f1(perf.boxMs) +
+                        ' ms, socket blocked ' + w.blocked + ' of ' + w.ticks + ' pump ticks, tach lead ' + v.tachLead + ' ms');
+                    perf.sendMs = 0; perf.boxMs = 0;
                     lastStats = now;
                 }
             });
@@ -369,8 +406,9 @@ mgu.run({
 
             /* ---------- samples ---------- */
             const OFF_PEAK = { right: 0, brake: 0, left: 0, accel: 0 };
-            car.onSample(guard('sample', (data) => {
-                d = data;
+            car.onSample(guard('sample', (data, t) => {
+                const t0 = process.hrtime();
+                d = data; sampleMs = isNum(t) ? t : null;
                 if (!d.demo) {
                     if (isNum(d.gLat)) { vals.peaks.right = Math.max(vals.peaks.right, d.gLat); vals.peaks.left = Math.max(vals.peaks.left, -d.gLat); }
                     if (isNum(d.gLong)) { vals.peaks.accel = Math.max(vals.peaks.accel, d.gLong); vals.peaks.brake = Math.max(vals.peaks.brake, -d.gLong); }
@@ -378,7 +416,8 @@ mgu.run({
                 }
                 // the revs and the slats follow each sample at once (Shift Lights' latency lesson), the rest the tick
                 if (dec.want && output.status().shown) output.update(frame());
-            }), guard('source', () => { slat = null; vals.peaks = Object.assign({}, OFF_PEAK); coverTick(); changed(); }));
+                perf.sendMs = Math.max(perf.sendMs, msSince(t0));
+            }), guard('source', () => { slat = null; lead = L.makeLead(cfg.rpmLead); sampleMs = null; vals.peaks = Object.assign({}, OFF_PEAK); coverTick(); changed(); }));
 
             /* ---------- settings pages ---------- */
             const pages = createUi();

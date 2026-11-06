@@ -2,11 +2,13 @@
  * does: each layer's quad over its rect, its fragment shader (GLSL ES 1.00, varying v_uv 0,0 top-left), its last
  * uniforms, its samplers bound to assets (r8 as a one-byte texture read as .r, rgba8 straight alpha), straight-alpha
  * blending. A browser script (no modules): composite.mjs loads it into headless Chromium, view.html into the
- * owner's browser. CRDraw.create(canvas) -> { putAsset(key, version, meta, bytes), draw(list, W, H), gl }. */
+ * owner's browser. CRDraw.create(canvas, { under }) -> { putAsset(key, version, meta, bytes), draw(list, W, H, under), gl }.
+ * under: [r, g, b] 0-255, what shows where no layer draws (default black; draw's own under for one draw). */
 (function (root) {
     'use strict';
     const VS = 'attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = vec2((a_position.x + 1.0) * 0.5, (1.0 - a_position.y) * 0.5); gl_Position = vec4(a_position, 0.0, 1.0); }';
-    function create(canvas) {
+    function create(canvas, opts) {
+        const under0 = (opts && opts.under) || [0, 0, 0];
         const gl = canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false });
         if (!gl) throw new Error('no WebGL');
         const progs = {}, assets = {}, errors = [];
@@ -37,9 +39,10 @@
             gl.texImage2D(gl.TEXTURE_2D, 0, f, meta.w, meta.h, 0, f, gl.UNSIGNED_BYTE, bytes);
             a.version = version;
         }
-        function draw(list, W, H) {
+        function draw(list, W, H, under) {
+            const u = under || under0;
             canvas.width = W; canvas.height = H;
-            gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.viewport(0, 0, W, H); gl.clearColor(u[0] / 255, u[1] / 255, u[2] / 255, 1); gl.clear(gl.COLOR_BUFFER_BIT);
             gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
             for (const l of list) {
                 if (l.kind !== 'effect') continue;

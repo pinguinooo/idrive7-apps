@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
 const G = require(path.join(here, '../../apps/adam_mtrack/geom.js'));
 const cfg = require(path.join(here, '../../apps/adam_mtrack/config.js'));
 const SPEC = JSON.parse(fs.readFileSync(path.join(here, '../../apps/adam_mtrack/app.json'), 'utf8'));
+const ATLAS = JSON.parse(fs.readFileSync(path.join(here, '../../apps/adam_mtrack/art/art.json'), 'utf8')).atlas;
 const { PORT, CR_LOG, FEED, CTL, DATA_DIR, OUT } = process.env;
 for (const [k, v] of Object.entries({ PORT, CR_LOG, FEED, CTL, DATA_DIR, OUT })) if (!v) { console.error('missing env ' + k); process.exit(2); }
 const RAW = path.join(OUT, 'raw');
@@ -188,7 +189,7 @@ try {
     const built = since(t).filter((m) => m.op === 'asset'), mem = built.reduce((b, a) => b + a.w * a.h * (a.format === 'r8' ? 1 : 4) * 2, 0);
     results.memory = mem;
     check(built.length === 11 && mem <= cfg.memoryBudgetBytes, '3 11 assets, ' + (mem / 1048576).toFixed(2) + ' MiB of the renderer\'s 16 (budget ' + (cfg.memoryBudgetBytes / 1048576) + ')');
-    check((await appLog(t)).some((l) => /^cover: shown \(4 layers, 11 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), '3 the app logs the build: 4 layers, 11 assets, 2.9 MiB');
+    check((await appLog(t)).some((l) => /^cover: shown \(4 layers, 11 assets, 3\.0 MiB of renderer memory, built in \d+ ms\)$/.test(l)), '3 the app logs the build: 4 layers, 11 assets, 3.0 MiB');
     const assetFrames = since(t).filter((m) => m.op === 'frame');
     await wait(600);
     let r = await shot('mtrack-01-idle-P-0mph');
@@ -198,6 +199,22 @@ try {
         fs.writeFileSync(path.join(OUT, 'mtrack-01-idle-no-renderer-animations.png'), x.png);
         results.noAnimLit = x.lit;
         check(x.lit > COVER && Math.abs(x.lit - r.lit) < 0.02 * r.lit, '3 drawn the same by a renderer that plays no animation (' + x.lit + ' vs ' + r.lit + ' lit px): u_alive is 1 while shown');
+    }
+    {   // 0.1.6 full panel: the LCD shows a pure 0 as its lit backlight (the lavender frame in the 0.1.3 car photo); drawn
+        // over a lavender backlight with every near-black pixel lavender too, nothing of the panel may show it. Drawn at the
+        // normal shot's moment: at "now" the log can trail the app by more than the dead-man's 200 ms, and a fading u_alive
+        // mixes the backlight into every pixel (no pixel exactly lavender, so a fade would hide a real gap); the run with
+        // no renderer animations holds u_alive at the client's 1
+        const t3 = shots['mtrack-01-idle-P-0mph'].t;
+        const b = await comp.render(replay.at(t3), t3, { backlight: true });
+        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.6-full-panel-normal.png'), r.png);
+        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.6-full-panel-backlight.png'), b.png);
+        results.uncovered = b.uncovered;
+        check(b.uncovered === 0, '3 full panel at Brightness 100: no pixel shows the backlight (uncovered ' + b.uncovered + ')');
+        const n = await comp.render(replay.at(t3), t3, { backlight: true, anims: false });
+        fs.writeFileSync(path.join(OUT, 'mtrack-0.1.6-full-panel-backlight-anims-off.png'), n.png);
+        results.uncoveredNoAnims = n.uncovered;
+        check(n.uncovered === 0, '3 full panel, a renderer that plays no animation: uncovered ' + n.uncovered);
     }
 
     console.log('step 4 pull to 7,000 rpm');
@@ -220,6 +237,45 @@ try {
     check(!since(assetFrames.length ? assetFrames[assetFrames.length - 1].t + 1 : pull.t0).some((m) => m.op === 'asset'), '4 no asset made again during the drive');
     await sig({ rpm: 1500, speed: 60, gear: 'D3', gLong: 0 });
     await wait(400);
+
+    console.log('step 4b gear: the engaged gear\'s digit in the gear spot, P R N letters, D with no gear value');
+    {
+        const gs = ATLAS.styles.gear.glyphs, CROP = [G.RECTS.centre.x, G.RECTS.centre.y, G.RECTS.centre.w, G.RECTS.centre.h];
+        const centre = () => live().filter((m) => m.z === cfg.build.z + 2)[0];
+        /** The centre layer's last quads: [[src x, src y], ...] of the drawn ones (w > 0). */
+        const quads = () => {
+            tail();
+            const c = centre(), d = c && recs.filter((m) => m.conn === c.conn && m.ref === c.ref && m.op === 'uniform' && m.name === 'u_dst').pop(),
+                s = c && recs.filter((m) => m.conn === c.conn && m.ref === c.ref && m.op === 'uniform' && m.name === 'u_src').pop();
+            if (!d || !s) return [];
+            const dv = d.v.split(' ').map(Number), sv = s.v.split(' ').map(Number), out = [];
+            for (let i = 0; i < dv.length; i += 4) if (dv[i + 2] > 0) out.push([sv[i], sv[i + 1]]);
+            out.t = Math.max(d.t, s.t);
+            return out;
+        };
+        let seenAt = 0;     // the newest quads' log time when they showed the glyph
+        const gearIs = (c) => { const q = quads(); const ok = q.length > 0 && q[0][0] === gs[c].x && q[0][1] === gs[c].y; if (ok) seenAt = q.t; return ok; };
+        const gearStep = async (name, c, cause) => {
+            await cause();
+            let ok = false;
+            for (const end = Date.now() + 1500; Date.now() < end && !ok; await wait(50)) ok = gearIs(c);
+            // drawn where the log showed it (the log can trail "now" past the dead-man's 200 ms, and the emulator sends its
+            // own gear again: the D with no gear value lasts only until then)
+            const t4 = seenAt + 1, x = await comp.render(replay.at(t4), t4, { crop: CROP });
+            fs.writeFileSync(path.join(OUT, 'gear-' + name + '.png'), x.png);
+            check(ok && quads().length <= 6, '4b ' + name + ': the gear spot shows "' + c + '" (' + quads().length + ' quads, no small digit)');
+        };
+        await gearStep('3', '3', () => sig({ gear: 'D3' }));
+        await gearStep('1', '1', () => sig({ gear: 'D1' }));
+        await gearStep('8', '8', () => sig({ gear: 'D8' }));
+        await gearStep('P', 'P', () => sig({ gear: 'P', speed: 0 }));
+        await gearStep('R', 'R', () => sig({ gear: 'R' }));
+        await gearStep('N', 'N', () => sig({ gear: 'N' }));
+        // stage D, then DataPowerTrain2's "N or P" (gear 0, no stage): stage stays D, no gear number -> "D"
+        await gearStep('D-nogear', 'D', async () => { await sig({ gear: 'D3', speed: 60 }); await wait(400); feed({ iface: 'de.bmw.infrastructure.VehicleInformation', field: 'DataPowerTrain2', value: { statusGearSelectionDrive: 'NP' } }); });
+        await sig({ gear: 'D3', speed: 60 });
+        await wait(400);
+    }
 
     async function dropStep(name, cause, maxMs, minMs) {
         const refs = live();

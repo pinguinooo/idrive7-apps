@@ -127,7 +127,7 @@ const RECTS = {
     tachs: box(0, 0, 1920, 720),               // the tachs layer: the whole panel, opaque (background, bars, fill, numerals)
     band: box(1196, 168, 180, 462),            // the right band (mask), mirrored for the left
     overR: box(1138, 160, 246, 474),           // the bars' edge lines, ticks, red and amber fields (right; mirrored for the left)
-    centre: box(748, 220, 440, 376),           // the centre layer: gear, small gear digit, speed, unit, drive-mode tag,
+    centre: box(748, 220, 440, 376),           // the centre layer: gear (letter or digit), speed, unit, drive-mode tag,
                                                // the line, end caps and stack icon (CENTRE_CELL), the M badge
     badge: box(890, 222, 132, 56),             // the M badge (in the slats' place)
     panelR: box(1400, 262, 260, 278),          // a side panel's content (plates are in the background art)
@@ -159,20 +159,17 @@ function slatBar(st) {
 
 /**
  * The centre block's glyph quads (the mockup's gearBlock), in the glyph layer's rect: [{ dst: [x, y, w, h], src: [x, y,
- * intensity, 0] }], at most 7. atlas: art.json's atlas table. f: { gear ('P' 'R' 'N' 'D', else none), gearNo (the
- * small digit beside D, 1-8), speed (whole number shown, or null: a dash), unit ('mph' | 'km/h'), tag (a drive-mode tag) }.
+ * intensity, 0] }], at most 6. atlas: art.json's atlas table. f: { gear (logic.gearGlyph: 'P' 'R' 'N' 'D' '-' or the
+ * engaged gear's digit '1'-'8', drawn in the one big gear spot; anything else a dash), speed (whole number shown, or null:
+ * a dash), unit ('mph' | 'km/h'), tag (a drive-mode tag) }.
  */
 function centreQuads(atlas, f) {
     const R = RECTS.centre, X = CENTRE.cx, out = [];
     const put = (cell, x, y, k) => { if (cell) out.push({ dst: [Math.round(x - R.x), Math.round(y - R.y), cell.w, cell.h], src: [cell.x, cell.y, k, 0] }); };
-    const gs = atlas.styles.gear, ss = atlas.styles.small, sp = atlas.styles.speed;
+    const gs = atlas.styles.gear, sp = atlas.styles.speed;
     const g = typeof f.gear === 'string' && gs.glyphs[f.gear] ? f.gear : '-';
-    const gc = gs.glyphs[g], gw = gc.adv + gs.sw;
+    const gc = gs.glyphs[g];
     put(gc, X - gc.adv / 2 - gc.ox, CENTRE.gearY - gc.h / 2, 1);
-    if (g === 'D' && typeof f.gearNo === 'number' && f.gearNo >= 1 && f.gearNo <= 8 && Math.floor(f.gearNo) === f.gearNo) {
-        const c = ss.glyphs[String(f.gearNo)], yc = CENTRE.gearY + CENTRE.gearH * 0.22;
-        put(c, X - gw / 2 - 18 - c.adv - ss.sw / 2 - c.ox, yc - c.h / 2, 0.92);
-    }
     const s = typeof f.speed === 'number' && isFinite(f.speed) ? String(Math.max(0, Math.min(999, Math.round(f.speed)))) : '-';
     const cells = s.split('').map((ch) => sp.glyphs[ch]);
     let x = X - (cells.reduce((a, c) => a + c.adv + sp.gap, -sp.gap)) / 2;
@@ -180,7 +177,7 @@ function centreQuads(atlas, f) {
     const u = atlas.labels[f.unit] || atlas.labels.mph;
     put(u, CENTRE.unitX - u.ox, CENTRE.unitY - u.h / 2, 0.92);
     const t = atlas.tags[f.tag];
-    if (t) put(t, X - t.w / 2, CENTRE.tagY - t.h / 2, 0.92);   // 0.1.5: near-white, as BMW's (was a grey 0.6)
+    if (t) put(t, X - t.w / 2, CENTRE.tagY - t.h / 2, 0.92);   // 0.1.5: near-white (was a grey 0.6)
     return out;
 }
 

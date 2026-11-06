@@ -26,6 +26,7 @@ const themes = require(path.join(KIT, 'themes.js'));
 const I = {
     CDS: 'de.bmw.infotainment.vehicle.CDS', V2: 'de.bmw.infotainment.vehicle.Vehicle2', FES: 'de.bmw.infotainment.drivingexcitement.FES',
     CCM: 'de.bmw.infotainment.checkcontrol.CheckControlMaster', KI2: 'de.bmw.infotainment.KombiInterface_2',
+    VI: 'de.bmw.infrastructure.VehicleInformation',
 };
 const wait = (ms) => new Promise((res) => setTimeout(res, ms));
 async function until(fn, ms, what) {
@@ -50,7 +51,8 @@ let seq = 0;
  * main.js on a fresh fake ctx. r.feed(iface, field, value) is a car notification; r.speed(kmh|null) keeps a speed coming.
  * opts: unavailable [ifaces] (the watch settles, the provider never answers), delay { iface: ms } (the watch settles
  * that late; -1 never), raw (settingsOf raw), noArt (the art pack fails to open), lingerMs (the fake's panel linger,
- * 300 ms here), own (the kit runs the screen: r.page(i) opens a tab, r.screen() is its text, r.press(key) presses a control).
+ * 300 ms here), own (the kit runs the screen: r.page(i) opens a tab, r.screen() is its text, r.press(key) presses a control),
+ * cfg (config.js values replaced for this run, e.g. a short statsLogMs).
  */
 async function start(saved, opts) {
     const o = opts || {};
@@ -89,8 +91,10 @@ async function start(saved, opts) {
         return realResolve.apply(this, arguments);
     };
     let app = null;
-    const id = path.join(KIT, 'mgu.js'), packId = path.join(KIT, 'pack.js');
+    const id = path.join(KIT, 'mgu.js'), packId = path.join(KIT, 'pack.js'), cfgId = path.join(APP, 'config.js');
+    const cfgWas = require.cache[cfgId].exports;
     try {
+        if (o.cfg) require.cache[cfgId].exports = Object.assign({}, cfgWas, o.cfg);   // main.js reads it once, in start()
         process.env.MTRACK_CR_SOCKET = sock;
         require.cache[id] = { id, filename: id, loaded: true, exports: { run: (a) => { app = a; } } };
         if (o.noArt) require.cache[packId] = { id: packId, filename: packId, loaded: true, exports: { open: () => { throw new Error('no art (test)'); } } };
@@ -99,6 +103,7 @@ async function start(saved, opts) {
         await app.start(ctx);
     } finally {
         Module._resolveFilename = realResolve;
+        require.cache[cfgId].exports = cfgWas;
         delete require.cache[id];
         if (o.noArt) delete require.cache[packId];
         delete process.env.MTRACK_CR_SOCKET;
@@ -132,8 +137,8 @@ function shownAt(r) {
 }
 const coverUp = (r) => shownAt(r) !== null;
 /** Cover on, Sport+, speed and Check Control there: resolves once the cover is shown; t0 = when the conditions started. */
-async function shownApp(saved) {
-    const r = await start(Object.assign({ coverOn: true }, saved));
+async function shownApp(saved, opts) {
+    const r = await start(Object.assign({ coverOn: true }, saved), opts);
     r.speed(0); r.mode(2); r.feed(I.CCM, 'basicList', []);
     const t0 = Date.now();
     await until(() => coverUp(r), 5000, 'the cover');
@@ -182,7 +187,7 @@ module.exports = [
         const frames = r.msgs.filter((m) => m.op === 'frame');
         assert.ok(assets.every((a) => frames.some((f) => f.ref === a.ref && f.t <= r.shownAt)), 'every asset\'s pixels before the show');
         assert.ok(L4.every((l) => r.msgs.some((m) => m.conn === l.conn && m.ref === l.ref && m.op === 'uniform' && m.name === 'u_alive' && m.v === '1')), 'u_alive 1 on every layer');
-        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 11 assets, 2\.9 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^cover: shown \(4 layers, 11 assets, 3\.0 MiB of renderer memory, built in \d+ ms\)$/.test(l)), r.lines.join('\n'));
         await r.done();
     }],
     ['drop: Sport+ to Sport (Sport+ only), within one tick; back after 1 s in Sport+', async () => {
@@ -503,7 +508,7 @@ module.exports = [
         const d = fs.readFileSync(path.join(r.dataDir, 'mtrack-diag.log'), 'utf8');
         [new RegExp('start: M Track ' + SPEC.version.replace(/\./g, '\\.') + ', node v'), /> \{"op":"hello","app":"adam_mtrack","proto":1\}/, /> pixels bgR2 \(asset \d+, r8 480x360\): 172800 B/,
             /> \{"op":"layer","ref":\d+,"target":"panel","kind":"effect","class":"content","z":90,"x":0,"y":0,"w":1920,"h":720,"visible":0,"exclusive":0,"contend":0,"fs":"\d+ chars"\}/,
-            /cover: stage 1 TACHS made hidden \(layer \d+, 5 assets, 839440 B\)/, /> \{"op":"set","ref":\d+,"visible":1\}/, /> \{"op":"bind",/,
+            /cover: stage 1 TACHS made hidden \(layer \d+, 5 assets, 882448 B\)/, /> \{"op":"set","ref":\d+,"visible":1\}/, /> \{"op":"bind",/,
             /cover: stage 1 TACHS confirmed and written: bound/, /cover: stage 4 SLATS confirmed and written: bound/,
             /< \{"ev":"hello"/, /< \{"ev":"target","target":"panel","state":"shown"/, /< \{"ev":"layer","ref":\d+,"state":"shown"/,
             /< status: upload: cap .* \| target panel: /, /> \{"op":"drop","ref":\d+\}/, /release confirmed \(mode\): panel idle/].forEach((re) => assert.ok(re.test(d), re + '\n' + d.slice(0, 2500)));
@@ -574,6 +579,71 @@ module.exports = [
         await until(() => r.msgs.some((m) => m.op === 'uniform' && m.name === 'u_st' && /^10 /.test(m.v)), 1000, 'all slats lit');
         const fills = r.msgs.filter((m) => m.op === 'uniform' && m.name === 'u_fill').map((m) => Number(m.v.split(' ')[0]));
         assert.ok(fills[fills.length - 1] < 230, 'fill line at ' + fills[fills.length - 1]);
+        await r.done();
+    }],
+    ['0.1.6 gear: the engaged gear\'s digit in the gear spot (DataPowerTrain2 _4 draws 4, statusGearboxDrive D + G6 draws 6), P a letter; the raw gearbox values logged', async () => {
+        const art = JSON.parse(fs.readFileSync(path.join(APP, 'art', 'art.json'), 'utf8')), gs = art.atlas.styles.gear.glyphs;
+        const r = await shownApp({});
+        const centre = mine(r).filter((l) => l.z === cfg.build.z + 2)[0];
+        const gearSrc = () => { const u = r.msgs.filter((m) => m.conn === centre.conn && m.ref === centre.ref && m.op === 'uniform' && m.name === 'u_src'); return u.length ? u[u.length - 1].v.split(' ').slice(0, 2).map(Number) : null; };
+        const shows = (c) => { const g = gearSrc(); return !!g && g[0] === gs[c].x && g[1] === gs[c].y; };
+        r.feed(I.VI, 'DataPowerTrain2', { statusGearSelectionDrive: '_4' });
+        r.rpm(2000);
+        await until(() => shows('4'), 1500, 'the digit 4');
+        const gb = { statusActualStageDrive: 'D', statusActualGearDrive: 'G6' };
+        r.feed(I.VI, 'statusGearboxDrive', gb);
+        r.rpm(2100);
+        await until(() => shows('6'), 1500, 'the digit 6');
+        r.feed(I.VI, 'statusGearboxDrive', { statusActualStageDrive: 'P', statusActualGearDrive: 'N_OR_P' });
+        r.rpm(800);
+        await until(() => shows('P'), 1500, 'P');
+        assert.ok(r.lines.indexOf('gearbox: ' + JSON.stringify(gb)) >= 0, r.lines.filter((l) => /gear/.test(l)).join('\n'));
+        assert.ok(r.lines.indexOf('gear selection: "_4"') >= 0, 'the kit logs DataPowerTrain2');
+        r.feed(I.VI, 'statusGearboxDrive', gb);
+        assert.strictEqual(r.lines.filter((l) => l === 'gearbox: ' + JSON.stringify(gb)).length, 1, 'each distinct value once');
+        await r.done();
+    }],
+    ['0.1.6 log: every statsLogMs the rpm path line (notified, poll, sample->send, box draw, socket blocked, tach lead)', async () => {
+        const r = await shownApp({}, { cfg: { statsLogMs: 300 } });
+        r.rpm(3000);
+        const re = /^rpm notified\/s \d+\.\d \(gap p50\/p90 \S+\/\S+ ms\), rpm poll \d+\.\d\/s \(rtt p50 \S+ ms, fails \d+\), sample->send max \S+ ms, box draw max \S+ ms, socket blocked \d+ of \d+ pump ticks, tach lead (\d+) ms$/;
+        await until(() => r.lines.some((l) => re.test(l)), 2000, 'the rpm line');
+        const l = r.lines.filter((x) => re.test(x)).pop(), ticks = Number(/of (\d+) pump/.exec(l)[1]);
+        assert.ok(ticks > 0, l);
+        assert.strictEqual(Number(re.exec(l)[1]), cfg.rpmLead.leadMs, 'the Tach lead in use: the default');
+        await r.done();
+    }],
+    ['0.1.6 Tach lead: a rising rpm puts the fill line above the raw rpm\'s; Off draws the raw rpm', async () => {
+        const fillAfterRise = async (saved) => {
+            const r = await shownApp(saved);
+            for (let k = 0; k <= 8; k++) { r.rpm(2000 + 250 * k); await wait(40); }   // ~6 rpm/ms
+            await wait(30);
+            const f = r.msgs.filter((m) => m.op === 'uniform' && m.name === 'u_fill').map((m) => Number(m.v.split(' ')[0]));
+            await r.done();
+            return f[f.length - 1];
+        };
+        const G = require(path.join(APP, 'geom.js'));
+        const off = await fillAfterRise({ tachLead: 0 }), on = await fillAfterRise({ tachLead: 80 });
+        assert.ok(Math.abs(off - G.yOfRpm(4000, cfg.tach)) < 0.2, 'Off: the raw 4000 rpm (' + off + ')');
+        assert.ok(on < off - 2, 'lead 80: higher on the bar (' + on + ' vs ' + off + ')');
+        assert.ok(on >= G.yOfRpm(4000 + cfg.rpmLead.maxAddRpm, cfg.tach) - 0.2, 'never more than maxAddRpm ahead (' + on + ')');
+    }],
+    ['0.1.6 boxes: the cover loop draws at most one changed box a tick (round robin), each box at most panelHz', async () => {
+        const r = await shownApp({});
+        const t0 = Date.now();
+        await wait(200);
+        for (let k = 0; k < 30; k++) {      // both side panels change all the time: coolant / oil left, torque / power right
+            r.feed(I.CDS, 'statusEngineTemperature', { temperatureEngineDrive: 80 + k + 48, temperatureEngineOilDrive: 85 + k + 48 });
+            r.feed(I.FES, 'statusActualValueTorque2', { actualValueTorqueCrankshaft: Math.round((100 + 10 * k + 1023.5) / 0.5) });
+            r.rpm(2000 + 50 * k);
+            await wait(50);
+        }
+        const fr = r.msgs.filter((m) => m.op === 'frame' && m.t > t0 + 200).sort((a, b) => a.t - b.t);
+        const refs = {};
+        fr.forEach((f) => { (refs[f.ref] = refs[f.ref] || []).push(f.t); });
+        assert.ok(Object.keys(refs).length >= 2, 'both panels redrawn: ' + JSON.stringify(Object.keys(refs)));
+        for (let i = 1; i < fr.length; i++) assert.ok(fr[i].ref === fr[i - 1].ref || fr[i].t - fr[i - 1].t >= 60, 'two boxes in one tick: ' + (fr[i].t - fr[i - 1].t) + ' ms apart');
+        Object.keys(refs).forEach((k) => refs[k].forEach((t, i) => assert.ok(!i || t - refs[k][i - 1] >= 1000 / cfg.panelHz - 30, 'box ' + k + ' again after ' + (t - refs[k][i - 1]) + ' ms')));
         await r.done();
     }],
 ];
