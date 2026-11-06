@@ -135,8 +135,8 @@ function knownCard(Canvas, version) {
     const t = (s, y, size) => cv.text(s, W / 2, y, size, '#ffffff', { align: 'center', font: 'bold', literal: true });
     t('KNOWN-GOOD TEST', 190, 92);
     t('M TRACK ' + (version || ''), 300, 60);
-    t('1 LAYER, 1 R8 1024 x 576, DEAD-MAN HELD AT 1', 410, 34);
-    t('SEEN ON THE CLUSTER = THE PANEL PATH WORKS', 490, 34);
+    t('THE DIALS AND THIS CARD ARE BOTH M TRACK', 410, 34);
+    t('ONE LAYER COVERS THE WHOLE 1920 x 720 PANEL', 490, 34);
     const px = Buffer.alloc(W * H);
     for (let i = 0; i < W * H; i++) px[i] = cv.d[i * 4];
     return px;

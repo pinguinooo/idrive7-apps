@@ -15,7 +15,7 @@
  *                 digits, the unit, the drive-mode tag), the centre's static line and stack icon, the M badge
  *   FS_SLATS      stage 4: apps/adam_shiftlights/shader.js FS_SLATS with u_alive and a 9-colour palette
  *   knownFs()     the Safety page's KNOWN step: G's Dash's full-screen cluster test shape (one layer over the panel,
- *                 one r8 1024 x 576 asset): two procedural dials with live needles and the test card
+ *                 one r8 1024 x 576 asset): two procedural dials with live needles, the test card, an edge ruler
  *   FS_SOLID, FS_TEX   the test steps' plain bars and tint, and the IMAGE step's asset
  */
 const PREC = ['#ifdef GL_FRAGMENT_PRECISION_HIGH', 'precision highp float;', '#else', 'precision mediump float;', '#endif'];
@@ -232,7 +232,9 @@ const FS_SLATS = [
 
 /**
  * The KNOWN step: one effect layer over the whole panel, as G's Dash's full-screen cluster test: two dials (speed 0-160
- * mph, rpm 0-8), live needles from u_val (-1: none), the r8 1024 x 576 test card in the middle, alpha u_alive.
+ * mph, rpm 0-8), live needles from u_val (-1: none), the r8 1024 x 576 test card in the middle, alpha u_alive. 0.1.4: a
+ * 2 px frame on the panel's exact edges and a ruler in panel pixels along all four, so a car photo shows where the
+ * glass clips the 1920 x 720 layer (procedural: no new uniform).
  */
 function knownFs() {
     return PREC.concat([
@@ -242,6 +244,8 @@ function knownFs() {
         'uniform float u_alive;',
         'float aa(float d) { return clamp(d + 0.5, 0.0, 1.0); }',
         'vec2 dirOf(float a) { return vec2(sin(a), -cos(a)); }',
+        '// one edge ruler: a 2 px tick every 40 px along the edge (36 px long every 200 px, else 12), at depth d from it',
+        'float ticks(float along, float d) { return (1.0 - step(2.0, mod(along + 1.0, 40.0))) * (1.0 - step(mod(along + 1.0, 200.0) < 2.0 ? 36.0 : 12.0, d)); }',
         'vec3 dial(vec3 col, vec2 q, vec2 c, float vmax, float val) {',
         '    vec2 p = q - c; float r = length(p);',
         '    if (r > 262.0) return col;',
@@ -266,6 +270,9 @@ function knownFs() {
         '    col = dial(col, q, vec2(1580.0, 360.0), 8.0, u_val.y);',
         '    vec2 u = (q - vec2(640.0, 180.0)) / vec2(640.0, 360.0);',
         '    if (u.x >= 0.0 && u.x <= 1.0 && u.y >= 0.0 && u.y <= 1.0) col = mix(col, vec3(0.28, 0.62, 1.0), texture2D(u_lab, u).r);',
+        '    float dy = min(q.y, 720.0 - q.y), dx = min(q.x, 1920.0 - q.x);',
+        '    float rule = max(1.0 - step(2.0, min(dx, dy)), max(ticks(q.x, dy), ticks(q.y, dx)));',
+        '    col = mix(col, vec3(0.94, 0.95, 0.96), rule);',
         '    gl_FragColor = vec4(col, clamp(u_alive, 0.0, 1.0));',
         '}',
     ]).join('\n');

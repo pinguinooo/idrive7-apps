@@ -68,6 +68,14 @@ async function runStep(r, n) {
 }
 
 module.exports = [
+    ['step 1 KNOWN card (0.1.4): 1024 x 576 r8, its four text lines drawn, the last two say the dials are ours and the layer is the whole panel', () => {
+        const px = ST.knownCard(Canvas, '0.1.4'), W = 1024;
+        assert.strictEqual(px.length, W * 576);
+        const lit = (y0, y1) => { let n = 0; for (let y = y0; y < y1; y++) for (let x = 40; x < W - 40; x++) if (px[y * W + x] > 128) n++; return n; };
+        [[125, 190], [255, 300], [385, 410], [465, 490]].forEach((b) => assert.ok(lit(b[0], b[1]) > 500, 'text in rows ' + b + ': ' + lit(b[0], b[1])));
+        const src = fs.readFileSync(path.join(__dirname, '../../apps/adam_mtrack/stages.js'), 'utf8');
+        assert.ok(/THE DIALS AND THIS CARD ARE BOTH M TRACK/.test(src) && /ONE LAYER COVERS THE WHOLE 1920 x 720 PANEL/.test(src));
+    }],
     ['step 1 KNOWN: G\'s Dash\'s full-screen test shape on its own client: one hidden layer over the panel, one r8 1024 x 576 bilinear asset, lifted, written, bound, shown with u_alive 1 re-armed; removed; released', async () => {
         const r = rig();
         try {
@@ -152,7 +160,7 @@ module.exports = [
         const r = rig();
         try {
             assert.strictEqual(r.lad.start(2, { armed: true, parked: true }), 'turn Cover the cluster off first');
-            assert.strictEqual(r.lad.start(2, { armed: false, parked: false }), 'parked only (under 3 km/h or in P)');
+            assert.strictEqual(r.lad.start(2, { armed: false, parked: false }), 'parked only (in P or barely moving)');
             assert.ok(/^Step 2 BAR refused: parked only$/.test(r.lad.status().line), r.lad.status().line);
             await wait(200);
             assert.ok(!r.msgs.some((m) => m.ev === 'connect'), 'no connection for a refused step');

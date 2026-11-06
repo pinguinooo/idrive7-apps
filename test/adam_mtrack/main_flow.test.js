@@ -501,7 +501,7 @@ module.exports = [
         await until(() => r.live().length === 0, 1000, 'drop');
         await until(() => r.lines.some((l) => /^release confirmed \(mode\)/.test(l)), 3000, 'release');
         const d = fs.readFileSync(path.join(r.dataDir, 'mtrack-diag.log'), 'utf8');
-        [/start: M Track 0\.1\.3, node v/, /> \{"op":"hello","app":"adam_mtrack","proto":1\}/, /> pixels bgR2 \(asset \d+, r8 480x360\): 172800 B/,
+        [new RegExp('start: M Track ' + SPEC.version.replace(/\./g, '\\.') + ', node v'), /> \{"op":"hello","app":"adam_mtrack","proto":1\}/, /> pixels bgR2 \(asset \d+, r8 480x360\): 172800 B/,
             /> \{"op":"layer","ref":\d+,"target":"panel","kind":"effect","class":"content","z":90,"x":0,"y":0,"w":1920,"h":720,"visible":0,"exclusive":0,"contend":0,"fs":"\d+ chars"\}/,
             /cover: stage 1 TACHS made hidden \(layer \d+, 5 assets, 839440 B\)/, /> \{"op":"set","ref":\d+,"visible":1\}/, /> \{"op":"bind",/,
             /cover: stage 1 TACHS confirmed and written: bound/, /cover: stage 4 SLATS confirmed and written: bound/,

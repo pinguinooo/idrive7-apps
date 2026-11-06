@@ -6,6 +6,7 @@
 # builds the app with its own kit). OUT: screenshots, the pull clip, raw logs (never this repo). Nothing talks to a car.
 #   EMU_DIR=~/work/mtrack/idrive7-apps OUT=~/work/mtrack/out bash test/adam_mtrack/emu-run.sh
 #   SCRIPT=emu_ladder.mjs ...: the Safety page's test pattern instead of the sweep
+#   SCRIPT=emu_update.mjs SEED_SETTINGS=test/adam_mtrack/settings-0.1.3.json ...: an update from 0.1.3's saved settings
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ROOT=$PWD
@@ -32,6 +33,8 @@ trap cleanup EXIT
 
 rm -rf "$OUT" "$DATA_DIR"           # a fresh run: no settings or log from an earlier one
 mkdir -p "$OUT/raw"
+# SEED_SETTINGS=<json>: start as an updated install, with that settings.json saved by an older version
+if [ -n "${SEED_SETTINGS:-}" ]; then mkdir -p "$DATA_DIR"; cp "$SEED_SETTINGS" "$DATA_DIR/settings.json"; fi
 "$NODE22" test/adam_mtrack/fake_cluster_render.js "$SOCK" "$CR_LOG" > "$OUT/raw/fake.log" 2>&1 &
 FAKE_PID=$!
 (cd "$EMU_DIR" && MTRACK_CR_SOCKET=$SOCK MTRACK_EMU_FEED=$FEED exec "$NODE22" kit/tools/emu.js adam_mtrack --port "$PORT") > "$OUT/raw/emu.log" 2>&1 &

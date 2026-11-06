@@ -1,0 +1,18 @@
+{
+ "coverOn": false,
+ "whenToShow": "sportplus",
+ "leftPanel": "tyres",
+ "leftLower": "none",
+ "rightPanel": "torque",
+ "rightLower": "power",
+ "swapSides": false,
+ "coverSlats": true,
+ "units": "us",
+ "bright": 100,
+ "nightDim": false,
+ "popupGuard": "auto",
+ "modeMissingDrop": false,
+ "speedStaleMs": 1000,
+ "demo": "auto",
+ "_settingsV": 2
+}

@@ -1,4 +1,4 @@
-# M Track Cluster (`adam_mtrack`) 0.1.3
+# M Track Cluster (`adam_mtrack`) 0.1.4
 
 An M Track style cover over the instrument cluster, drawn by the cluster-render service on its `panel` target
 (1920 x 720): two bar tachs from 0 to 7 (x1000 rpm, the B58's 7,000 rpm limit), the gear over a line over the speed
@@ -6,6 +6,16 @@ in mph, the M badge with our shift-light slats in its place, side panels you pic
 clock and outside temperature. Built for a 2024 X3 M40i (G01 LCI, iDrive 7, US units). **Off when installed.**
 
 It covers the real speedometer, so it only shows while every guard holds, and drops at once when one fails.
+
+**0.1.4: the panel already fills; OEM left panels.** On Adam's car (2026-11-05) Test 1 KNOWN drew. The two round
+dials in that photo are M Track's own (the KNOWN shader's), not BMW's: the layer is one 1920 x 720 effect that the car
+maps 1:1 onto the whole visible panel (dial centres within about 20 px of the code's), and the cover's tachs layer is
+the same full rect, so there is nothing larger to scale to; only the sensor housing at the top centre and the rounded
+top corners hide pixels. Step 1 now adds a 2 px frame and an edge ruler (ticks every 40 px, long every 200 px) so the
+next photo shows exactly where the glass clips the panel, and its card says the dials are ours. The left side now
+defaults to the OEM M display's coolant (160/210/270 F) over oil (120/210/300 F) instead of tyre data; both settings
+carry `"reset": 1`, so a car that saved tyres from 0.1.3 moves to coolant over oil once, and later choices are kept. A refused
+test step now says "parked only (in P or barely moving)" with no speed unit, so a US car no longer sees km/h.
 
 **0.1.3: why 0.1.1 drew nothing, and the rebuild.** On Adam's car G's Dash's "Full-screen cluster test"
 (nickgcode/idrive7-apps, MIT) draws over the whole cluster, while M Track's cover drew nothing and only moved BMW's gear
@@ -24,7 +34,7 @@ bar is exactly 0.1.1's dead-man.
 | Page | What |
 |---|---|
 | Home | **Cover the cluster** On/Off (default Off); **When to show**: Sport+ only (default), Sport and above (Sport, Sport individual, Sport+), Always; "Why the cover is off right now: ..." and the signals it reads (speed, drive mode, BMW popups) |
-| Panels | Left panel, left lower half, right panel, right lower half (from the 22-widget catalogue: a whole widget takes both halves), Swap sides. Widgets with no signal on the car are skipped and say "No signal on this car" |
+| Panels | Left panel, left lower half, right panel, right lower half (from the 22-widget catalogue: a whole widget takes both halves), Swap sides. Defaults (0.1.4): Coolant over Oil left, Torque over Power right, as BMW's M display. Widgets with no signal on the car are skipped and say "No signal on this car" |
 | Look | Units: US (mph, psi, F, lb-ft, hp, mi, mpg), Metric, Follow car; Brightness; Night dim; Shift lights in the cover |
 | Safety | **BMW popups**: Use if sent (default), Require, Ignore; **Drop the cover if the drive-mode signal is missing** (default Off); **Speed timeout** 0.5 to 3 s (default 1 s, the guard itself is always on); **Test pattern (parked)**: steps 1 to 6 and STOP (below); why the cover is off right now (or which build stage it is at, or where it stopped and why); every signal the guards read (present / missing / stale) and what cluster-render says (the panel's and the HUD's state, the last error event); every always-on guard with its state and why it has no switch, the cover's build stage, and the last release check (or, after a test step, what the renderer said) |
 | About | Version, what is unproven on the car, the widgets not in this version, how to remove it safely, Shift Lights |
@@ -120,7 +130,7 @@ and, if it stopped, why) and then the release check. Run them in order and note 
 
 | Step | Draws | Proves |
 |---|---|---|
-| 1 KNOWN | G's Dash's full-screen cluster test shape in M Track's own code: one effect layer over the whole panel (content z 90, never exclusive), one r8 1024 x 576 bilinear asset (1.1 MiB), made hidden, confirmed, lifted, written, shown with the dead-man held at 1: two dials with live needles and a "KNOWN-GOOD TEST" card | our client and G's call sequence draw on this car (G's Dash's own test did) |
+| 1 KNOWN | G's Dash's full-screen cluster test shape in M Track's own code: one effect layer over the whole panel (content z 90, never exclusive), one r8 1024 x 576 bilinear asset (1.1 MiB), made hidden, confirmed, lifted, written, shown with the dead-man held at 1: two dials with live needles (ours, not BMW's), a "KNOWN-GOOD TEST" card and (0.1.4) a 2 px frame with an edge ruler on the panel's exact edges | our client and G's call sequence draw on this car (G's Dash's own test did; ours did on 2026-11-05); where the glass clips the panel |
 | 2 BAR | three 240 x 44 bars, no asset: **amber** u_alive 1, no animation; **green** 0.1.3's dead-man; **blue** exactly 0.1.1's (own value 0, the same animation number sent again every 250 ms) | the panel path; whether the KOMBI plays renderer animations (blue missing = the 0.1.1 cause, and no hang fade on this car) |
 | 3 TINT | a translucent blue over the whole 1920 x 720 panel | a whole-panel layer |
 | 4 IMAGE | a 256 x 128 test card as an image layer (left, blue) and as an asset sampled by an effect (right, orange), 131 KB each | uploads |

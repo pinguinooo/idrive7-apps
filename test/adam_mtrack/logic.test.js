@@ -196,16 +196,16 @@ module.exports = [
             assert.ok(t >= cfg.safety.speedStaleMinMs && t <= cfg.safety.speedStaleMaxMs, x + ' -> ' + t);
         });
         const h = L.readSettings((k) => ({ leftPanel: 'media', rightLower: 'oilpress' })[k], SPEC.settings);
-        assert.deepStrictEqual([h.values.leftPanel, h.values.rightLower], ['tyres', 'power']);
+        assert.deepStrictEqual([h.values.leftPanel, h.values.rightLower], ['coolant', 'power']);
         assert.deepStrictEqual(h.bad.sort(), ['leftPanel', 'rightLower']);
         assert.deepStrictEqual(L.readSettings(() => { throw new Error('x'); }, SPEC.settings).values.coverOn, false);
     }],
     ['panels: a whole widget takes both halves (its lower ignored), swap moves only the panels, a whole in a lower half is ignored', () => {
         const v = (o) => L.readSettings((k) => o[k], SPEC.settings).values;
-        assert.deepStrictEqual(L.layoutOf(v({})), { left: { full: 'tyres' }, right: { upper: 'torque', lower: 'power' } });
+        assert.deepStrictEqual(L.layoutOf(v({})), { left: { upper: 'coolant', lower: 'oil' }, right: { upper: 'torque', lower: 'power' } });
         assert.deepStrictEqual(L.layoutOf(v({ leftPanel: 'coolant', leftLower: 'gforce' })).left, { upper: 'coolant', lower: 'none' });
         assert.deepStrictEqual(L.layoutOf(v({ leftPanel: 'gforce', leftLower: 'boost' })).left, { full: 'gforce' });
-        assert.deepStrictEqual(L.layoutOf(v({ swapSides: true })), { left: { upper: 'torque', lower: 'power' }, right: { full: 'tyres' } });
+        assert.deepStrictEqual(L.layoutOf(v({ swapSides: true })), { left: { upper: 'torque', lower: 'power' }, right: { upper: 'coolant', lower: 'oil' } });
     }],
     ['migration from 0.1.0: the Safety settings get their defaults (BMW popups = Use if sent), then _settingsV 2, once', () => {
         // a settings.json as 0.1.0 saved it (every 0.1.0 key, _settingsV 1, no Safety key)

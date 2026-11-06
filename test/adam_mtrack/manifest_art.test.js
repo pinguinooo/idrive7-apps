@@ -29,13 +29,18 @@ module.exports = [
         assert.ok(!('requireCheckControl' in cfg), 'the old config switch is gone (BMW popups replaces it)');
         assert.ok(st.steps.indexOf(S.speedStaleMs) >= 0);
     }],
-    ['app.json: id, title, version 0.1.3, installs with the cover off, Sport+ only, US units', () => {
-        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.3', 'OAD3']);
+    ['app.json: id, title, version 0.1.4, installs with the cover off, Sport+ only, US units', () => {
+        assert.deepStrictEqual([SPEC.id, SPEC.title, SPEC.version, SPEC.loggingId], ['adam_mtrack', 'M Track Cluster', '0.1.4', 'OAD3']);
         assert.strictEqual(item('coverOn').default, false);
         assert.strictEqual(item('whenToShow').default, 'sportplus');
         assert.strictEqual(item('units').default, 'us');
         assert.deepStrictEqual(item('bright').steps.indexOf(item('bright').default) >= 0, true);
         assert.deepStrictEqual(SPEC.screens[0].buttons.map((b) => b[0]), ['BTN_COVER', 'BTN_ALL'], 'no BTN_SETTINGS (the kit would add a sixth tab)');
+    }],
+    ['app.json 0.1.4: panels default to the OEM M display (coolant over oil, torque over power); the left two reset once for saved settings', () => {
+        assert.deepStrictEqual(['leftPanel', 'leftLower', 'rightPanel', 'rightLower'].map((k) => item(k).default), ['coolant', 'oil', 'torque', 'power']);
+        assert.deepStrictEqual(['leftPanel', 'leftLower'].map((k) => item(k).reset), [1, 1]);
+        assert.deepStrictEqual(SPEC.settings.filter((s) => s.reset).map((s) => s.key), ['leftPanel', 'leftLower'], 'nothing else resets');
     }],
     ['every catalogue id is an option of every panel setting; the defaults are selectable widgets', () => {
         ['leftPanel', 'leftLower', 'rightPanel', 'rightLower'].forEach((k) => {

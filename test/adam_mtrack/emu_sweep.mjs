@@ -18,6 +18,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const G = require(path.join(here, '../../apps/adam_mtrack/geom.js'));
 const cfg = require(path.join(here, '../../apps/adam_mtrack/config.js'));
+const SPEC = JSON.parse(fs.readFileSync(path.join(here, '../../apps/adam_mtrack/app.json'), 'utf8'));
 const { PORT, CR_LOG, FEED, CTL, DATA_DIR, OUT } = process.env;
 for (const [k, v] of Object.entries({ PORT, CR_LOG, FEED, CTL, DATA_DIR, OUT })) if (!v) { console.error('missing env ' + k); process.exit(2); }
 const RAW = path.join(OUT, 'raw');
@@ -303,7 +304,7 @@ try {
     await wait(1500);
     await shot('mtrack-swap-sides');
     await set('swapSides', false);
-    for (const [k, v] of [['leftPanel', 'tyres'], ['rightPanel', 'torque'], ['rightLower', 'power']]) await set(k, v);
+    for (const k of ['leftPanel', 'rightPanel', 'rightLower']) await set(k, SPEC.settings.filter((x) => x.key === k)[0].default);   // back to app.json's defaults
     await sig({ gLat: 0, gLong: 0 });
 
     console.log('step 15 units');

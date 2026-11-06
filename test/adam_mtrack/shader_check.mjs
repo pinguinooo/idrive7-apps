@@ -139,6 +139,11 @@ try {
     check(Math.abs(r.out[0][0] - 71) <= 4 && Math.abs(r.out[0][2] - 255) <= 2, 'known: the test card in the middle (' + r.out[0].slice(0, 3) + ')');
     check(r.out[1][0] > 150, 'known: the left dial\'s rim (' + r.out[1].slice(0, 3) + ')');
     check(r.out[2][3] === 255 && r.out[2][0] < 10, 'known: opaque dark panel elsewhere (' + r.out[2] + ')');
+    // 0.1.4 edge ruler: the frame on each edge, a long tick at 200, a short one at 40, dark between and past them
+    r = await probe([known(1)], card, [[0, 300], [1919, 300], [700, 0], [700, 719], [200, 30], [40, 8], [60, 8], [40, 20], [1919 - 30, 400], [3, 300]]);
+    check(r.out.slice(0, 4).every((p) => p[0] > 200), 'known: a 2 px frame on all four edges (' + r.out.slice(0, 4).map((p) => p[0]) + ')');
+    check(r.out[4][0] > 200 && r.out[5][0] > 200 && r.out[8][0] > 200, 'known: ruler ticks, long every 200 px, short every 40 (' + [4, 5, 8].map((i) => r.out[i][0]) + ')');
+    check([6, 7, 9].every((i) => r.out[i][0] < 10), 'known: dark between ticks, past a short one, inside the frame (' + [6, 7, 9].map((i) => r.out[i][0]) + ')');
     r = await probe([known(0)], card, [[960, 360], [340, 108]]);
     check(r.out.every((p) => p[0] + p[1] + p[2] === 0), 'known: u_alive 0 draws nothing');
 } finally {

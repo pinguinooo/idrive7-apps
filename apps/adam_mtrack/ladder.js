@@ -8,7 +8,8 @@
  *
  *   1 KNOWN  G's Dash's full-screen cluster test, in M Track's own code: one effect layer over the whole panel, one r8
  *            1024 x 576 asset, made hidden, confirmed by the status, lifted, written, then shown with its dead-man held
- *            at 1. It drew on Adam's car in G's Dash: if it draws here, our client and call sequence are fine
+ *            at 1. It drew on Adam's car in G's Dash and in 0.1.3 (2026-11-05): both round dials are ours, the layer is
+ *            the whole panel; 0.1.4 adds a frame and an edge ruler so a photo shows where the glass clips it
  *   2 BAR    three bars, no asset: amber u_alive 1 (no animation); green 0.1.3's dead-man (value 1, re-armed); blue
  *            exactly 0.1.1's (value 0, the same animation number sent again). Blue missing = the 0.1.1 fault
  *   3 TINT   one translucent blue 1920 x 720 effect: a whole-panel layer
@@ -24,7 +25,7 @@
 const ST = require('./stages');
 
 const STEPS = {
-    1: { name: 'KNOWN', what: 'G\'s Dash\'s full-screen test shape: 1 layer, 1 MiB', build: 'known' },
+    1: { name: 'KNOWN', what: 'the whole panel: our two dials, the card, an edge ruler', build: 'known' },
     2: { name: 'BAR', what: 'amber = panel path, green = 0.1.3 dead-man, blue = 0.1.1 dead-man' },
     3: { name: 'TINT', what: 'a blue tint over the whole cluster' },
     4: { name: 'IMAGE', what: 'left: image layer, right: asset and shader' },
@@ -70,7 +71,7 @@ function createLadder(o) {
         const s = STEPS[n];
         if (!s) return 'no such step';
         if (ctx.armed) return refuse(n, 'turn Cover the cluster off first');
-        if (!ctx.parked) return refuse(n, 'parked only (under ' + T.parkedKmh + ' km/h or in P)');
+        if (!ctx.parked) return refuse(n, 'parked only (in P or barely moving)');
         if (run) stop('replaced by step ' + n, true);
         const out = o.makeOutput(Object.assign({ name: 'adam_mtrack-test', label: 'test' }, s.build ? { stages: stagesOf(s.build) } : {}));
         out.arm(o.units());
