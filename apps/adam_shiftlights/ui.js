@@ -1,6 +1,6 @@
 'use strict';
 /**
- * ui.js - the centre screen (1600 x 520): five settings pages under header tabs (Home, HUD, Cluster, Behavior, About),
+ * ui.js - the centre screen (1600 x 520): six pages under header tabs (Home, HUD, Cluster, Behavior, About, Check),
  * drawn from pages.js with the kit's own parts: G.frame tabs, G.button pills, cv.target rows. The kit draws the
  * controller's focus ring and runs a press. Where the kit does not run the screen (Software renderer, Standard
  * layout, no touch routing) there are no page buttons: a read-only Home, and the bar's Settings button opens the
@@ -8,7 +8,7 @@
  *
  * Drawn only on a change (main.js), never per frame: no live numbers. Only roundRect, strokeRoundRect, circle, text
  * and fillRect (the GPU Recorder and the software Canvas both have them; KB-ANY-198). ASCII text only.
- * act(writes) -> the function a press runs (main.js saves the writes inside safety.guard).
+ * act(writes, cmd) -> the function a press runs (main.js saves the writes inside safety.guard; cmd: a Check tab command).
  * A control with confirm (Reset HUD to defaults) asks first, as the kit's G.button confirm does: the first press turns it into
  * "Confirm reset" for ARM_MS, a second press then runs it. The kit's own confirm redraws through a render loop this app does
  * not have, so the pages keep that state and ask main.js for a draw (createUi(redraw)).
@@ -167,6 +167,26 @@ function aboutPage(cv, t, v, act) {
     txt(cv, v.rowsNote, rx + 4, ROW_Y + 44 + v.rows.length * PITCH + 14, 18, t.dim);
 }
 
+/** The Check tab (0.4.4): the verdict, its detail, the proof as label / value lines, the buttons at the verdict's right. */
+function checkPage(cv, t, v, act) {
+    txt(cv, v.note, X0 + 4, NOTE_Y, 26, toneOf(t, v.noteTone), { font: 'bold' });
+    txt(cv, v.detail, X0 + 4, NOTE_Y + 32, 20, t.dim);
+    const ws = pillWidths(cv, v.buttons.map((b) => b.text)), gap = 12;
+    let x = X0 + W - ws.reduce((a, b) => a + b + gap, -gap);
+    v.buttons.forEach((b, i) => {
+        G.button(cv, t, x, NOTE_Y - 34, ws[i], 40, b.text, act(b.writes, b.cmd), { key: b.key, primary: b.cmd === 'hudReset', busy: !!b.busy });
+        x += ws[i] + gap;
+    });
+    const top = 128, pitch = 31;
+    cv.roundRect(X0, top, W, v.lines.length * pitch + 22, 14, withAlpha('#ffffff', 0.05));
+    v.lines.forEach((l, i) => {
+        const y = top + 32 + i * pitch;
+        txt(cv, l[0], X0 + 24, y, 20, t.dim, { font: 'bold' });
+        txt(cv, l[1], X0 + 300, y, 20, t.text);
+    });
+    txt(cv, v.foot, X0 + 4, top + v.lines.length * pitch + 56, 18, t.dim);
+}
+
 /**
  * One screen's pages: tab(i) picks a page, draw(cv, t, m, act) draws it. redraw(): main.js's coalesced draw, asked when a
  * confirm control arms and when its ARM_MS run out.
@@ -202,6 +222,7 @@ function createUi(redraw) {
             if (v.id === 'home') homePage(cv, t, v, a, true);
             else if (v.id === 'behavior') behaviorPage(cv, t, v, a);
             else if (v.id === 'about') aboutPage(cv, t, v, a);
+            else if (v.id === 'check') checkPage(cv, t, v, a);
             else displayPage(cv, t, v, a, arm(a));
         },
     };

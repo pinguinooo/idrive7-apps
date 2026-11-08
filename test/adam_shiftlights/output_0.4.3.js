@@ -1,0 +1,204 @@
+'use strict';
+/* FIXTURE: apps/adam_shiftlights/output.js as published in 0.4.3 (idrive7-apps e8ed330), only its require paths changed.
+ * output.test.js runs the same steady sequence through it and through today's output.js: 0.4.4 must send the same
+ * layer, uniform and pixel ops (only the HUD check's status asks are new). Never edit. */
+/**
+ * output.js - the cluster / HUD side: the cluster-render layers the display mode and the two styles want.
+ *
+ *   const out = createOutput({ ClusterRender, socketPath, log, cfg, guard, makeCanvas, timers? });
+ *   out.apply({ display, active, sel, states, rpm, th, gear, flashMode });   // on every sample or setting change;
+ *       // sel: { cluster, hud } (logic.readStyle), states: { cluster, hud } (logic.step for each style's count),
+ *       // flashMode: 'app' (default) | 'renderer' (logic.readFlashMode)
+ *   out.status() -> { link: 'none' | 'connecting' | 'ready', layers: { 'target role': state }, targets: { name: state }, flash }
+ *
+ * The plan (geom.layersFor) is keyed on every layer's place and style and the flash mode, not its brightness: a new key
+ * drops the old layers and makes the new ones on the open connection (a style switch is live); nothing active
+ * (off, kill switch, tripped, demo data) drops every layer and closes the connection. Uniforms go only when
+ * they change; brightness is u_st on the effects and `opacity` on the bracket image.
+ * The flash (u_st.y 1) shows the hull when u_on is 1 and nothing when it is 0. Flash mode App (0.4.3 default): the app
+ * sends u_on 1 / 0 every half cycle (at most 8 times a second a layer), u_on 1 before the first u_st with the flash, every
+ * flashing layer in step, and stops the moment no layer flashes. Renderer (0.4.2): one step animation of u_on that the
+ * renderer plays, nothing sent per frame; on Adam's G01 it never ran (the KOMBI plays animations on its own clock), so
+ * u_on kept its 1 and the bar stayed solid red.
+ * The bracket image is drawn once (hudart.js) and sent whole; a gear change sends only the digit's box.
+ */
+const { FS_SLATS, FS_BRACKET, slatUniforms, bracketUniforms, unlitAlpha } = require('../../apps/adam_shiftlights/shader');
+const geom = require('../../apps/adam_shiftlights/geom');
+const hudart = require('../../apps/adam_shiftlights/hudart');
+const L = require('../../apps/adam_shiftlights/logic');
+
+// Flash mode App: never more than 8 sends a second a layer (4 Hz), whatever flashHz says
+const APP_HALF_MIN_MS = 125;
+
+function createOutput(o) {
+    const cfg = o.cfg, log = o.log, guard = o.guard, T = o.timers || { setInterval, clearInterval };
+    let cr = null, planKey = '[]', layers = [], linkState = 'none', ticker = null, phase = 1, skipped = 0;
+    const layerStates = Object.create(null), targetStates = Object.create(null), warned = Object.create(null);
+    const warn = (text) => { if (!warned[text]) { warned[text] = true; log.warn(text); } };
+    const appHalf = Math.max(APP_HALF_MIN_MS, Math.round(500 / cfg.flashHz));
+
+    function client() {
+        if (cr) return cr;
+        cr = new o.ClusterRender('adam_shiftlights', o.socketPath);
+        linkState = 'connecting';
+        const c = cr;
+        c.on('ready', guard('cr ready', () => { if (cr === c) { linkState = 'ready'; log.info('cluster-render: connected (' + c.backend + ', ' + c.targets + ')'); } }));
+        c.on('disconnected', guard('cr disconnected', () => { if (cr === c) { linkState = 'connecting'; log.warn('cluster-render: connection lost, reconnecting'); } }));
+        c.on('layer', guard('cr layer', (ref, state, reason) => {
+            if (cr !== c || layerStates[ref] === state) return;
+            layerStates[ref] = state;
+            log.info('cluster-render: layer ' + ref + ' ' + state + (reason ? ' (' + reason + ')' : ''));
+        }));
+        c.on('target', guard('cr target', (name, state, holder, reason) => {
+            if (cr !== c) return;
+            targetStates[name] = state;
+            log.info('cluster-render: target ' + name + ' ' + state + (holder ? ' holder ' + holder : '') + (reason ? ' (' + reason + ')' : ''));
+        }));
+        c.on('refused', guard('cr refused', (op, ref, reason) => { if (cr === c) log.error('cluster-render refused ' + op + ' ' + ref + ': ' + reason); }));
+        c.connect();
+        return c;
+    }
+
+    function dropAll() {
+        stopTicker();
+        layers.forEach((l) => { delete layerStates[l.ref]; if (cr) cr.drop(l.ref); });
+        layers = [];
+    }
+
+    const box = (cv, r) => {            // the rows of rect r of a canvas, packed (an image update)
+        const out = Buffer.alloc(r.w * r.h * 4);
+        for (let y = 0; y < r.h; y++) Buffer.from(cv.d.buffer, cv.d.byteOffset + ((r.y + y) * cv.w + r.x) * 4, r.w * 4).copy(out, y * r.w * 4);
+        return out;
+    };
+    const validGear = hudart.glyphOf;   // '1'..'9', 'P', 'R', 'N' or ''
+
+    function make(spec, a) {
+        const r = spec.rect, level = L.levelOf(cfg, a.sel[spec.which]);
+        const base = { spec, role: spec.role, which: spec.which, target: r.target, st: '', flash: -1, anim: 0, on: 1, mode: a.flashMode === 'renderer' ? 'renderer' : 'app', level };
+        if (spec.role === 'bracketImg') {
+            const cv = o.makeCanvas(r.w, r.h), b = spec.geom;
+            hudart.drawBracketStatic(cv, b, cfg.colors, -r.x, -r.y, 1);
+            const ref = cr.image({ target: r.target, klass: 'overlay', z: spec.z, x: r.x, y: r.y, w: r.w, h: r.h, opacity: level });
+            if (!ref) { log.error('cluster-render: image layer refused by the client for ' + r.target); return null; }
+            const plain = new Uint8Array(cv.d);         // the art without a gear: the gear box is restored from it
+            const gb = b.gearBox, gbox = { x: gb.x - r.x, y: gb.y - r.y, w: gb.w, h: gb.h };
+            const gear = validGear(a.gear);
+            hudart.drawGear(cv, b, gear, cfg.colors.rail, -r.x, -r.y, 1);
+            cr.pixels(ref, null, Buffer.from(cv.d.buffer, cv.d.byteOffset, cv.d.length));
+            return Object.assign(base, { ref, cv, plain, gbox, gear });
+        }
+        const isFill = spec.role === 'bracketFill';
+        const ref = cr.effect({ target: r.target, x: r.x, y: r.y, w: r.w, h: r.h, fs: isFill ? FS_BRACKET : FS_SLATS, klass: 'overlay', z: spec.z });
+        if (!ref) { log.error('cluster-render: layer refused by the client for ' + r.target); return null; }
+        const u = isFill ? bracketUniforms(spec, cfg.colors, level, a.th, cfg.hudStyles.cells) : slatUniforms(spec, cfg.colors, level);
+        u.forEach((x) => cr.uniform(ref, x[0], x[1], x[2]));
+        const st = u.filter((x) => x[0] === 'u_st')[0][1];
+        return Object.assign(base, { ref, st: st.join(' ') });
+    }
+
+    const sendOn = (l, v) => { if (l.on !== v) { l.on = v; cr.uniform(l.ref, 'u_on', [v]); } };
+    const appFlashing = () => layers.filter((l) => l.flash === 1 && l.mode === 'app');
+
+    function stopTicker() {
+        if (ticker) { T.clearInterval(ticker); ticker = null; }
+    }
+    /** Every App-flashing layer to its on half now, then a toggle every half cycle (one clock: all in step). */
+    function startTicker() {
+        stopTicker();
+        phase = 1;
+        appFlashing().forEach((l) => sendOn(l, 1));
+        ticker = T.setInterval(guard('flash', flashTick), appHalf);
+    }
+    function flashTick() {
+        const on = appFlashing();
+        if (!on.length || !cr) { stopTicker(); return; }
+        // the socket is backed up (an image upload, a stalled service): skip this toggle rather than queue it
+        if (cr.blocked) { skipped++; return; }
+        phase = phase ? 0 : 1;
+        on.forEach((l) => sendOn(l, phase));
+    }
+
+    /** Before the layer's u_st: a flash starts in its on half (App: u_on 1 goes first), the animation (Renderer) or the ticker. */
+    function startFlash(l, flash) {
+        if (flash === l.flash) return;
+        l.flash = flash;
+        if (l.anim) { cr.stop(l.ref, l.anim); l.anim = 0; }
+        if (l.mode === 'renderer') {
+            if (flash) {
+                const half = Math.round(500 / cfg.flashHz);
+                l.anim = cr.animate(l.ref, { property: 'uniform', name: 'u_on', keys: '0:1 ' + half + ':0 ' + (2 * half) + ':1', loop: true, interp: 'step' });
+            }
+            return;
+        }
+        if (flash) startTicker();
+        else if (!appFlashing().length) stopTicker();
+    }
+
+    function sendSt(l, v) {
+        const s = v.join(' ');
+        if (s !== l.st) { l.st = s; cr.uniform(l.ref, 'u_st', v); }
+    }
+
+    function update(l, a) {
+        const s = a.sel[l.which], level = L.levelOf(cfg, s);
+        const st = (a.states && a.states[l.which]) || { lit: 0, flashing: false };
+        if (l.role === 'bracketImg') {
+            if (level !== l.level) { l.level = level; cr.set(l.ref, { opacity: level }); }
+            const g = validGear(a.gear);
+            if (g !== l.gear) {
+                l.gear = g;
+                const r = l.spec.rect, gb = l.gbox;
+                for (let y = 0; y < gb.h; y++) {
+                    const i = ((gb.y + y) * l.cv.w + gb.x) * 4;
+                    l.cv.d.set(l.plain.subarray(i, i + gb.w * 4), i);
+                }
+                hudart.drawGear(l.cv, l.spec.geom, g, cfg.colors.rail, -r.x, -r.y, 1);
+                cr.pixels(l.ref, [gb], box(l.cv, gb));
+            }
+            return;
+        }
+        l.level = level;
+        const flash = st.flashing ? 1 : 0;
+        startFlash(l, flash);           // first: App's u_on 1 goes before the u_st that starts the flash
+        if (l.role === 'slats') {
+            sendSt(l, [st.lit, flash, level, unlitAlpha(l.spec.geom.style)]);
+            return;
+        }
+        // bracketFill: the fill up to the rpm (10 rpm steps), red and flashing with the display's shift flash (every style)
+        const b = l.spec.geom;
+        const rpm = typeof a.rpm === 'number' && isFinite(a.rpm) ? Math.round(a.rpm / 10) * 10 : 0;
+        sendSt(l, [Math.round(b.sOf(rpm) * 100) / 100, flash, level, 0]);
+    }
+
+    function apply(a) {
+        const want = a.active && a.sel ? geom.layersFor(cfg, a.display, a.sel, warn) : [];
+        const key = JSON.stringify([a.flashMode === 'renderer' ? 'renderer' : 'app'].concat(want.map((p) => [p.key, p.rect, p.style])));
+        if (key !== planKey) {
+            dropAll();
+            planKey = key;
+            if (want.length) {
+                client();
+                layers = want.map((p) => make(p, a)).filter(Boolean);
+                log.info('cluster-render: layers ' + layers.map((l) => l.target + ' ' + l.role + '#' + l.ref).join(', '));
+            }
+        }
+        if (!want.length) {
+            Object.keys(targetStates).forEach((k) => { delete targetStates[k]; });
+            if (cr) { cr.close(); cr = null; linkState = 'none'; log.info('cluster-render: closed (nothing to show)'); }
+            return;
+        }
+        layers.forEach((l) => update(l, a));
+    }
+
+    function status() {
+        const out = {};
+        layers.forEach((l) => { out[l.target + ' ' + l.role] = layerStates[l.ref] || 'sent'; });
+        const targets = {};
+        Object.keys(targetStates).forEach((k) => { targets[k] = targetStates[k]; });
+        return { link: linkState, layers: out, targets, flash: { ticking: !!ticker, skipped } };
+    }
+
+    return { apply, status };
+}
+
+module.exports = { createOutput };

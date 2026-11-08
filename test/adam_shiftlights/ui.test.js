@@ -37,7 +37,7 @@ function own(i, m, ui) {
     const r = new Recorder(1600, 520, { textScale: 1 }).reset();
     r.own = true; r.chrome = { tabs: null };
     const ran = [];
-    u.draw(r, t, m, (writes) => () => { ran.push(writes); });
+    u.draw(r, t, m, (writes, cmd) => () => { ran.push(cmd ? { cmd, writes } : writes); });
     return { r, keys: r.targets.map((g) => g.key), ran, run: (k) => { r.targets.filter((g) => g.key === k)[0].run(); return ran[ran.length - 1]; } };
 }
 const STATES = [{}, { hudOn: true }, { clusterOn: true }, { hudOn: true, clusterOn: true, bothMode: 'map' }, { onlySportPlus: true, hudOn: true },
@@ -48,7 +48,7 @@ const st = (page, key) => [page + ':' + key + ':-', page + ':' + key + ':+'];
 
 module.exports = [
     ['every page in every state draws on the GPU Recorder and the software Canvas without a throw (no convex)', () => {
-        STATES.forEach((s) => MORE.forEach((more) => [0, 1, 2, 3, 4].forEach((i) => {
+        STATES.forEach((s) => MORE.forEach((more) => [0, 1, 2, 3, 4, 5].forEach((i) => {
             const m = model(s, more), { r } = own(i, m);
             const w = r.words();
             assert.ok(w.length > 100, 'page ' + i + ' drew');
@@ -58,17 +58,17 @@ module.exports = [
         })));
         assert.strictEqual(OP.CONVEX, undefined, 'the Recorder has no convex op: nothing may need it');
     }],
-    ['header tabs: Home, HUD, Cluster, Behavior, About; the shown one selected; a tab out of range is ignored', () => {
+    ['header tabs: Home, HUD, Cluster, Behavior, About, Check; the shown one selected; a tab out of range is ignored', () => {
         const u = createUi();
         const a = own(undefined, model({}), u);
-        assert.deepStrictEqual(a.r.chrome.tabs, { tabs: ['Home', 'HUD', 'Cluster', 'Behavior', 'About'], sel: 0, badges: [] });
-        [1, 2, 3, 4, 0].forEach((i) => {
+        assert.deepStrictEqual(a.r.chrome.tabs, { tabs: ['Home', 'HUD', 'Cluster', 'Behavior', 'About', 'Check'], sel: 0, badges: [] });
+        [1, 2, 3, 4, 5, 0].forEach((i) => {
             const x = own(i, model({ hudOn: true, clusterOn: true }), u);
             assert.strictEqual(x.r.chrome.tabs.sel, i);
-            assert.ok(x.keys.length && x.keys.every((k) => k.indexOf(['home', 'hud', 'cluster', 'behavior', 'about'][i] + ':') === 0), i + ': ' + x.keys.join(' '));
+            assert.ok(x.keys.length && x.keys.every((k) => k.indexOf(['home', 'hud', 'cluster', 'behavior', 'about', 'check'][i] + ':') === 0), i + ': ' + x.keys.join(' '));
         });
         u.tab(3);
-        [9, -1, 1.5, '2', null, undefined, NaN].forEach((bad) => { u.tab(bad); assert.strictEqual(u.page(), 3, String(bad)); });
+        [9, 6, -1, 1.5, '2', null, undefined, NaN].forEach((bad) => { u.tab(bad); assert.strictEqual(u.page(), 3, String(bad)); });
     }],
     ['where the kit does not run the screen: one tab, a read-only Home, no targets, whatever page was picked', () => {
         const u = createUi();
@@ -79,7 +79,7 @@ module.exports = [
         r.text = function (s) { texts.push(String(s)); return text.apply(this, arguments); };
         u.draw(r, t, model({ hudOn: true }), () => () => assert.fail('no press there'));
         assert.deepStrictEqual([r.targets.length, r.chrome.tabs.tabs], [0, ['Shift Lights']]);
-        ['HUD', 'Instrument cluster', 'ON', 'OFF', 'Showing', 'When both are on', 'Buttons below: HUD on/off, Cluster on/off, Settings (every setting)'].forEach((w) => assert.ok(texts.indexOf(w) >= 0, w + ' in ' + texts.join(' | ')));
+        ['HUD', 'Instrument cluster', 'ON', 'OFF', 'Not sent yet', 'When both are on', 'Buttons below: HUD on/off, Cluster on/off, Settings (every setting)'].forEach((w) => assert.ok(texts.indexOf(w) >= 0, w + ' in ' + texts.join(' | ')));
     }],
     ['knob order: tabs, then each page\'s targets top to bottom, left to right ("-" before "+")', () => {
         const on = model({ hudOn: true, clusterOn: true });
@@ -97,7 +97,8 @@ module.exports = [
         // a HUD off its defaults: Reset HUD to defaults is the first place on its page (the note's button)
         assert.strictEqual(own(1, model({ hudOn: true, clusterOn: true, hudSize: 100 })).keys[0], 'hud:reset');
         // keys are unique on every page (the kit keeps the focus on a key across redraws)
-        [0, 1, 2, 3, 4].forEach((i) => { const k = own(i, on).keys; assert.strictEqual(new Set(k).size, k.length, 'page ' + i); });
+        assert.deepStrictEqual(own(5, on).keys, ['check:refresh'], 'Check with nothing shown: Refresh only');
+        [0, 1, 2, 3, 4, 5].forEach((i) => { const k = own(i, on).keys; assert.strictEqual(new Set(k).size, k.length, 'page ' + i); });
     }],
     ['pressing a target runs the writes for its own setting', () => {
         const on = model({ hudOn: true, clusterOn: true });
@@ -116,5 +117,33 @@ module.exports = [
         assert.deepStrictEqual(own(4, on).run('about:renderer:software'), [['renderer', 'software']]);
         // a stepper at its end is still a target (the focus stays put) and changes nothing
         assert.deepStrictEqual(own(1, model({ hudOn: true, hudBright: 100 })).run('hud:hudBright:+'), []);
+    }],
+    ['0.4.4 Check tab: Reset HUD drawing and Refresh run their commands; every verdict fits the Home card and every proof line the screen', () => {
+        const proof = { link: 'ready', backend: 'id7', holding: false, madeAt: 1, targets: { hud: { state: 'waiting', holder: 'foreign', reason: 'scene id in use by another target', at: 2 } },
+            layers: ['slats', 'bracketImg', 'bracketFill'].map((role, i) => ({ which: 'hud', target: 'hud', role, ref: 3 + i, state: 'shown', reason: '', lastSent: role === 'bracketImg' ? 'opacity 0.35, gear 3' : 'u_st 0.43 1 0.35 -0.2', lastSentAt: 3 })),
+            status: { at: 4, targets: { hud: { state: 'waiting', holder: 'foreign', reason: 'scene id in use by another target', rendering: 'renderer not subscribed for 600000 ms',
+                line: ('target hud: slot 0x323 scene 0x1000400 800x480: waiting (foreign) scene id in use by another target; renderer not subscribed for 600000 ms').slice(0, 120) } },
+            others: ['adam_mtrack on panel', 'adam_vitals on panel'], rendering: { hud: { kind: 'unsubscribed', secs: null, ms: 600000 } } } };
+        const m = model({ hudOn: true }, { proof, heal: { used: 2, gaveUp: true, last: { why: 'handover', at: 5 } }, now: 100000 });
+        const x = own(5, m);
+        assert.deepStrictEqual(x.keys, ['check:reset', 'check:refresh']);
+        assert.deepStrictEqual(x.run('check:reset'), { cmd: 'hudReset', writes: [] });
+        assert.deepStrictEqual(x.run('check:refresh'), { cmd: 'refresh', writes: [] });
+        const u = createUi();
+        u.tab(5);
+        u.draw(new Canvas(1600, 520).clear(t.bg), t, m);
+        // widths with the kit's own text measure: a card's state line has 664 px, a proof value 1220 px, the verdict 900 px
+        const cv = new Recorder(1600, 520, { textScale: 1 }).reset();
+        const HC = require('../../apps/adam_shiftlights/hudcheck');
+        const texts = ['Showing: the renderer drew it', 'Showing at 35 %: night dim', 'Showing at 20 %: brightness', 'On, paused: see below', 'Demo data: nothing is sent',
+            'Not sent yet', 'Redrawing: layers come back soon', 'Not sent: no renderer link', 'Not sent: no layer made', 'Blocked: ' + HC.appName('adam_mtrack on panel') + ' holds the scene',
+            'Blocked: some_long_app_id_x holds the scene', 'Sent, the renderer says unavailable', 'Sent, parked behind the stock display', 'Sent, not shown yet',
+            'Sent, waiting for the read-back', 'Sent, not confirmed drawn'];
+        texts.forEach((s) => assert.ok(cv.textWidth(s, 22, { font: 'bold' }) <= 664, s + ': ' + cv.textWidth(s, 22, { font: 'bold' })));
+        const P = require('../../apps/adam_shiftlights/pages');
+        const v = P.view(5, m);
+        v.lines.forEach((l) => assert.ok(cv.textWidth(l[1], 20) <= 1220, l[0] + ': ' + cv.textWidth(l[1], 20)));
+        assert.ok(cv.textWidth(v.detail, 20) <= 1520, v.detail);
+        assert.ok(cv.textWidth(v.note, 26, { font: 'bold' }) <= 900, v.note);
     }],
 ];

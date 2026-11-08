@@ -2,7 +2,7 @@
   "id": "adam_shiftlights",
   "title": "Shift Lights",
   "description": "RPM shift lights on the instrument cluster and HUD, with per-drive-mode thresholds and a cold-engine limit",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "mguAppStartType": "autostart",
   "vendor": "custom",
   "loggingId": "OAD1",

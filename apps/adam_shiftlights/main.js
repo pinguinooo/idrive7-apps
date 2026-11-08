@@ -2,7 +2,9 @@
 /**
  * Shift Lights - RPM shift lights on the instrument cluster (under the M logo) and the HUD, drawn by the
  * cluster-render service (cluster_render_client.js). The centre screen holds the settings pages (ui.js: Home, HUD,
- * Cluster, Behavior, About), drawn only when something changes: no preview, no render loop. "HUD" and
+ * Cluster, Behavior, About, Check), drawn only when something changes: no preview, no render loop.
+ * 0.4.4: "Showing" comes from the renderer's read-back (hudcheck.verdict over output.status().proof), and a bounded
+ * self-heal (hudcheck.healStep) runs on the 1 s tick, on every output change and on a wake (a wall-clock gap). "HUD" and
  * "Instrument cluster" are two on/off settings; each shows its own style, live.
  * The drive mode comes from the car (FES drive experience) when it sends one, else from the setting.
  * Tunables: config.js. Pure maths: logic.js, geom.js. Every callback goes through safety.guard: nothing may throw
@@ -19,12 +21,15 @@ const { createRpmPoll, pct } = require('./rpmpoll');
 const { ClusterRender } = require('./cluster_render_client');
 const { Canvas } = require('./kit/canvas');
 const { createUi } = require('./ui');
+const HC = require('./hudcheck');
+const P = require('./pages');
 
 const RATE_LOG_MS = 30000;
 const FES = 'de.bmw.infotainment.drivingexcitement.FES';
 const CDS = 'de.bmw.infotainment.vehicle.CDS';
 const VEHICLE = 'de.bmw.infotainment.vehicle.Vehicle';     // statusDayNightChangeOver: the car's day / night (Night dim Auto)
-const DN_LOG_MAX = 50;      // day / night log lines at most (one per new value)
+const DN_LOG_MAX = 50;
+const VERDICT_LOG_MAX = 200;    // 'hud check: <verdict>' lines at most a start (one per new verdict; car-logs.sh collects them)      // day / night log lines at most (one per new value)
 
 mgu.run({
     async start(ctx) {
@@ -37,7 +42,10 @@ mgu.run({
             const guard = safety.guard;
             // SHIFTLIGHTS_CR_SOCKET: the emulator's fake service; unset on the car (the client's default path)
             const makeCanvas = (w, h) => new Canvas(w, h);
-            const output = createOutput({ ClusterRender, socketPath: process.env.SHIFTLIGHTS_CR_SOCKET || undefined, log, cfg, guard, makeCanvas });
+            // onChange: a link / target / layer / status / rebuild change redraws the pages and runs the HUD check (queued:
+            // never inside output.apply); onRebuildDue: a self-heal's gap is over, make the layers again
+            const output = createOutput({ ClusterRender, socketPath: process.env.SHIFTLIGHTS_CR_SOCKET || undefined, log, cfg, guard, makeCanvas,
+                onChange: () => { if (viewKey() !== drawnKey) changed(); queueHeal(); }, onRebuildDue: () => refreshNow() });
             const killPath = safety.killFile(ctx.dataDir);
             log.info('kill switch file: ' + killPath);
 
@@ -51,17 +59,53 @@ mgu.run({
             // the settings pages: drawn on a change only (a setting, a tab, the layout, a status event), coalesced
             // into one guarded draw; never from refresh() or the rpm path. The kit resends the last frame by itself.
             const pages = createUi(() => changed());
-            let drawQueued = false;
+            let drawQueued = false, drawnKey = '';
+            const model = () => ({ get, schema: settings.schema || (ctx.spec && ctx.spec.settings) || [], cfg, carMode, offReason: offReason(), version: (ctx.spec && ctx.spec.version) || '',
+                night: nightInfo(), proof: output.status().proof, heal: heal || {}, now: Date.now() });
+            // what the shown page says: a renderer event redraws only when it changes that (not every layer event or status reply)
+            const viewKey = () => { try { return JSON.stringify(P.view(pages.page(), model())); } catch (e) { return String(Date.now()); } };
             const draw = guard('draw', () => {
                 drawQueued = false;
                 if (!ui.isVisible('MAIN')) return;
-                const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);
-                pages.draw(cv, t, { get, schema: settings.schema || (ctx.spec && ctx.spec.settings) || [], cfg, carMode, offReason: offReason(), version: (ctx.spec && ctx.spec.version) || '', night: nightInfo() }, act);
+                const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg), m = model();
+                drawnKey = JSON.stringify(P.view(pages.page(), m));
+                pages.draw(cv, t, m, act);
                 return ui.image('MAIN_GFX', cv);
             });
             function changed() { if (!drawQueued) { drawQueued = true; setTimeout(draw, 0); } }
-            /** What a page button does: its settings writes (settings.onChange then redraws). */
-            const act = (writes) => guard('ui ' + writes.map((w) => w[0]).join(' '), () => { writes.forEach((w) => settings.set(w[0], w[1])); });
+            /** What a page button does: its settings writes (settings.onChange then redraws), or a command (the Check tab). */
+            const act = (writes, cmd) => guard('ui ' + (cmd || writes.map((w) => w[0]).join(' ')), () => {
+                writes.forEach((w) => settings.set(w[0], w[1]));
+                if (cmd === 'hudReset') { log.info('hud check: Reset HUD drawing pressed'); healCheck('manual'); }
+                else if (cmd === 'refresh') output.requestStatus();
+                if (cmd) changed();
+            });
+
+            // the HUD check (0.4.4): heal = hudcheck.healStep's state (a fresh start opens a window), lastTick = the 1 s tick's clock
+            let heal = null, lastTick = null, healQueued = false, lastVerdict = '', verdictLogged = 0;
+            /** The display the check judges: the HUD unless only the cluster shows. */
+            const primary = () => (L.readDisplays(get).display === 'cluster' ? 'cluster' : 'hud');
+            function healCheck(trigger) {
+                const p = output.status().proof, which = primary(), ds = L.readDisplays(get), s = (sel || readSel())[which];
+                const v = HC.verdict({ which, on: ds[which], shown: ds.display === which || ds.display === 'both', offReason: offReason(), proof: p, level: L.levelOf(cfg, s), night: s.night, heal });
+                const mine = p.layers.filter((l) => l.which === which)[0], r0 = p.status && mine ? p.status.rendering[mine.target] : null;
+                // logged when the verdict or the give-up changes (not on every new count in its detail)
+                const vk = which + ' ' + v.code + ' ' + v.text + ' ' + !!(heal && heal.gaveUp);
+                if (vk !== lastVerdict && verdictLogged < VERDICT_LOG_MAX) { verdictLogged++; log.info('hud check: ' + which + ' ' + v.code + ': ' + v.text + (v.detail ? ' (' + v.detail + ')' : '')); }
+                lastVerdict = vk;
+                const before = heal;
+                const r = HC.healStep(heal, { wake: trigger === 'wake', manual: trigger === 'manual', code: v.code, madeAt: p.madeAt,
+                    statusAt: p.status ? p.status.at : null, kind: r0 ? r0.kind : '', others: !!(p.status && p.status.others.length) }, Date.now(), cfg.hudCheck);
+                heal = r.st;
+                if (r.action === 'rebuild') {
+                    output.rebuild(r.why);
+                    setTimeout(changed, cfg.hudCheck.manualCooldownMs + 50);     // Reset HUD drawing is pressable again: redraw it
+                } else if (/^gave up/.test(r.why) && !(before && before.gaveUp)) log.warn('hud check: ' + r.why + ' automatic rebuilds: ' + v.text + ' (' + v.detail + ')');
+                else if (trigger === 'manual') log.info('hud check: Reset HUD drawing not run (' + r.why + ')');
+                if (heal !== before) changed();
+            }
+            const healNow = guard('hud check', healCheck);
+            function queueHeal() { if (!healQueued) { healQueued = true; setTimeout(() => { healQueued = false; healNow('change'); }, 0); } }
 
             let carMode = null;     // the car's drive mode (logic.driveModeOf), null until it sends one
             // "Fast RPM": Car's own rpm handler, counted on the subscription and fed by the getter when the car's
@@ -212,6 +256,11 @@ mgu.run({
                 changed();
             }));
             setInterval(guard('kill', () => {
+                // a wake: the wall clock jumped forward past wakeGapMs between ticks (the head unit slept); back: just resync
+                const now = Date.now(), woke = lastTick !== null && now - lastTick > cfg.hudCheck.wakeGapMs;
+                if (woke) log.info('hud check: wake (' + Math.round((now - lastTick) / 1000) + ' s with no tick)');
+                lastTick = now;
+                healNow(woke ? 'wake' : 'tick');
                 const k = safety.pollKill(fs, killPath);
                 if (k !== killed) { killed = k; log.warn(k ? 'kill file found: output off' : 'kill file gone: output allowed'); refreshNow(); changed(); }
                 if (dn.st && dn.st.want !== null && dn.st.want !== dn.st.night) dayNight(null);    // Night dim Auto: a change that held
@@ -223,7 +272,7 @@ mgu.run({
             // BTN_ALL opens the HMI's settings list (every setting)
             if (ctx.hideButton) ['BTN_HUD', 'BTN_CLUSTER', 'BTN_ALL'].forEach((b) => ctx.hideButton(b));
             ui.onClick('BTN_ALL', guard('settings button', () => ui.open && ui.open('SETTINGS')));
-            if (ctx.onTab) ctx.onTab(guard('tab', (i) => { pages.tab(i); changed(); }));
+            if (ctx.onTab) ctx.onTab(guard('tab', (i) => { pages.tab(i); if (P.IDS[pages.page()] === 'check') output.requestStatus(); changed(); }));
             if (ctx.onLayout) ctx.onLayout(guard('layout', changed));
             if (ui.onFocus) ui.onFocus(guard('focus', (name, on) => { if (name === 'MAIN' && on) changed(); }));
             Promise.all(watched).then(guard('rpm poll start', () => poll.start()), (e) => log.warn('rpm poll not started: ' + e));
@@ -233,7 +282,8 @@ mgu.run({
             const s0 = sel || readSel();
             log.info('started: show ' + L.readDisplays(get).display + ', mode ' + JSON.stringify(eff()) + ', cluster ' + s0.cluster.style + ', hud ' + s0.hud.style +
                 ', flash ' + L.readFlashMode(get) + ', night dim hud ' + s0.hud.nightMode + ' cluster ' + s0.cluster.nightMode +
-                ', lead ' + lr.leadMs + ' ms, rpm poll ' + (lr.poll ? 'on' : 'off'));
+                ', lead ' + lr.leadMs + ' ms, rpm poll ' + (lr.poll ? 'on' : 'off') +
+                ', hudcheck verify ' + cfg.hudCheck.verifyMs + ' gap ' + cfg.hudCheck.gapMs + ' max ' + cfg.hudCheck.maxAuto);
         } catch (e) {
             log.error('start: ' + (e && e.stack || e));
         }

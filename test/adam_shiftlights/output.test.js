@@ -30,13 +30,13 @@ const A = (display, c, h, st, extra) => Object.assign({ display, active: true, s
 
 let seq = 0;
 /** A fresh fake service + output; t.msgs = every message the fake got. */
-function rig(logOverride) {
+function rig(logOverride, more) {
     const sock = path.join(os.tmpdir(), 'sl-out-' + process.pid + '-' + (++seq) + '.sock');
-    const msgs = [], lines = [];
-    const fake = createFake(sock, (m) => msgs.push(m));
+    const msgs = [], lines = [], x = more || {};
+    const fake = createFake(sock, (m) => msgs.push(m), null, { mode: x.mode });
     const log = logOverride || { info: (m) => lines.push(m), warn: (m) => lines.push(m), error: (m) => lines.push('ERR ' + m) };
     const safety = createSafety({ cfg, log: { error: (m) => lines.push('ERR ' + m), info: () => {}, warn: () => {} } });
-    const out = createOutput({ ClusterRender, socketPath: sock, log, cfg, guard: safety.guard, makeCanvas: (w, h) => new Canvas(w, h) });
+    const out = (x.createOutput || createOutput)(Object.assign({ ClusterRender, socketPath: sock, log, cfg: x.cfg || cfg, guard: safety.guard, makeCanvas: (w, h) => new Canvas(w, h) }, x.opts));
     const ops = (op, from) => msgs.slice(from || 0).filter((m) => m.op === op);
     const done = () => new Promise((res) => { out.apply({ display: 'off', active: false }); fake.close(res); });
     return { sock, msgs, lines, fake, out, ops, done, safety };
@@ -270,5 +270,118 @@ module.exports = [
         await until(() => r.ops('layer').length === 1 && r.lines.some((l) => /error in cr ready/.test(l)), 3000, 'guarded throw');
         assert.strictEqual(r.safety.tripped(), false);
         await r.done();
+    }],
+    // ---- 0.4.4: the HUD check (read-back, rebuild) ----
+    ['0.4.4 steady run: the same layer, uniform and pixel ops as 0.4.3\'s output.js (only status asks are new)', async () => {
+        const quiet = { setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {} };
+        const run = async (make, opts) => {
+            const r = rig(null, { createOutput: make, opts });
+            const flash = Object.assign({}, quiet);         // the App flash ticker: never advanced, only its first u_on 1 goes
+            const steps = [
+                A('hud', 'large', 'large'), A('hud', 'large', 'large', S(3), { rpm: 6100 }), A('hud', 'large', 'large', S(7), { rpm: 6500, gear: 4 }),
+                A('hud', 'large', 'large', S(10, true), { rpm: 6900, gear: 4 }), A('hud', 'large', 'large', S(0), { rpm: 3000, gear: 'N' }),
+                Object.assign(A('hud', 'large', 'large'), { sel: SEL('large', 'large', { hud: { bright: 60, night: true } }) }),
+                A('hud', 'large', 'bar', S(5)), A('hud', 'large', 'bracket', S(2), { gear: 2 }), A('cluster', 'row', 'bracket', S(4)), A('both', 'large', 'classic', S(6)),
+            ];
+            r.out.apply(steps[0]);
+            await until(() => r.out.status().link === 'ready', 3000, 'ready');
+            for (const a of steps) { r.out.apply(a); await wait(30); }
+            await wait(100);
+            const seen = r.msgs.filter((m) => m.op && m.op !== 'status').map((m) => { const c = Object.assign({}, m); delete c.t; delete c.conn; delete c.file; return JSON.stringify(c); });
+            const status = r.ops('status').length;
+            await r.done();
+            void flash;
+            return { seen, status };
+        };
+        const old = await run(require('./output_0.4.3').createOutput, { timers: quiet });
+        const now = await run(createOutput, { timers: quiet, checkTimers: quiet });
+        assert.ok(old.seen.length > 60, 'the sequence sent ' + old.seen.length + ' ops');
+        assert.deepStrictEqual(now.seen, old.seen);
+        assert.strictEqual(now.status, 0, 'no status ask with the check timers held');
+    }],
+    ['0.4.4 rebuild: drops every layer and closes, makes nothing during the gap, then the same layers and uniforms again', async () => {
+        const c2 = Object.assign({}, cfg, { hudCheck: Object.assign({}, cfg.hudCheck, { gapMs: 1500, verifyMs: 2000 }) });
+        let due = 0;
+        const r = rig(null, { cfg: c2, opts: { onRebuildDue: () => { due++; } } });
+        r.out.apply(A('hud', 'large', 'large', S(3)));
+        await until(() => Object.keys(r.out.status().layers).every((k) => r.out.status().layers[k] === 'shown') && r.ops('layer').length === 3, 3000, 'shown');
+        const first = r.ops('layer').map(rectOf), u0 = r.ops('uniform').map((m) => m.name + ' ' + m.v).sort();
+        const refs = r.ops('layer').map((m) => m.ref), n0 = r.msgs.length, t0 = Date.now();
+        r.out.rebuild('test');
+        assert.deepStrictEqual(r.out.status().layers, {}, 'every layer dropped');
+        assert.strictEqual(r.out.status().link, 'none');
+        // the socket is destroyed right after the drops (as 0.4.3's "nothing to show" close): the service releases a closed
+        // connection's layers, so the drops may or may not arrive first
+        await until(() => r.msgs.slice(n0).some((m) => m.ev === 'close'), 3000, 'closed');
+        assert.ok(r.ops('drop', n0).every((m) => refs.indexOf(m.ref) >= 0));
+        assert.strictEqual(r.out.status().proof.holding, true);
+        assert.ok(r.lines.some((l) => /^hud check: rebuild \(test\): hud slats shown/.test(l)), r.lines.join('\n'));
+        r.out.apply(A('hud', 'large', 'large', S(3)));
+        await wait(300);
+        assert.strictEqual(r.ops('layer', n0).length, 0, 'nothing made during the gap');
+        await until(() => due === 1, 3000, 'onRebuildDue');
+        assert.ok(Date.now() - t0 >= 1500 - 20, 'the gap is gapMs');
+        const n1 = r.msgs.length;
+        r.out.apply(A('hud', 'large', 'large', S(3)));
+        await until(() => r.ops('layer', n1).length === 3, 3000, 'made again');
+        assert.deepStrictEqual(r.ops('layer', n1).map(rectOf), first);
+        assert.deepStrictEqual(r.ops('uniform', n1).map((m) => m.name + ' ' + m.v).sort(), u0);
+        assert.strictEqual(r.out.status().proof.holding, false);
+        await r.done();
+    }],
+    ['0.4.4 proof: lastSent and lastSentAt follow each u_st, opacity and gear; onChange on target, layer and status events', async () => {
+        const T = [];
+        const ct = { setTimeout: (fn, ms) => { const t = { fn, ms }; T.push(t); return t; }, clearTimeout: (t) => { const i = T.indexOf(t); if (i >= 0) T.splice(i, 1); },
+            setInterval: (fn, ms) => { const t = { fn, ms, every: true }; T.push(t); return t; }, clearInterval: (t) => { const i = T.indexOf(t); if (i >= 0) T.splice(i, 1); } };
+        const fire = (ms) => T.filter((t) => t.ms === ms).forEach((t) => { if (!t.every) T.splice(T.indexOf(t), 1); t.fn(); });
+        let changes = 0;
+        const r = rig(null, { opts: { checkTimers: ct, onChange: () => { changes++; } } });
+        const t0 = Date.now();
+        r.out.apply(A('hud', 'large', 'large', S(3), { rpm: 6100 }));
+        assert.ok(T.some((t) => t.every && t.ms === cfg.hudCheck.statusMs), 'a status every statusMs while layers exist');
+        await until(() => r.out.status().proof.link === 'ready' && r.out.status().proof.layers.every((l) => l.state === 'shown'), 3000, 'shown');
+        assert.ok(changes >= 3, 'onChange on made, ready, target and layer events: ' + changes);
+        assert.ok(T.some((t) => t.ms === cfg.hudCheck.verifyMs), 'verifyMs after ready');
+        assert.ok(T.some((t) => t.ms === 500), '500 ms after a target or layer event');
+        const p = r.out.status().proof, fill = p.layers.filter((l) => l.role === 'bracketFill')[0], img = p.layers.filter((l) => l.role === 'bracketImg')[0];
+        assert.ok(/^u_st [\d.]+ 0 1 0$/.test(fill.lastSent) && fill.lastSentAt >= t0, JSON.stringify(fill));
+        assert.strictEqual(img.lastSent, 'opacity 1, gear 3');
+        await wait(5);
+        r.out.apply(A('hud', 'large', 'large', S(3), { rpm: 6600, gear: 5 }));
+        const q = r.out.status().proof;
+        assert.notStrictEqual(q.layers.filter((l) => l.role === 'bracketFill')[0].lastSent, fill.lastSent);
+        assert.ok(q.layers.filter((l) => l.role === 'bracketFill')[0].lastSentAt > fill.lastSentAt);
+        assert.strictEqual(q.layers.filter((l) => l.role === 'bracketImg')[0].lastSent, 'opacity 1, gear 5');
+        const c0 = changes, n0 = r.msgs.length;
+        fire(500);
+        await until(() => r.ops('status', n0).length === 1 && r.out.status().proof.status, 3000, 'the status read back');
+        assert.ok(changes > c0, 'onChange on a status');
+        const st = r.out.status().proof.status;
+        assert.strictEqual(st.rendering.hud.kind, 'rendered');
+        assert.deepStrictEqual(st.others, []);
+        assert.ok(r.lines.some((l) => /^cluster-render status: target panel: .*idle \| target hud: .*rendered: renderer/.test(l)), r.lines.join('\n'));
+        const n1 = r.msgs.length;
+        fire(cfg.hudCheck.statusMs);
+        r.out.requestStatus();
+        await until(() => r.ops('status', n1).length === 2, 3000, 'interval and requestStatus asks');
+        await r.done();
+        assert.ok(!T.some((t) => t.every), 'the status interval stops with the layers');
+    }],
+    ['0.4.4 read-back in the fake\'s modes: unsubscribed, mtrack-on-panel (another app, hud waiting)', async () => {
+        for (const mode of ['unsubscribed', 'mtrack-on-panel']) {
+            const r = rig(null, { mode });
+            r.out.apply(A('hud', 'large', 'bar', S(0)));
+            await until(() => r.out.status().proof.link === 'ready' && r.ops('layer').length === 1, 3000, mode);
+            r.out.requestStatus();
+            await until(() => r.out.status().proof.status, 3000, mode + ' status');
+            const p = r.out.status().proof;
+            if (mode === 'unsubscribed') assert.strictEqual(p.status.rendering.hud.kind, 'unsubscribed');
+            else {
+                assert.deepStrictEqual(p.status.others, ['adam_mtrack on panel']);
+                assert.strictEqual(p.targets.hud.state, 'waiting');
+                assert.strictEqual(p.targets.hud.reason, 'scene id in use by another target');
+            }
+            await r.done();
+        }
     }],
 ];

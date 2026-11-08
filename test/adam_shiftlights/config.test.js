@@ -132,7 +132,7 @@ module.exports = [
     ['app.json style settings match config.js: defaults, option ids, size and brightness steps, ASCII labels', () => {
         const spec = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'apps', 'adam_shiftlights', 'app.json'), 'utf8'));
         const item = (k) => spec.settings.filter((s) => s.key === k)[0];
-        assert.strictEqual(spec.version, '0.4.3');
+        assert.strictEqual(spec.version, '0.4.4');
         assert.strictEqual(spec.mguAppStartType, 'autostart');
         // in page order (Home, HUD, Cluster, Behavior, About): the HMI's settings list reads the same way
         assert.deepStrictEqual(spec.settings.map((s) => s.key),
@@ -225,5 +225,18 @@ module.exports = [
             } else assert.deepStrictEqual(e, o, e.key);
         });
         assert.strictEqual(L.SETTINGS_V, 4, 'one migration since 0.3.1: 0.4.3 (old HUD defaults, night dim)');
+    }],
+    ['0.4.4 hudCheck: whole numbers in range; a bad value falls back to the defaults with an error line', () => {
+        assert.deepStrictEqual(L.validateConfig(copy(config)).cfg.hudCheck, { statusMs: 30000, verifyMs: 5000, gapMs: 3500, maxAuto: 2, wakeGapMs: 30000, manualCooldownMs: 10000 });
+        [['statusMs', 4999], ['statusMs', 300001], ['verifyMs', 1999], ['gapMs', 1000], ['gapMs', 1500.5], ['maxAuto', 6], ['maxAuto', -1], ['wakeGapMs', 9999],
+            ['manualCooldownMs', 2999], ['verifyMs', '5000'], ['gapMs', NaN]].forEach((b) => {
+            const r = bad((c) => { c.hudCheck[b[0]] = b[1]; });
+            hasError(r, new RegExp('^hudCheck: ' + b[0] + ' must be a whole number .*\\(using the default\\)$'));
+            assert.deepStrictEqual(r.cfg.hudCheck, L.DEFAULTS.hudCheck, JSON.stringify(b));
+        });
+        const lo = bad((c) => { c.hudCheck = { statusMs: 5000, verifyMs: 2000, gapMs: 1500, maxAuto: 0, wakeGapMs: 10000, manualCooldownMs: 3000 }; });
+        assert.deepStrictEqual([lo.errors, lo.cfg.hudCheck.maxAuto], [[], 0], 'the low ends are allowed (maxAuto 0: no self-heal)');
+        hasError(bad((c) => { delete c.hudCheck; }), /^hudCheck: missing \(using the default\)/);
+        hasError(bad((c) => { c.hudCheck = 5; }), /^hudCheck: must be an object/);
     }],
 ];

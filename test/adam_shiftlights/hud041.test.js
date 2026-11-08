@@ -110,7 +110,7 @@ module.exports = [
         assert.deepStrictEqual([r.value, r.controls[0].writes, r.controls[1].writes], ['Same as the HUD', [['hudBarX', -5]], [['hudBarX', 5]]]);
         assert.strictEqual(r.desc, 'Moves the shift bar only; kept inside the visible area. Default same as the HUD');
         assert.strictEqual(v.rows.length, 7);
-        assert.notStrictEqual(v.noteTone, 'warn');
+        assert.ok(!/held/.test(v.note), v.note);        // 0.4.4: the note's tone follows the renderer's read-back (none in this model)
         const held = P.view(1, model({ hudOn: true, hudX: -100, hudBarX: -100, hudSize: 100 }));
         assert.ok(/held inside the visible area/.test(held.note) && held.noteTone === 'warn', held.note);
         assert.ok(!/held/.test(P.view(1, model({ hudOn: true, hudBarX: 0, hudX: 0, hudY: 0, hudSize: 100 })).note));

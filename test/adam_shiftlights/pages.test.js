@@ -21,6 +21,20 @@ function model(saved, more) {
     return Object.assign({ get: (k) => vals[k], schema: SPEC.settings, cfg, carMode: null, offReason: '', version: '0.4.0' }, more);
 }
 const views = (m) => P.PAGES.map((n, i) => P.view(i, m));
+const CS = require('../../apps/adam_shiftlights/crstatus');
+const HC = require('../../apps/adam_shiftlights/hudcheck');
+const T0 = new Date(2026, 10, 7, 17, 42, 5).getTime();
+/** output.status().proof: our layers on target (which), the target event, and a status text read back at T0 + 5 s. */
+function proofOf(which, target, rest, more) {
+    const text = 'target ' + target + ': slot 0x323 scene 0x1000400 800x480: ' + (rest === undefined ? 'shown (us); rendered: renderer 1a2b subscribed for 42 s' : rest) + ((more && more.extra) || '');
+    const st = CS.parseStatus(text), rendering = {};
+    Object.keys(st.targets).forEach((k) => { rendering[k] = CS.renderingOf(st.targets[k].rendering); });
+    return {
+        link: 'ready', backend: 'id7', holding: false, madeAt: T0, targets: { [target]: { state: (more && more.state) || 'shown', holder: '', reason: '', at: T0 + 20 } },
+        layers: [{ which, target, role: 'slats', ref: 3, state: 'shown', reason: '', lastSent: 'u_st 0 0 1 -0.2', lastSentAt: T0 }],
+        status: (more && more.noStatus) ? null : { at: T0 + 5000, targets: st.targets, others: CS.othersOn(st, HC.SHARED), rendering },
+    };
+}
 /** Every string anywhere in a page's content. */
 function strings(x, out) {
     out = out || [];
@@ -79,7 +93,7 @@ module.exports = [
                 c.writes.forEach((w) => assert.ok(valid(w[0], w[1]), JSON.stringify(st) + ' ' + c.key + ' writes ' + JSON.stringify(w)));
                 if (own[c.key]) c.writes.forEach((w) => assert.strictEqual(w[0], own[c.key], c.key));
                 // nothing to write only at a stepper's end, or on the pill already saved
-                if (!c.writes.length) assert.ok(c.end || (c.on && model(st).get(own[c.key]) === c.key.split(':')[2]), JSON.stringify(st) + ' ' + c.key);
+                if (!c.writes.length && !c.cmd) assert.ok(c.end || (c.on && model(st).get(own[c.key]) === c.key.split(':')[2]), JSON.stringify(st) + ' ' + c.key);
             });
         }));
         const home = P.view(0, model({ hudOn: true, clusterOn: true }));
@@ -130,15 +144,16 @@ module.exports = [
         assert.deepStrictEqual(P.view(3, model({})).modes.map((x) => x.enabled), [true, true, true]);
     }],
     ['notes say plainly which display shows, why a page is off, and where the drive mode comes from', () => {
-        const both = P.view(0, model({ hudOn: true, clusterOn: true }));
-        assert.deepStrictEqual(both.cards.map((c) => c.state.text), ['Showing', 'On, not showing: the HUD wins']);
+        const both = P.view(0, model({ hudOn: true, clusterOn: true }, { proof: proofOf('hud', 'hud') }));
+        assert.deepStrictEqual(both.cards.map((c) => c.state.text), ['Showing: the renderer drew it', 'On, not showing: the HUD wins']);
         assert.strictEqual(both.rows[0].desc, 'This car shows one at a time. Showing: HUD');
-        const cl = P.view(0, model({ hudOn: true, clusterOn: true, bothMode: 'cluster' }));
-        assert.deepStrictEqual(cl.cards.map((c) => c.state.text), ['On, not showing: the cluster wins', 'Showing']);
+        const cl = P.view(0, model({ hudOn: true, clusterOn: true, bothMode: 'cluster' }, { proof: proofOf('cluster', 'panel') }));
+        assert.deepStrictEqual(cl.cards.map((c) => c.state.text), ['On, not showing: the cluster wins', 'Showing: the renderer drew it']);
         assert.strictEqual(P.view(0, model({ hudOn: true, clusterOn: true, bothMode: 'map' })).rows[0].desc, 'This car shows one at a time. Showing: HUD + cluster centre area (experimental)');
         assert.strictEqual(P.view(0, model({ hudOn: true })).rows[0].desc, 'Only matters when both are on');
         assert.strictEqual(P.view(0, model({ hudOn: true }, { offReason: 'OFF: kill file' })).cards[0].state.text, 'On, paused: see below');
-        assert.strictEqual(P.view(0, model({ hudOn: true }, { offReason: 'DEMO DATA: nothing sent to the cluster' })).cards[0].state.text, 'Showing');
+        // 0.4.3 said "Showing" in demo mode while nothing was sent (F2, job 11072213)
+        assert.strictEqual(P.view(0, model({ hudOn: true }, { offReason: 'DEMO DATA: nothing sent to the cluster', proof: proofOf('hud', 'hud') })).cards[0].state.text, 'Demo data: nothing is sent');
         assert.strictEqual(P.view(1, model({})).note, 'HUD is off. Turn it on here or on Home');
         assert.strictEqual(P.view(1, model({ hudOn: true, clusterOn: true, bothMode: 'cluster' })).note, 'On, not showing: the cluster wins when both are on (change it on Home)');
         assert.strictEqual(P.view(2, model({ hudOn: true, clusterOn: true })).note, 'On, not showing: the HUD wins when both are on (change it on Home)');
@@ -160,5 +175,56 @@ module.exports = [
         assert.strictEqual(notes[0], 'Shift must be 200+ rpm over first light.');
         assert.deepStrictEqual([P.fmtRpm(6800), P.fmtRpm(950), P.toF(30), P.toF(80)], ['6,800', '950', 86, 176]);
         assert.deepStrictEqual(P.view(3, model({})).modes.map((x) => x.shift.value), ['Default (5,000)', 'Default (6,800)', 'Default (6,800)']);
+    }],
+    ['0.4.4: the Home card and the HUD note say what the renderer read back; "Showing" only for ok and dim', () => {
+        const card = (more, saved) => P.view(0, model(Object.assign({ hudOn: true }, saved), more)).cards[0].state;
+        const note = (more, saved) => P.view(1, model(Object.assign({ hudOn: true }, saved), more));
+        assert.deepStrictEqual(card({ proof: proofOf('hud', 'hud') }), { text: 'Showing: the renderer drew it', tone: 'on' });
+        assert.strictEqual(note({ proof: proofOf('hud', 'hud') }).note, 'Showing on the HUD now: changes show live');
+        const cases = [
+            [{}, 'Not sent yet'],
+            [{ proof: Object.assign(proofOf('hud', 'hud'), { link: 'connecting' }) }, 'Not sent: no renderer link'],
+            [{ proof: proofOf('hud', 'hud', undefined, { state: 'waiting' }) }, 'Sent, the renderer says waiting'],
+            [{ proof: proofOf('hud', 'hud', undefined, { noStatus: true }) }, 'Sent, waiting for the read-back'],
+            [{ proof: proofOf('hud', 'hud', 'shown (us); renderer not subscribed for 6000 ms') }, 'Sent, not confirmed drawn'],
+            [{ proof: proofOf('hud', 'hud', undefined, { extra: '\nlayer 9 effect of adam_mtrack on panel, overlay z 900: shown' }) }, 'Blocked: M Track Cluster holds the scene'],
+            [{ proof: proofOf('hud', 'hud'), offReason: 'DEMO DATA: nothing sent to the cluster' }, 'Demo data: nothing is sent'],
+        ];
+        cases.forEach((c) => {
+            const st = card(c[0]);
+            assert.deepStrictEqual([st.text, st.tone], [c[1], 'warn'], c[1]);
+            const n = note(c[0]);
+            assert.deepStrictEqual([n.note, n.noteTone], [c[1] + ' (see the Check tab)', 'warn']);
+        });
+        const night = card({ proof: proofOf('hud', 'hud'), night: { night: true, raw: 'NACHT', sub: 'present' } }, { hudBright: 100 });
+        assert.deepStrictEqual(night, { text: 'Showing at 35 %: night dim', tone: 'warn' });
+    }],
+    ['0.4.4: the Check tab lists the proof with absolute times; Reset HUD drawing then Refresh; dimmed with nothing shown or in its cooldown', () => {
+        const m = model({ hudOn: true }, { proof: proofOf('hud', 'hud'), heal: { used: 1, last: { why: 'wake', at: T0 - 60000 }, lastAt: T0 - 60000 }, now: T0 + 6000,
+            night: { night: false, raw: 'TAG', sub: 'present' } });
+        const v = P.view(P.IDS.indexOf('check'), m);
+        assert.strictEqual(P.PAGES[P.IDS.indexOf('check')], 'Check');
+        assert.deepStrictEqual([v.id, v.note, v.noteTone, v.code], ['check', 'HUD: Showing: the renderer drew it', 'on', 'ok']);
+        const L2 = {};
+        v.lines.forEach((l) => { L2[l[0]] = l[1]; });
+        assert.deepStrictEqual(Object.keys(L2), ['Renderer link', 'Target hud', 'Read-back', 'Rendering', 'Layers', 'Last written', 'Brightness now', 'Other apps on the scene', 'Self-heal']);
+        assert.strictEqual(L2['Renderer link'], 'ready (id7)');
+        assert.strictEqual(L2['Target hud'], 'shown at 17:42:05');
+        assert.strictEqual(L2['Read-back'], 'target hud: slot 0x323 scene 0x1000400 800x480: shown (us); rendered: renderer 1a2b subscribed for 42 s at 17:42:10');
+        assert.strictEqual(L2.Rendering, 'rendered, subscribed 42 s');
+        assert.strictEqual(L2.Layers, 'slats #3 shown');
+        assert.strictEqual(L2['Last written'], 'slats u_st 0 0 1 -0.2 at 17:42:05');
+        assert.strictEqual(L2['Brightness now'], '100 % (Night dim Auto, car says day)');
+        assert.strictEqual(L2['Other apps on the scene'], 'none');
+        assert.strictEqual(L2['Self-heal'], '1 of 2 automatic rebuilds used; last: wake at 17:41:05');
+        assert.ok(!v.lines.some((l) => / ago\b/.test(l[1])), 'no relative times: nothing redraws on a timer');
+        assert.deepStrictEqual(P.controlsOf(v).map((c) => [c.key, c.cmd]), [['check:reset', 'hudReset'], ['check:refresh', 'refresh']]);
+        const cool = P.view(5, Object.assign({}, m, { heal: { lastAt: T0, used: 0 }, now: T0 + 9999 }));
+        assert.deepStrictEqual(P.controlsOf(cool).map((c) => c.key), ['check:refresh'], 'greyed within the 10 s cooldown');
+        assert.deepStrictEqual(P.controlsOf(P.view(5, Object.assign({}, m, { heal: { lastAt: T0, used: 0 }, now: T0 + 10000 }))).map((c) => c.key), ['check:reset', 'check:refresh']);
+        assert.deepStrictEqual(P.controlsOf(P.view(5, model({ hudOn: true }))).map((c) => c.key), ['check:refresh'], 'nothing shown: nothing to reset');
+        const gave = P.view(5, Object.assign({}, m, { proof: proofOf('hud', 'hud', 'shown (us); renderer not subscribed for 9000 ms'), heal: { used: 2, gaveUp: true, last: { why: 'stuck', at: T0 } } }));
+        assert.ok(/gave up after 2/.test(gave.detail), gave.detail);
+        assert.ok(/; gave up$/.test(gave.lines[8][1]), gave.lines[8][1]);
     }],
 ];

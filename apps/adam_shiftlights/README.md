@@ -6,13 +6,15 @@ RPM shift lights for BMW iDrive 7 (MGU) on the instrument cluster and the HUD, a
 [mgu-store](https://github.com/robertnisipeanu/mgu-store). OEM-style M slats light up from the outside in,
 amber then red, with their own thresholds per drive mode and a lower limit while the engine is cold. The HUD shows the
 same M slats as the cluster (0.4.3), and both can dim at night on the car's own day / night signal.
-The centre screen holds the settings on five pages (Home, HUD, Cluster, Behavior, About). It draws only when
+The centre screen holds the settings on six pages (Home, HUD, Cluster, Behavior, About, Check). It draws only when
 something changes: there is no live preview, so nothing on that screen competes with the rpm updates.
 
 ## Status
 
 Proven on a 2024 X3 M40i (G01 LCI) in a car test: the HUD shift lights and "Only in Sport+" work. On that car 0.4.2's
 shift flash turned the bar red but did not flash; 0.4.3 switches the flash from the app instead (see The shift flash).
+0.4.3's HUD is unconfirmed on the car: one report (2026-11-07) had the app say "Showing" with nothing on the HUD.
+0.4.4 makes "Showing" come from the renderer's own read-back and adds the Check tab (see What Showing means).
 Read the Safety section before you install it.
 
 ## Requirements
@@ -36,7 +38,7 @@ Updates follow the `main` branch.
 ## Settings
 
 Header tabs across the top; turn the knob along the tabs, press to open one, then on down the page (or tap).
-Every page fits one screen. The pill in colour is the value in use; a greyed row says why on its page.
+Every page fits one screen, the Check tab too. The pill in colour is the value in use; a greyed row says why on its page.
 
 | Page | Setting | Values | Default |
 |---|---|---|---|
@@ -182,17 +184,69 @@ The gear spot shows 1 to 9 in D, and P, R or N from the selector; a value it doe
 The HUD art is centred on the stock speed. The HUD page's Move settings shift it if it sits off centre on your car; a bigger
 size grows upward, away from the speed. The app draws no speed or unit: the stock HUD shows those.
 
+### What Showing means and the Check tab
+
+Up to 0.4.3 the Home card said "Showing" from the settings alone: the display on, chosen and not paused. It never asked
+the cluster-render service anything, and it even said "Showing" in demo mode while nothing was sent. Since 0.4.4 the
+card, the HUD and Cluster notes and the **Check** tab say what the service read back, first match wins:
+
+| Verdict | What it means |
+|---|---|
+| Off / On, paused | the setting is off, or Only in Sport+, the kill file or a safety stop holds it (Home says which) |
+| Demo data: nothing is sent | the car has not answered, so no layer exists |
+| Not sent: no renderer link | no connection to the service yet (or a self-heal is rebuilding the layers) |
+| Blocked: M Track Cluster holds the scene | another app has layers on the panel or HUD; they share one scene id, so only one shows |
+| Sent, the renderer says waiting / parked | the service took the layer but the target waits (scene id in use) or sits behind stock content |
+| Sent, not shown yet | the target or a layer is not shown |
+| Sent, not confirmed drawn | shown, but the service's status has no "rendered" line for it (not subscribed, or it cannot tell) |
+| Showing at 35 %: night dim | rendered, but at under half brightness (Night dim, or the Brightness setting) |
+| Showing: the renderer drew it | the target is shown and the service's status says `rendered: renderer ... subscribed for N s` |
+
+"Rendered" is the best proof the app can see that the renderer took our scene. It is not a photo of the HUD: the
+cluster-render README lists, as unverified, a scene dropped and published again within a second that was reported
+mapped and never drawn, and `panel` and `hud` handing their shared scene id over still do that.
+
+The Check tab shows the proof under the verdict, every time as a clock time (so the page redraws only when the service
+says something new): the renderer link, the target's last event, the service's raw `target hud:` status line, the
+rendering line in words, our layers and their states, what was last written to each (`u_st`, the bracket image's
+opacity and gear) and when, the brightness in use and why, other apps on the shared scene, and the self-heal count.
+**Refresh** asks the service for its status now. **Reset HUD drawing** drops our layers, closes the connection, waits
+3.5 s and makes them again; after a press it is dimmed for 10 s.
+
+Self-heal (a guess, bounded): the app asks the service's status 5 s after each connect, 0.5 s after any target or layer
+event and every 30 s while it shows something. It rebuilds the layers the same way as Reset HUD drawing when a status
+newer than our layers still is not shown and rendered 5 s after they were made, when another app just left the shared
+scene and ours is not rendered, and on each wake (the 1 s tick sees the wall clock jump over 30 s: the head unit slept,
+and the last status is from before that). At most 2 automatic rebuilds per start or wake, never while another app has
+layers on the shared scene, and never on "subscription not observable" (a rebuild cannot change that). After 2 the
+verdict says it gave up; Reset HUD drawing still works. Whether a rebuild clears the never-drawn state above is not
+known; the Check tab is what tells. The timings are `hudCheck` in `config.js`.
+
+0.4.2 to 0.4.3, the changes that touch the HUD (`git diff 0e26987 e8ed330 -- apps/adam_shiftlights`):
+
+| Change | Could it blank the HUD? |
+|---|---|
+| Night dim Auto became the default (`nightDim` 0.35): at night the bracket at 35 %, idle slats at 0.2 x 0.35 | dimmer, not blank; the Check tab shows the brightness in use |
+| HUD bar geometry: the cluster's M slats x 0.9 (394 x 75 at 203,69) | no: inside the visible box at every size (tests) |
+| `migrateSettings` v4 moves an old default size and move once | no: size and moves only |
+| New optional signal `Vehicle.statusDayNightChangeOver` | no: optional, the installer drops it where it is missing |
+| Shift flash App (the app sends `u_on`) | no: `u_on` 1 is sent when a layer is made, so an idle bar is never blanked |
+| The output path (`geom.layersFor`), the client and the target names | unchanged |
+
+M Track Cluster draws on `panel`, which shares the HUD's scene id. If its Cover is on, the HUD cannot show. Turn the
+Cover off in M Track when the Check tab says it holds the scene.
+
 ## Screens
 
-From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down; 0.4.3).
+From the idrive7-apps emulator (the 1920 x 720 centre screen, scaled down; 0.4.4).
 
 | Home | HUD | Cluster |
 |---|---|---|
 | ![Home](../../docs/ui/home.png) | ![HUD](../../docs/ui/hud.png) | ![Cluster](../../docs/ui/cluster.png) |
-| **Behavior** | **About** | **HUD off** |
-| ![Behavior](../../docs/ui/behavior.png) | ![About](../../docs/ui/about.png) | ![HUD off](../../docs/ui/hud-off.png) |
-| **Read-only Home** (no touch routing) | | |
-| ![Read-only Home](../../docs/ui/read-only-home.png) | | |
+| **Behavior** | **About** | **Check** |
+| ![Behavior](../../docs/ui/behavior.png) | ![About](../../docs/ui/about.png) | ![Check](../../docs/ui/check.png) |
+| **HUD off** | **Read-only Home** (no touch routing) | |
+| ![HUD off](../../docs/ui/hud-off.png) | ![Read-only Home](../../docs/ui/read-only-home.png) | |
 
 ## Safety
 

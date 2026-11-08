@@ -63,11 +63,14 @@ let seq = 0;
  * screen (the Recorder carries page targets). r.ui = what the settings pages did: images drawn, the last frame,
  * the tab handler, hidden buttons, states opened, loops asked for.
  */
-function start(saved, visible, signals, own) {
+function start(saved, visible, signals, own, more) {
     const sock = path.join(os.tmpdir(), 'sl-main-' + process.pid + '-' + (++seq) + '.sock');
-    const msgs = [], lines = [], vis = [], clicks = {};
+    const msgs = [], lines = [], vis = [], clicks = {}, x = more || {};
     const U = { images: 0, frame: null, tab: null, layout: null, hidden: [], opened: [], loops: 0 };
-    const fake = createFake(sock, (m) => msgs.push(m));
+    const fake = createFake(sock, (m) => msgs.push(Object.assign({ t: Date.now() }, m)), null, { mode: x.mode });
+    // 0.4.4: shorter HUD check timings (config.js swapped for this start only; the object is put back, never deleted)
+    const CFG = path.join(APP, 'config.js'), realCfg = require(CFG);
+    if (x.hudCheck) require.cache[CFG].exports = Object.assign({}, realCfg, { hudCheck: Object.assign({}, realCfg.hudCheck, x.hudCheck) });
     const settings = settingsOf(saved);
     const log = { info: (m) => lines.push(m), warn: (m) => lines.push('WARN ' + m), error: (m) => lines.push('ERR ' + m) };
     const ctx = {
@@ -106,8 +109,9 @@ function start(saved, visible, signals, own) {
     }
     const started = Promise.resolve(app.start(ctx));      // reads SHIFTLIGHTS_CR_SOCKET
     delete process.env.SHIFTLIGHTS_CR_SOCKET;
+    require.cache[CFG].exports = realCfg;
     return started.then(() => ({
-        settings, lines, clicks, car: FakeCar.last, msgs, ui: U,
+        settings, lines, clicks, car: FakeCar.last, msgs, ui: U, fake,
         press: (key) => U.frame.targets.filter((g) => g.key === key)[0].run(),
         layers: () => msgs.filter((m) => m.op === 'layer' && !msgs.some((d) => d.op === 'drop' && d.ref === m.ref && d.conn === m.conn)),
         show: (v) => { visible = v; vis.forEach((fn) => fn('MAIN', v)); },
@@ -191,14 +195,14 @@ module.exports = [
     }],
     ['a 0.3.0 save (no leadMs, no rpmPoll) starts with lead 60 ms and the rpm poll on; garbage leadMs warns once, no ERR', async () => {
         const r = await start({ _settingsV: 3, hudOn: true, hudStyle: 'bar', leadMs: undefined, rpmPoll: undefined });
-        assert.ok(r.lines.some((l) => /^started: .*, lead 60 ms, rpm poll on$/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^started: .*, lead 60 ms, rpm poll on, hudcheck verify \d+ gap \d+ max \d+$/.test(l)), r.lines.join('\n'));
         r.sample(6500);
         await until(() => r.layers().length === 1, 3000, 'a layer');
         await r.done();
         const g = await start({ _settingsV: 3, hudOn: true, hudStyle: 'bar', leadMs: 'fast', rpmPoll: 'x' });
         for (let i = 0; i < 5; i++) g.sample(6000 + i * 100);
         await until(() => g.layers().length === 1, 3000, 'a layer');
-        assert.ok(g.lines.some((l) => /, lead 60 ms, rpm poll on$/.test(l)), g.lines.join('\n'));
+        assert.ok(g.lines.some((l) => /, lead 60 ms, rpm poll on, hudcheck /.test(l)), g.lines.join('\n'));
         assert.strictEqual(g.lines.filter((l) => /^WARN settings: leadMs: "fast"/.test(l)).length, 1, g.lines.join('\n'));
         assert.ok(!g.lines.some((l) => /^ERR/.test(l)), g.lines.join('\n'));
         await g.done();
@@ -219,29 +223,42 @@ module.exports = [
         assert.ok(on.lit >= 1, 'the polled 6500 rpm lit the bar');
         const off = await run(false);
         assert.deepStrictEqual([off.calls, off.lit], [0, 0]);
-        assert.ok(off.lines.some((l) => /rpm poll off$/.test(l)));
+        assert.ok(off.lines.some((l) => /rpm poll off, hudcheck verify 5000 gap 3500 max 2$/.test(l)));
     }],
     ['no timer redraws the settings pages: one draw per change, none for rpm samples or idle; no ctx.loop', async () => {
         const r = await start({ _settingsV: 3, hudOn: true, clusterOn: true, hudStyle: 'bar' }, true, undefined, true);
         await until(() => r.ui.images >= 1, 3000, 'the first draw');
         await wait(50);
+        // start draws once (a coalesced change); 0.4.4: the renderer's first answers (target event, read-back) may add two
+        assert.ok(r.ui.images <= 4, 'start draws once, plus the renderer\'s answers: ' + r.ui.images);
+        // 0.4.4: the renderer's answers redraw the card until the read-back confirms it (then idle again)
+        await until(() => r.ui.frame.texts.indexOf('Showing: the renderer drew it') >= 0, 3000, 'the read-back verdict');
+        await wait(50);
         const n0 = r.ui.images;
-        assert.ok(n0 <= 2, 'start draws once (a coalesced change): ' + n0);
         const t0 = Date.now();
         while (Date.now() - t0 < 1000) { r.sample(3000 + (Date.now() - t0) * 3); await wait(20); }      // 50 Hz for 1 s
         await wait(1500);
         assert.strictEqual(r.ui.images, n0, 'no draw from rpm samples or idle time');
         assert.strictEqual(r.ui.loops, 0, 'no ctx.loop');
-        const one = async (what, fn) => { const a = r.ui.images; fn(); await wait(40); assert.strictEqual(r.ui.images, a + 1, what); };
-        await one('a setting', () => r.settings.set('hudSize', 110));
-        await one('a page button', () => r.press('home:bothMode:cluster'));
+        // 0.4.4: a change that makes new layers is drawn once, then at most twice more as the renderer's answers change what
+        // the card says (the target event, then the status read-back); then nothing more (a reply redraws only when the page would change)
+        const one = async (what, fn, layers) => {
+            const a = r.ui.images;
+            fn();
+            await wait(40);
+            if (!layers) { assert.strictEqual(r.ui.images, a + 1, what); return; }
+            await wait(800);
+            assert.ok(r.ui.images >= a + 1 && r.ui.images <= a + 3, what + ': ' + (r.ui.images - a) + ' draws');
+        };
+        await one('a setting', () => r.settings.set('hudSize', 110), true);
+        await one('a page button', () => r.press('home:bothMode:cluster'), true);
         assert.strictEqual(r.settings.get('bothMode'), 'cluster');
         await one('a tab', () => r.ui.tab(2));
         assert.deepStrictEqual(r.ui.frame.chrome.tabs.sel, 2);
         await one('the car\'s drive mode', () => r.car.mode(2));
         await one('the layout', () => r.ui.layout());
         // several changes at once: one draw
-        await one('three settings in a row', () => { r.settings.set('hudSize', 120); r.settings.set('hudBright', 80); r.settings.set('hudNight', true); });
+        await one('three settings in a row', () => { r.settings.set('hudSize', 120); r.settings.set('hudBright', 80); r.settings.set('hudNight', true); }, true);
         // hidden: nothing drawn, shown again: drawn
         const before = r.ui.images;
         r.show(false);
@@ -436,5 +453,76 @@ module.exports = [
             assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
             await r.done();
         }
+    }],
+    // ---- 0.4.4: the HUD check end to end (verify 2 s, gap 1.5 s: the shortest config.js allows) ----
+    ['0.4.4 (a) the renderer says rendered: the Home card says "Showing: the renderer drew it", no rebuild', async () => {
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { hudCheck: { verifyMs: 2000, gapMs: 1500 } });
+        r.sample(3000);
+        await until(() => r.layers().length === 1, 3000, 'a layer');
+        await until(() => r.ui.frame && r.ui.frame.texts.indexOf('Showing: the renderer drew it') >= 0, 5000, 'the read-back verdict');
+        await wait(1200);
+        assert.ok(!r.lines.some((l) => /hud check: rebuild/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^hud check: hud ok: Showing: the renderer drew it \(Shown, the renderer drew it \(subscribed \d+ s\) on hud\)$/.test(l)), 'the verdict is logged for car-logs');
+        r.ui.tab(5);
+        await until(() => r.ui.frame.texts.indexOf('HUD: Showing: the renderer drew it') >= 0, 3000, 'the Check tab');
+        assert.ok(r.ui.frame.texts.some((t) => /^target hud: slot 0x323 .*rendered: renderer .* at \d\d:\d\d:\d\d$/.test(t)), r.ui.frame.texts.join(' | '));
+        assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
+        await r.done();
+    }],
+    ['0.4.4 (b) "renderer not subscribed": exactly 2 rebuilds, each a gap of 1.5 s+ before the layer comes back, then it gives up', async () => {
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { mode: 'unsubscribed', hudCheck: { verifyMs: 2000, gapMs: 1500, manualCooldownMs: 3000 } });
+        r.sample(3000);
+        await until(() => r.lines.some((l) => /hud check: gave up after 2 automatic rebuilds/.test(l)), 15000, 'gave up');
+        const rebuilds = r.lines.filter((l) => /^WARN hud check: rebuild \(stuck\)/.test(l));
+        assert.strictEqual(rebuilds.length, 2, r.lines.join('\n'));
+        const conns = r.msgs.filter((m) => m.ev === 'close').map((m) => m.t);
+        const made = r.msgs.filter((m) => m.op === 'layer');
+        assert.strictEqual(made.length, 3, 'the first layer and two rebuilds');
+        conns.slice(0, 2).forEach((t, i) => assert.ok(made[i + 1].t - t >= 1500 - 30, 'gap ' + i + ': ' + (made[i + 1].t - t) + ' ms'));
+        await wait(2500);
+        assert.strictEqual(r.lines.filter((l) => /rebuild \(stuck\)/.test(l)).length, 2, 'no third');
+        r.ui.tab(5);
+        await until(() => r.ui.frame.texts.some((t) => /gave up after 2: try Reset HUD drawing/.test(t)), 3000, 'the Check tab says it gave up');
+        assert.ok(r.ui.frame.texts.indexOf('HUD: Sent, not confirmed drawn') >= 0, r.ui.frame.texts.join(' | '));
+        assert.ok(r.ui.frame.texts.some((t) => /^2 of 2 automatic rebuilds used; last: stuck at .*; gave up$/.test(t)), r.ui.frame.texts.join(' | '));
+        // Reset HUD drawing still works once (3 s after the last rebuild here), then is dimmed (no target) for the cooldown
+        await until(() => r.ui.frame.targets.some((g) => g.key === 'check:reset'), 4000, 'Reset HUD drawing pressable');
+        r.press('check:reset');
+        await until(() => r.lines.some((l) => /rebuild \(manual\)/.test(l)), 2000, 'manual rebuild');
+        await wait(50);
+        assert.ok(!r.ui.frame.targets.some((g) => g.key === 'check:reset'), 'greyed in the cooldown');
+        await r.done();
+    }],
+    ['0.4.4 (c) M Track Cluster on the panel: the card names it, zero rebuilds', async () => {
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { mode: 'mtrack-on-panel', hudCheck: { verifyMs: 2000, gapMs: 1500 } });
+        r.sample(3000);
+        await until(() => r.ui.frame && r.ui.frame.texts.indexOf('Blocked: M Track Cluster holds the scene') >= 0, 6000, 'the otherapp verdict');
+        await wait(3000);
+        assert.ok(!r.lines.some((l) => /hud check: rebuild/.test(l)), r.lines.join('\n'));
+        assert.strictEqual(r.msgs.filter((m) => m.op === 'layer').length, 1);
+        await r.done();
+    }],
+    ['0.4.4 (d) a wake (the clock jumps 60 s between ticks): one rebuild; the clock set back 1 h: no wake', async () => {
+        const realNow = Date.now;
+        let off = 0;
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { hudCheck: { verifyMs: 2000, gapMs: 1500 } });
+        try {
+            Date.now = () => realNow() + off;
+            r.sample(3000);
+            await until(() => r.ui.frame && r.ui.frame.texts.indexOf('Showing: the renderer drew it') >= 0, 5000, 'confirmed first');
+            await wait(1100);           // at least one 1 s tick on the real clock first, so the next one sees the jump back
+            off = -3600000;
+            await wait(1300);
+            assert.ok(!r.lines.some((l) => /hud check: wake/.test(l)), 'a clock set back is not a wake');
+            off = 60000;
+            await until(() => r.lines.some((l) => /^WARN hud check: rebuild \(wake\)/.test(l)), 3000, 'the wake rebuild');
+            assert.ok(r.lines.some((l) => /^hud check: wake \(6\d s with no tick\)/.test(l)) || r.lines.some((l) => /^hud check: wake \(\d+ s with no tick\)/.test(l)), r.lines.join('\n'));
+            await until(() => r.layers().length === 1 && r.msgs.filter((m) => m.op === 'layer').length === 2, 4000, 'made again after the gap');
+            await wait(2500);
+            assert.strictEqual(r.lines.filter((l) => /hud check: rebuild/.test(l)).length, 1, r.lines.join('\n'));
+        } finally {
+            Date.now = realNow;
+        }
+        await r.done();
     }],
 ];

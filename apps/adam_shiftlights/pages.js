@@ -5,19 +5,23 @@
  * descriptions live here. Values shown are the ones the app really uses (logic.js readers): a bad saved value
  * shows its fallback, and a step starts from there.
  *
- * m = { get, schema (app.json settings), cfg (checked config), carMode, offReason, version, night }
+ * m = { get, schema (app.json settings), cfg (checked config), carMode, offReason, version, night, proof, heal, now }
  *   night = { night (the car's day / night after its hold: true / false / null), raw (its last value), sub: 'waiting' |
  *   'present' | 'missing' (this unit has no such signal) } from main.js; none: nothing seen.
- * A control: { key (stable focus key '<page>:<setting>[:<option>|:-|:+]'), text, on, end, writes [, confirm, busy] }
+ *   proof = output.status().proof, heal = hudcheck.healStep's state, now = Date.now() (0.4.4: "Showing" and the Check tab
+ *   come from the renderer's read-back through hudcheck.verdict, never from the settings alone).
+ * A control: { key (stable focus key '<page>:<setting>[:<option>|:-|:+]'), text, on, end, writes [, confirm, busy, cmd] }
+ *   cmd: a command main.js runs instead of a setting (the Check tab: 'hudReset', 'refresh')
  *   writes = [[setting, value], ...] what pressing it saves; [] = nothing to change (a stepper at its end). confirm: the first
  *   press only asks (ui.js); busy: drawn dimmed, nothing to press.
  * A row: { id, kind: 'toggle' | 'pills' | 'stepper', label, desc, value, enabled, controls }
  */
 const L = require('./logic');
 const G = require('./geom');
+const HC = require('./hudcheck');
 
-const PAGES = ['Home', 'HUD', 'Cluster', 'Behavior', 'About'];
-const IDS = ['home', 'hud', 'cluster', 'behavior', 'about'];
+const PAGES = ['Home', 'HUD', 'Cluster', 'Behavior', 'About', 'Check'];
+const IDS = ['home', 'hud', 'cluster', 'behavior', 'about', 'check'];
 const MODE_NAME = { comfort: 'Comfort', sport: 'Sport', sportplus: 'Sport+' };
 const SHORT = {
     bothMode: { hud: 'HUD', cluster: 'Cluster', map: 'Both' },
@@ -108,14 +112,20 @@ function modeLine(m) {
     return MODE_NAME[e.mode] + (e.source === 'car' ? ', from the car' : ', the fallback (the car sends none)');
 }
 
-/** "Showing", "Off", "On, not showing: the HUD wins", ... for one display. */
+/** hudcheck.verdict for one display from the page model (the renderer's read-back in m.proof). */
+function verdictOf(m, which) {
+    const ds = L.readDisplays(m.get), s = L.readStyle(m.cfg, m.get, which, m.night ? m.night.night : null);
+    return HC.verdict({ which, on: ds[which], shown: ds.display === which || ds.display === 'both', offReason: m.offReason, proof: m.proof, level: L.levelOf(m.cfg, s), night: s.night, heal: m.heal });
+}
+
+/** "Showing: the renderer drew it", "Off", "On, not showing: the HUD wins", "Sent, not confirmed drawn", ... for one display. */
 function stateOf(m, ds, which) {
     if (!ds[which]) return { text: 'Off', tone: 'off' };
     const d = ds.display;
     if (d === which || d === 'both') {
-        const paused = m.offReason && m.offReason.indexOf('DEMO') !== 0;
-        if (paused) return { text: 'On, paused: see below', tone: 'warn' };
-        return { text: d === 'both' && which === 'cluster' ? 'Showing in the centre area (experimental)' : 'Showing', tone: 'on' };
+        const v = verdictOf(m, which);
+        if (v.code === 'ok' && d === 'both' && which === 'cluster') return { text: 'Showing in the centre area (experimental)', tone: 'on' };
+        return { text: v.text, tone: v.code === 'ok' ? 'on' : 'warn' };
     }
     return { text: 'On, not showing: the ' + (which === 'hud' ? 'cluster' : 'HUD') + ' wins', tone: 'warn' };
 }
@@ -137,7 +147,8 @@ function home(m) {
 function display(m, which) {
     const ds = L.readDisplays(m.get), s = L.readStyle(m.cfg, m.get, which, m.night ? m.night.night : null), D = DISPLAY[which], on = ds[which];
     const shown = ds.display === which || ds.display === 'both', page = which, k = (x) => which + x;
-    let note = 'Showing on the ' + (which === 'hud' ? 'HUD' : 'cluster') + ' now: changes show live';
+    const v = on && shown ? verdictOf(m, which) : null;
+    let note = v && v.code === 'ok' ? 'Showing on the ' + (which === 'hud' ? 'HUD' : 'cluster') + ' now: changes show live' : v ? v.text + ' (see the Check tab)' : '';
     if (!on) note = D.name + ' is off. Turn it on here or on Home';
     else if (!shown) note = 'On, not showing: the ' + D.other + ' wins when both are on (change it on Home)';
     else if (which === 'cluster' && ds.display === 'both') note = 'Showing in the cluster centre area (experimental)';
@@ -166,7 +177,7 @@ function display(m, which) {
         const writes = RESET_KEYS.reduce((a, key) => a.concat(writeOf(m, key, itemOf(m, key).default)), []);
         action = { key: 'hud:reset', text: 'Reset HUD to defaults', writes, confirm: true, busy: !writes.length };
     }
-    return { id: page, rows, note, noteTone: !on ? 'warn' : held || !shown ? 'warn' : 'dim', noteAction: action };
+    return { id: page, rows, note, noteTone: !on ? 'warn' : held || !shown || (v && v.code !== 'ok') ? 'warn' : 'dim', noteAction: action };
 }
 
 function behavior(m) {
@@ -225,12 +236,57 @@ function about(m) {
     };
 }
 
+const clock = (t) => {
+    if (typeof t !== 'number' || !isFinite(t)) return '-';
+    const d = new Date(t), two = (n) => (n < 10 ? '0' : '') + n;
+    return two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds());
+};
+const RENDER_WORDS = { rendered: 'rendered', unsubscribed: 'renderer not subscribed', unobservable: 'renderer cannot tell (not observable)', published: 'scene published, not requested', '': 'no rendering line' };
+
+/**
+ * The Check tab (0.4.4): the verdict for the shown display and the proof under it, every time absolute (HH:MM:SS) so the
+ * page changes only when the renderer says something new. Buttons: Reset HUD drawing (dimmed with nothing shown or within
+ * the cooldown after the last rebuild) and Refresh (asks the renderer's status now).
+ */
+function check(m) {
+    const ds = L.readDisplays(m.get), which = ds.display === 'cluster' ? 'cluster' : 'hud', v = verdictOf(m, which);
+    const p = m.proof || null, heal = m.heal || {}, hc = m.cfg.hudCheck || L.DEFAULTS.hudCheck, now = num(m.now) ? m.now : Date.now();
+    const mine = p ? p.layers.filter((l) => l.which === which) : [];
+    const name = mine.length ? mine[0].target : which === 'hud' ? 'hud' : 'panel';
+    const ev = p && p.targets[name], st = p && p.status, sv = st && st.targets[name], r = st && st.rendering[name];
+    const s = L.readStyle(m.cfg, m.get, which, m.night ? m.night.night : null), n = m.night || {};
+    const car = n.night === true ? 'car says night' : n.night === false ? 'car says day' : n.sub === 'missing' ? 'no day / night signal' : 'no day / night yet';
+    const lastAt = mine.reduce((a, l) => Math.max(a, l.lastSentAt || 0), 0);
+    const lines = [
+        ['Renderer link', p ? p.link + (p.backend ? ' (' + p.backend + ')' : '') + (p.holding ? ', rebuilding' : '') : 'none'],
+        ['Target ' + name, ev ? ev.state + (ev.holder ? ', holder ' + ev.holder : '') + (ev.reason ? ': ' + ev.reason : '') + ' at ' + clock(ev.at) : 'no event yet'],
+        ['Read-back', sv ? sv.line + ' at ' + clock(st.at) : st ? 'no line for ' + name + ' at ' + clock(st.at) : 'no status yet'],
+        ['Rendering', r ? RENDER_WORDS[r.kind] + (r.secs !== null ? ', subscribed ' + r.secs + ' s' : '') + (r.ms !== null ? ' for ' + r.ms + ' ms' : '') : '-'],
+        ['Layers', mine.length ? mine.map((l) => l.role + ' #' + l.ref + ' ' + l.state + (l.reason ? ' (' + l.reason + ')' : '')).join(', ') : 'none'],
+        ['Last written', mine.length ? mine.map((l) => l.role + ' ' + l.lastSent).join('; ') + ' at ' + clock(lastAt || null) : '-'],
+        ['Brightness now', Math.round(L.levelOf(m.cfg, s) * 100) + ' % (Night dim ' + SHORT[which + 'NightMode'][s.nightMode] + ', ' + car + ')'],
+        ['Other apps on the scene', st ? (st.others.length ? st.others.join(', ') : 'none') : '-'],
+        ['Self-heal', (heal.used || 0) + ' of ' + hc.maxAuto + ' automatic rebuilds used' + (heal.last ? '; last: ' + heal.last.why + ' at ' + clock(heal.last.at) : '') +
+            (heal.gaveUp ? '; gave up' : '')],
+    ];
+    const cooling = num(heal.lastAt) && now >= heal.lastAt && now - heal.lastAt < hc.manualCooldownMs;
+    return {
+        id: 'check', note: (which === 'hud' ? 'HUD: ' : 'Cluster: ') + v.text, noteTone: v.code === 'ok' ? 'on' : 'warn', detail: v.detail, code: v.code, lines,
+        foot: 'Rendered means the renderer took our scene: the best proof the app can see, not a photo of the HUD',
+        buttons: [
+            { key: 'check:reset', text: 'Reset HUD drawing', cmd: 'hudReset', writes: [], busy: !mine.length || !!cooling },
+            { key: 'check:refresh', text: 'Refresh', cmd: 'refresh', writes: [] },
+        ],
+    };
+}
+
 /** Page i's content (out of range: Home). */
 function view(i, m) {
     const p = IDS[i] || 'home';
     if (p === 'hud' || p === 'cluster') return display(m, p);
     if (p === 'behavior') return behavior(m);
     if (p === 'about') return about(m);
+    if (p === 'check') return check(m);
     return home(m);
 }
 
@@ -242,6 +298,7 @@ function controlsOf(v) {
     (v.rows || []).forEach((r) => { if (r.enabled) r.controls.forEach((x) => out.push(x)); });
     (v.modes || []).forEach((r) => { if (r.enabled) r.start.controls.concat(r.shift.controls).forEach((x) => out.push(x)); });
     if (v.alloff) out.push(v.alloff);
+    (v.buttons || []).forEach((b) => { if (!b.busy) out.push(b); });
     return out;
 }
 
