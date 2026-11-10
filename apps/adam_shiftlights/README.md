@@ -15,6 +15,11 @@ Proven on a 2024 X3 M40i (G01 LCI) in a car test: the HUD shift lights and "Only
 shift flash turned the bar red but did not flash; 0.4.3 switches the flash from the app instead (see The shift flash).
 0.4.3's HUD is unconfirmed on the car: one report (2026-11-07) had the app say "Showing" with nothing on the HUD.
 0.4.4 makes "Showing" come from the renderer's own read-back and adds the Check tab (see What Showing means).
+0.4.5: on 2026-11-09 the car's HUD sat at "target hud idle, holder none" and Reset HUD drawing changed nothing. The
+likely cause is cluster-render's mapping guard (0.4.0 and later), which turns the HUD off after two display drops within
+10 s of showing it. The app now reads the guard and the display link from the renderer's status: the verdict says
+"Blocked: the renderer turned the HUD off", the self-heal stops rebuilding a target the renderer will not show, and the
+whole status text goes to the log (see Check tab: Renderer guard).
 Read the Safety section before you install it.
 
 ## Requirements
@@ -195,6 +200,7 @@ card, the HUD and Cluster notes and the **Check** tab say what the service read 
 | Off / On, paused | the setting is off, or Only in Sport+, the kill file or a safety stop holds it (Home says which) |
 | Demo data: nothing is sent | the car has not answered, so no layer exists |
 | Not sent: no renderer link | no connection to the service yet (or a self-heal is rebuilding the layers) |
+| Blocked: the renderer turned the HUD off | cluster-render's mapping guard disabled the target (0.4.5; see Check tab: Renderer guard) |
 | Blocked: M Track Cluster holds the scene | another app has layers on the panel or HUD; they share one scene id, so only one shows |
 | Sent, the renderer says waiting / parked | the service took the layer but the target waits (scene id in use) or sits behind stock content |
 | Sent, not shown yet | the target or a layer is not shown |
@@ -209,7 +215,8 @@ mapped and never drawn, and `panel` and `hud` handing their shared scene id over
 The Check tab shows the proof under the verdict, every time as a clock time (so the page redraws only when the service
 says something new): the renderer link, the target's last event, the service's raw `target hud:` status line, the
 rendering line in words, our layers and their states, what was last written to each (`u_st`, the bracket image's
-opacity and gear) and when, the brightness in use and why, other apps on the shared scene, and the self-heal count.
+opacity and gear) and when, the brightness in use and why, other apps on the shared scene, the renderer guard and the
+display link (0.4.5), and the self-heal count.
 **Refresh** asks the service for its status now. **Reset HUD drawing** drops our layers, closes the connection, waits
 3.5 s and makes them again; after a press it is dimmed for 10 s.
 
@@ -220,7 +227,20 @@ scene and ours is not rendered, and on each wake (the 1 s tick sees the wall clo
 and the last status is from before that). At most 2 automatic rebuilds per start or wake, never while another app has
 layers on the shared scene, and never on "subscription not observable" (a rebuild cannot change that). After 2 the
 verdict says it gave up; Reset HUD drawing still works. Whether a rebuild clears the never-drawn state above is not
-known; the Check tab is what tells. The timings are `hudCheck` in `config.js`.
+known; the Check tab is what tells. The timings are `hudCheck` in `config.js`. Since 0.4.5 the second automatic rebuild
+waits 60 s after the first (`backoffMs`), none runs while the renderer reports the display link (Dcsm2) down, none at
+all (Reset HUD drawing included) while the guard has the target off, and a restart of the service (a guard-reset or a
+Store update of Cluster renderer) opens a new window, like a wake.
+
+**Check tab: Renderer guard (0.4.5).** cluster-render 0.4.0 and later strike the HUD's mapping when the display link
+(Dcsm2) drops within 10 s of asking for it; two strikes disable the HUD in `/var/opt/cluster-render/state/guard.txt`.
+A disabled mapping is never asked for again, however often our layers come and go, so the target stays idle with no
+holder and no reason. Restarting the head unit does not clear it. Only a new cluster-render version (Store, Cluster
+renderer, Update) or `cluster-render guard-reset` does. The row reads `no strikes`, `1 strike of 2`, or
+`HUD off after 2 strikes`; **Display link** gives when Dcsm2 came up (or went down) and the last slot table. The log
+gets the guard lines in `cluster-render status:` and the whole status text as `cluster-render status (full):` (on the
+first status after each connect and on any guard or link change, 30 a start at most); `tools/car-logs.sh` collects
+the renderer's own guard lines. The car-side steps are CAR-DAY-SAFETY 0e in the iDrive-Apps repo.
 
 0.4.2 to 0.4.3, the changes that touch the HUD (`git diff 0e26987 e8ed330 -- apps/adam_shiftlights`):
 

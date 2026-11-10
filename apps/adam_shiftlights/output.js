@@ -12,7 +12,11 @@
  * 0.4.4, the read-back: the service's status text (crstatus.js) is asked verifyMs after each connect, 500 ms after a target
  * or layer event, every statusMs while layers exist and on requestStatus(). proof = { link, backend, holding, madeAt,
  * targets: { name: { state, holder, reason, at } }, layers: [{ which, target, role, ref, state, reason, lastSent, lastSentAt }],
- * status: { at, targets, others, rendering } | null, linkAt (the last ready) } feeds hudcheck.verdict. rebuild(why): drop every layer, close the
+ * status: { at, targets, others, rendering, guard, dcsm } | null, linkAt (the last ready), restartedAt (a ready after the service
+ * dropped this link: it restarted, as a guard-reset or a Store update does; never after our own rebuild) } feeds hudcheck.verdict.
+ * 0.4.5: the logged status line carries the mapping guard lines and the Dcsm2 state; the whole status text (asset and stats
+ * lines left out, 1500 characters at most) is logged as 'cluster-render status (full):' on the first status after each ready
+ * and whenever a guard line or the Dcsm2 up / down changes, RAW_LOG_MAX times a start at most. rebuild(why): drop every layer, close the
  * socket, make nothing for gapMs (a scene id dropped and published again within a second was reported never drawn), then
  * o.onRebuildDue() asks for a refresh that makes them again. o.onChange() on every link, target, layer, status or rebuild change.
  *
@@ -38,6 +42,11 @@ const HC = require('./hudcheck');
 const APP_HALF_MIN_MS = 125;
 const STATUS_DEBOUNCE_MS = 500;     // a status this long after the last target or layer event
 const STATUS_LOG_MAX = 200;         // 'target ...' status lines logged a start at most (one per new line)
+const RAW_LOG_MAX = 30;             // 'cluster-render status (full):' dumps a start at most
+const RAW_MAX = 1500;               // characters of one full dump
+
+/** The status text on one line: asset lines and indented stats lines left out, cut to RAW_MAX. */
+const rawLine = (text) => String(text || '').split('\n').filter((l) => l && !/^\s/.test(l) && !/^asset /.test(l)).join(' | ').slice(0, RAW_MAX);
 
 function createOutput(o) {
     const cfg = o.cfg, log = o.log, guard = o.guard, T = o.timers || { setInterval, clearInterval };
@@ -46,6 +55,7 @@ function createOutput(o) {
     const HCF = cfg.hudCheck || L.DEFAULTS.hudCheck;
     let cr = null, planKey = '[]', layers = [], linkState = 'none', ticker = null, phase = 1, skipped = 0;
     let madeAt = null, linkAt = null, holdFrom = 0, holdUntil = 0, lastStatus = null, statusLogged = 0, lastLines = '';
+    let restartedAt = null, rawLogged = 0, rawNext = false, lastRawKey = null;
     const timers = { verify: null, debounce: null, poll: null, rebuild: null };
     const layerStates = Object.create(null), targetStates = Object.create(null), warned = Object.create(null);
     const layerReasons = Object.create(null), targetInfo = Object.create(null);
@@ -61,15 +71,18 @@ function createOutput(o) {
         cr = new o.ClusterRender('adam_shiftlights', o.socketPath);
         linkState = 'connecting';
         const c = cr;
+        let dropped = false;        // this client saw the service go: its next ready is a service restart
         c.on('ready', guard('cr ready', () => {
             if (cr !== c) return;
             linkState = 'ready';
             linkAt = Date.now();
-            log.info('cluster-render: connected (' + c.backend + ', ' + c.targets + ')');
+            rawNext = true;
+            if (dropped) { dropped = false; restartedAt = linkAt; }
+            log.info('cluster-render: connected (' + c.backend + ', ' + c.targets + ')' + (restartedAt === linkAt ? ': the service restarted' : ''));
             later('verify', HCF.verifyMs, askStatus);
             changed();
         }));
-        c.on('disconnected', guard('cr disconnected', () => { if (cr === c) { linkState = 'connecting'; lastStatus = null; log.warn('cluster-render: connection lost, reconnecting'); changed(); } }));
+        c.on('disconnected', guard('cr disconnected', () => { if (cr === c) { dropped = true; linkState = 'connecting'; lastStatus = null; log.warn('cluster-render: connection lost, reconnecting'); changed(); } }));
         c.on('layer', guard('cr layer', (ref, state, reason) => {
             if (cr !== c || layerStates[ref] === state) return;
             layerStates[ref] = state;
@@ -90,12 +103,20 @@ function createOutput(o) {
             if (cr !== c) return;
             const st = CS.parseStatus(text), rendering = {};
             Object.keys(st.targets).forEach((k) => { rendering[k] = CS.renderingOf(st.targets[k].rendering); });
-            lastStatus = { at: Date.now(), targets: st.targets, others: CS.othersOn(st, HC.SHARED), rendering };
-            // the target lines (ours and the shared scene's), logged when they change
-            const lines = Object.keys(st.targets).filter((k) => layers.some((l) => l.target === k) || HC.SHARED.indexOf(k) >= 0)
-                .map((k) => st.targets[k].line).concat(lastStatus.others.length ? ['others: ' + lastStatus.others.join(', ')] : []).join(' | ');
+            lastStatus = { at: Date.now(), targets: st.targets, others: CS.othersOn(st, HC.SHARED), rendering, guard: st.guard, dcsm: st.dcsm };
+            // the target and guard lines (ours and the shared scene's) and the Dcsm2 state (not its seconds), logged when they change
+            const ours = (k) => layers.some((l) => l.target === k) || HC.SHARED.indexOf(k) >= 0;
+            const link = st.dcsm ? 'dcsm: Dcsm2 ' + (st.dcsm.up ? 'available' : 'not available') : '';
+            const lines = Object.keys(st.targets).filter(ours).map((k) => st.targets[k].line)
+                .concat(Object.keys(st.guard).filter(ours).map((k) => st.guard[k].line), link ? [link] : [])
+                .concat(lastStatus.others.length ? ['others: ' + lastStatus.others.join(', ')] : []).join(' | ');
             if (lines !== lastLines && statusLogged < STATUS_LOG_MAX) { statusLogged++; log.info('cluster-render status: ' + (lines || 'no target lines')); }
             lastLines = lines;
+            // the whole text: on the first status after a ready, and when a guard line or the Dcsm2 up / down changes
+            const rawKey = JSON.stringify([Object.keys(st.guard).map((k) => st.guard[k].line), st.dcsm ? st.dcsm.up : null]);
+            if ((rawNext || rawKey !== lastRawKey) && rawLogged < RAW_LOG_MAX) { rawLogged++; log.info('cluster-render status (full): ' + rawLine(text)); }
+            rawNext = false;
+            lastRawKey = rawKey;
             changed();
         }));
         c.on('refused', guard('cr refused', (op, ref, reason) => { if (cr === c) log.error('cluster-render refused ' + op + ' ' + ref + ': ' + reason); }));
@@ -252,7 +273,7 @@ function createOutput(o) {
     function rebuild(why) {
         const v = proofOf();
         log.warn('hud check: rebuild (' + why + '): ' + (v.layers.length ? v.layers.map((l) => l.target + ' ' + l.role + ' ' + l.state).join(', ') : 'no layers') +
-            (lastStatus ? ', last status ' + JSON.stringify(lastLines) : ', no status yet'));
+            (lastStatus ? ', last status ' + JSON.stringify(lastLines) : ', no status yet') + ', guard ' + guardText());
         dropAll();
         Object.keys(targetStates).forEach((k) => { delete targetStates[k]; delete targetInfo[k]; });
         if (cr) closeLink();
@@ -263,11 +284,18 @@ function createOutput(o) {
         changed();
     }
 
+    /** Our targets' guard state for the rebuild warning: 'hud disabled, 2 strikes', 'none' (no line), 'unknown' (no status). */
+    function guardText() {
+        if (!lastStatus) return 'unknown';
+        const g = lastStatus.guard, k = Object.keys(g).filter((n) => layers.some((l) => l.target === n));
+        return k.length ? k.map((n) => n + (g[n].disabled ? ' disabled, ' : ' ') + g[n].strikes + ' strike' + (g[n].strikes === 1 ? '' : 's')).join(', ') : 'none';
+    }
+
     function proofOf() {
         const targets = {};
         Object.keys(targetInfo).forEach((k) => { targets[k] = Object.assign({}, targetInfo[k]); });
         return {
-            link: linkState, backend: cr && cr.backend ? cr.backend : '', holding: !!holdUntil, madeAt, linkAt, targets, status: lastStatus,
+            link: linkState, backend: cr && cr.backend ? cr.backend : '', holding: !!holdUntil, madeAt, linkAt, restartedAt, targets, status: lastStatus,
             layers: layers.map((l) => ({ which: l.which, target: l.target, role: l.role, ref: l.ref, state: layerStates[l.ref] || 'sent',
                 reason: layerReasons[l.ref] || '', lastSent: l.lastSent || '', lastSentAt: l.lastSentAt || null })),
         };

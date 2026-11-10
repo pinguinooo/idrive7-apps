@@ -59,6 +59,10 @@ if [ -z "$LOCAL" ]; then
 fi
 sec "cluster-render folders"; ls -la "$R/var/opt/cluster-render" "$R/var/opt/cluster-render/versions" "$R/var/opt/cluster-render/log" "$R/run/cluster-render" 2>&1
 sec "app registry"; ls -la "$R/var/opt/public/oap/oap_12201/data/apps" 2>&1 | grep -E 'adam_|robertn_' || echo "no adam_ or robertn_ app registered"
+# Shift Lights 0.4.5: the mapping guard (a disabled HUD stays idle, holder none) and the Dcsm2 link at a glance (the
+# files are collected whole above); the .1 file first, so tail keeps the newest lines
+sec "mapping guard and display link"; cat "$R/var/opt/cluster-render/state/guard.txt" 2>&1
+L="$R/var/opt/cluster-render/log"; grep -h -E 'guard:|dcsm: Dcsm2' "$L/cluster-render.log.1" "$L/cluster-render.log" 2>/dev/null | tail -n 80
 exit 0
 EOF
 }

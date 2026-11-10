@@ -245,8 +245,9 @@ const RENDER_WORDS = { rendered: 'rendered', unsubscribed: 'renderer not subscri
 
 /**
  * The Check tab (0.4.4): the verdict for the shown display and the proof under it, every time absolute (HH:MM:SS) so the
- * page changes only when the renderer says something new. Buttons: Reset HUD drawing (dimmed with nothing shown or within
- * the cooldown after the last rebuild) and Refresh (asks the renderer's status now).
+ * page changes only when the renderer says something new. Buttons: Reset HUD drawing (dimmed with nothing shown, within
+ * the cooldown after the last rebuild, or while the renderer's guard has the target off) and Refresh (asks the renderer's
+ * status now). 0.4.5: the Renderer guard and Display link rows (crstatus.js guard and dcsm).
  */
 function check(m) {
     const ds = L.readDisplays(m.get), which = ds.display === 'cluster' ? 'cluster' : 'hud', v = verdictOf(m, which);
@@ -257,6 +258,14 @@ function check(m) {
     const s = L.readStyle(m.cfg, m.get, which, m.night ? m.night.night : null), n = m.night || {};
     const car = n.night === true ? 'car says night' : n.night === false ? 'car says day' : n.sub === 'missing' ? 'no day / night signal' : 'no day / night yet';
     const lastAt = mine.reduce((a, l) => Math.max(a, l.lastSentAt || 0), 0);
+    const g = st && st.guard ? st.guard[name] : null, dc = st ? st.dcsm : null;
+    // the HUD's strike limit is 2 (cluster-render holds.cpp hud_rules); other targets' limits are not shown
+    const guardRow = !st ? '-' : !g ? 'no strikes' : g.disabled ? (name === 'hud' ? 'HUD' : name) + ' off after ' + g.strikes + ' strikes: Store > Cluster renderer > Update, or guard-reset'
+        : g.strikes + ' strike' + (g.strikes === 1 ? '' : 's') + (name === 'hud' ? ' of 2' : '') + ' (a display restart soon after showing it)';
+    // absolute times like every row (no relative ones: the page changes only when the renderer says something new); up
+    // since about the Read-back time on every Refresh = Dcsm2 keeps coming up again (the renderer never settles)
+    const linkRow = !dc ? '-' : (dc.up ? 'Dcsm2 up' : 'Dcsm2 down') + (dc.secs === null ? ' (never up yet)' : ' since ' + clock(st.at - dc.secs * 1000)) +
+        (dc.up ? '; slot table ' + (dc.tableSecs === null ? 'none since it came up' : 'at ' + clock(st.at - dc.tableSecs * 1000)) : '');
     const lines = [
         ['Renderer link', p ? p.link + (p.backend ? ' (' + p.backend + ')' : '') + (p.holding ? ', rebuilding' : '') : 'none'],
         ['Target ' + name, ev ? ev.state + (ev.holder ? ', holder ' + ev.holder : '') + (ev.reason ? ': ' + ev.reason : '') + ' at ' + clock(ev.at) : 'no event yet'],
@@ -266,6 +275,8 @@ function check(m) {
         ['Last written', mine.length ? mine.map((l) => l.role + ' ' + l.lastSent).join('; ') + ' at ' + clock(lastAt || null) : '-'],
         ['Brightness now', Math.round(L.levelOf(m.cfg, s) * 100) + ' % (Night dim ' + SHORT[which + 'NightMode'][s.nightMode] + ', ' + car + ')'],
         ['Other apps on the scene', st ? (st.others.length ? st.others.join(', ') : 'none') : '-'],
+        ['Renderer guard', guardRow],
+        ['Display link', linkRow],
         ['Self-heal', (heal.used || 0) + ' of ' + hc.maxAuto + ' automatic rebuilds used' + (heal.last ? '; last: ' + heal.last.why + ' at ' + clock(heal.last.at) : '') +
             (heal.gaveUp ? '; gave up' : '')],
     ];
@@ -274,7 +285,7 @@ function check(m) {
         id: 'check', note: (which === 'hud' ? 'HUD: ' : 'Cluster: ') + v.text, noteTone: v.code === 'ok' ? 'on' : 'warn', detail: v.detail, code: v.code, lines,
         foot: 'Rendered means the renderer took our scene: the best proof the app can see, not a photo of the HUD',
         buttons: [
-            { key: 'check:reset', text: 'Reset HUD drawing', cmd: 'hudReset', writes: [], busy: !mine.length || !!cooling },
+            { key: 'check:reset', text: 'Reset HUD drawing', cmd: 'hudReset', writes: [], busy: !mine.length || !!cooling || !!(g && g.disabled) },
             { key: 'check:refresh', text: 'Refresh', cmd: 'refresh', writes: [] },
         ],
     };

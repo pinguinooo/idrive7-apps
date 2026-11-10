@@ -32,7 +32,7 @@ function proofOf(which, target, rest, more) {
     return {
         link: 'ready', backend: 'id7', holding: false, madeAt: T0, targets: { [target]: { state: (more && more.state) || 'shown', holder: '', reason: '', at: T0 + 20 } },
         layers: [{ which, target, role: 'slats', ref: 3, state: 'shown', reason: '', lastSent: 'u_st 0 0 1 -0.2', lastSentAt: T0 }],
-        status: (more && more.noStatus) ? null : { at: T0 + 5000, targets: st.targets, others: CS.othersOn(st, HC.SHARED), rendering },
+        status: (more && more.noStatus) ? null : { at: T0 + 5000, targets: st.targets, others: CS.othersOn(st, HC.SHARED), rendering, guard: st.guard, dcsm: st.dcsm },
     };
 }
 /** Every string anywhere in a page's content. */
@@ -207,7 +207,7 @@ module.exports = [
         assert.deepStrictEqual([v.id, v.note, v.noteTone, v.code], ['check', 'HUD: Showing: the renderer drew it', 'on', 'ok']);
         const L2 = {};
         v.lines.forEach((l) => { L2[l[0]] = l[1]; });
-        assert.deepStrictEqual(Object.keys(L2), ['Renderer link', 'Target hud', 'Read-back', 'Rendering', 'Layers', 'Last written', 'Brightness now', 'Other apps on the scene', 'Self-heal']);
+        assert.deepStrictEqual(Object.keys(L2), ['Renderer link', 'Target hud', 'Read-back', 'Rendering', 'Layers', 'Last written', 'Brightness now', 'Other apps on the scene', 'Renderer guard', 'Display link', 'Self-heal']);
         assert.strictEqual(L2['Renderer link'], 'ready (id7)');
         assert.strictEqual(L2['Target hud'], 'shown at 17:42:05');
         assert.strictEqual(L2['Read-back'], 'target hud: slot 0x323 scene 0x1000400 800x480: shown (us); rendered: renderer 1a2b subscribed for 42 s at 17:42:10');
@@ -225,6 +225,30 @@ module.exports = [
         assert.deepStrictEqual(P.controlsOf(P.view(5, model({ hudOn: true }))).map((c) => c.key), ['check:refresh'], 'nothing shown: nothing to reset');
         const gave = P.view(5, Object.assign({}, m, { proof: proofOf('hud', 'hud', 'shown (us); renderer not subscribed for 9000 ms'), heal: { used: 2, gaveUp: true, last: { why: 'stuck', at: T0 } } }));
         assert.ok(/gave up after 2/.test(gave.detail), gave.detail);
-        assert.ok(/; gave up$/.test(gave.lines[8][1]), gave.lines[8][1]);
+        assert.ok(/; gave up$/.test(gave.lines[10][1]), gave.lines[10][1]);
+    }],
+    ['0.4.5 Check tab: the Renderer guard and Display link rows; Reset HUD drawing dimmed while the guard has the HUD off', () => {
+        const m = (extra) => model({ hudOn: true }, { proof: proofOf('hud', 'hud', 'idle', { state: 'idle', extra }), heal: {}, now: T0 + 6000 });
+        const row = (v, k) => v.lines.filter((l) => l[0] === k)[0][1];
+        const DC = '\ndcsm: Dcsm2 available for 120 s; subscription: x\ndcsm: since start: 1 request; last slot table 3 s ago';
+        const dis = P.view(5, m('\nguard: hud 0x323 0x1000400 0: disabled, 2 strikes' + DC));
+        assert.deepStrictEqual([dis.note, dis.code], ['HUD: Blocked: the renderer turned the HUD off', 'disabled']);
+        assert.strictEqual(row(dis, 'Renderer guard'), 'HUD off after 2 strikes: Store > Cluster renderer > Update, or guard-reset');
+        const clock = (t) => { const d = new Date(t), two = (n) => (n < 10 ? '0' : '') + n; return two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds()); };
+        assert.strictEqual(row(dis, 'Display link'), 'Dcsm2 up since ' + clock(T0 + 5000 - 120000) + '; slot table at ' + clock(T0 + 5000 - 3000));
+        assert.deepStrictEqual(P.controlsOf(dis).map((c) => c.key), ['check:refresh'], 'Reset HUD drawing dimmed: it cannot ask for a disabled mapping');
+        const one = P.view(5, m('\nguard: hud 0x323 0x1000400 0: 1 strike' + DC));
+        assert.strictEqual(row(one, 'Renderer guard'), '1 strike of 2 (a display restart soon after showing it)');
+        assert.deepStrictEqual(P.controlsOf(one).map((c) => c.key), ['check:reset', 'check:refresh']);
+        const none = P.view(5, m(''));
+        assert.deepStrictEqual([row(none, 'Renderer guard'), row(none, 'Display link')], ['no strikes', '-']);
+        const down = P.view(5, m('\ndcsm: Dcsm2 not available for 9 s; subscription: x'));
+        assert.strictEqual(row(down, 'Display link'), 'Dcsm2 down since ' + clock(T0 + 5000 - 9000));
+        const yet = P.view(5, m('\ndcsm: Dcsm2 not available yet; subscription: no answer yet\ndcsm: since start: none; no slot table since Dcsm2 came up'));
+        assert.strictEqual(row(yet, 'Display link'), 'Dcsm2 down (never up yet)');
+        const nost = P.view(5, model({ hudOn: true }, { proof: proofOf('hud', 'hud', undefined, { noStatus: true }), heal: {}, now: T0 + 6000 }));
+        assert.deepStrictEqual([row(nost, 'Renderer guard'), row(nost, 'Display link')], ['-', '-']);
+        [dis, one, none, down, yet, nost].forEach((v) => { assert.strictEqual(v.lines.length, 11); assert.ok(!v.lines.some((l) => / ago\b/.test(l[1])), 'absolute times only'); });
+        [dis, one].forEach((v) => strings(v, []).forEach((t) => assert.ok(/^[\x20-\x7e]*$/.test(t), 'ASCII only (the kit fonts): ' + t)));
     }],
 ];

@@ -120,6 +120,14 @@ function start(saved, visible, signals, own, more) {
     }));
 }
 
+/** Date.now moved forward by add(ms) (a jump under wakeGapMs is not a wake); restore() puts the real one back. */
+function fakeClock() {
+    const realNow = Date.now;
+    let off = 0;
+    Date.now = () => realNow() + off;
+    return { add: (ms) => { off += ms; }, restore: () => { Date.now = realNow; } };
+}
+
 module.exports = [
     ['Only in Sport+: nothing in Sport (setting), the HUD lights once the car says Sport+, gone again in Sport', async () => {
         const r = await start({ _settingsV: 3, hudOn: true, onlySportPlus: true, driveMode: 'sport', hudStyle: 'bar' });
@@ -195,7 +203,7 @@ module.exports = [
     }],
     ['a 0.3.0 save (no leadMs, no rpmPoll) starts with lead 60 ms and the rpm poll on; garbage leadMs warns once, no ERR', async () => {
         const r = await start({ _settingsV: 3, hudOn: true, hudStyle: 'bar', leadMs: undefined, rpmPoll: undefined });
-        assert.ok(r.lines.some((l) => /^started: .*, lead 60 ms, rpm poll on, hudcheck verify \d+ gap \d+ max \d+$/.test(l)), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^started: .*, lead 60 ms, rpm poll on, hudcheck verify \d+ gap \d+ max \d+ backoff \d+$/.test(l)), r.lines.join('\n'));
         r.sample(6500);
         await until(() => r.layers().length === 1, 3000, 'a layer');
         await r.done();
@@ -223,7 +231,7 @@ module.exports = [
         assert.ok(on.lit >= 1, 'the polled 6500 rpm lit the bar');
         const off = await run(false);
         assert.deepStrictEqual([off.calls, off.lit], [0, 0]);
-        assert.ok(off.lines.some((l) => /rpm poll off, hudcheck verify 5000 gap 3500 max 2$/.test(l)));
+        assert.ok(off.lines.some((l) => /rpm poll off, hudcheck verify 5000 gap 3500 max 2 backoff 60000$/.test(l)));
     }],
     ['no timer redraws the settings pages: one draw per change, none for rpm samples or idle; no ctx.loop', async () => {
         const r = await start({ _settingsV: 3, hudOn: true, clusterOn: true, hudStyle: 'bar' }, true, undefined, true);
@@ -470,27 +478,37 @@ module.exports = [
         await r.done();
     }],
     ['0.4.4 (b) "renderer not subscribed": exactly 2 rebuilds, each a gap of 1.5 s+ before the layer comes back, then it gives up', async () => {
-        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { mode: 'unsubscribed', hudCheck: { verifyMs: 2000, gapMs: 1500, manualCooldownMs: 3000 } });
-        r.sample(3000);
-        await until(() => r.lines.some((l) => /hud check: gave up after 2 automatic rebuilds/.test(l)), 15000, 'gave up');
-        const rebuilds = r.lines.filter((l) => /^WARN hud check: rebuild \(stuck\)/.test(l));
-        assert.strictEqual(rebuilds.length, 2, r.lines.join('\n'));
-        const conns = r.msgs.filter((m) => m.ev === 'close').map((m) => m.t);
-        const made = r.msgs.filter((m) => m.op === 'layer');
-        assert.strictEqual(made.length, 3, 'the first layer and two rebuilds');
-        conns.slice(0, 2).forEach((t, i) => assert.ok(made[i + 1].t - t >= 1500 - 30, 'gap ' + i + ': ' + (made[i + 1].t - t) + ' ms'));
-        await wait(2500);
-        assert.strictEqual(r.lines.filter((l) => /rebuild \(stuck\)/.test(l)).length, 2, 'no third');
-        r.ui.tab(5);
-        await until(() => r.ui.frame.texts.some((t) => /gave up after 2: try Reset HUD drawing/.test(t)), 3000, 'the Check tab says it gave up');
-        assert.ok(r.ui.frame.texts.indexOf('HUD: Sent, not confirmed drawn') >= 0, r.ui.frame.texts.join(' | '));
-        assert.ok(r.ui.frame.texts.some((t) => /^2 of 2 automatic rebuilds used; last: stuck at .*; gave up$/.test(t)), r.ui.frame.texts.join(' | '));
-        // Reset HUD drawing still works once (3 s after the last rebuild here), then is dimmed (no target) for the cooldown
-        await until(() => r.ui.frame.targets.some((g) => g.key === 'check:reset'), 4000, 'Reset HUD drawing pressable');
-        r.press('check:reset');
-        await until(() => r.lines.some((l) => /rebuild \(manual\)/.test(l)), 2000, 'manual rebuild');
-        await wait(50);
-        assert.ok(!r.ui.frame.targets.some((g) => g.key === 'check:reset'), 'greyed in the cooldown');
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { mode: 'unsubscribed', hudCheck: { verifyMs: 2000, gapMs: 1500, manualCooldownMs: 3000, backoffMs: 10000 } });
+        const clk = fakeClock();
+        try {
+            r.sample(3000);
+            // 0.4.5: the second automatic rebuild waits backoffMs (10 s): the clock skips it once the first rebuild is made again
+            await until(() => r.msgs.filter((m) => m.op === 'layer').length === 2, 8000, 'the first rebuild made again');
+            await wait(2500);
+            assert.strictEqual(r.lines.filter((l) => /rebuild \(stuck\)/.test(l)).length, 1, 'the back-off holds the second: ' + r.lines.join('\n'));
+            clk.add(10000);
+            await until(() => r.lines.some((l) => /hud check: gave up after 2 automatic rebuilds/.test(l)), 8000, 'gave up');
+            const rebuilds = r.lines.filter((l) => /^WARN hud check: rebuild \(stuck\)/.test(l));
+            assert.strictEqual(rebuilds.length, 2, r.lines.join('\n'));
+            const conns = r.msgs.filter((m) => m.ev === 'close').map((m) => m.t);
+            const made = r.msgs.filter((m) => m.op === 'layer');
+            assert.strictEqual(made.length, 3, 'the first layer and two rebuilds');
+            conns.slice(0, 2).forEach((t, i) => assert.ok(made[i + 1].t - t >= 1500 - 30, 'gap ' + i + ': ' + (made[i + 1].t - t) + ' ms'));
+            await wait(2500);
+            assert.strictEqual(r.lines.filter((l) => /rebuild \(stuck\)/.test(l)).length, 2, 'no third');
+            r.ui.tab(5);
+            await until(() => r.ui.frame.texts.some((t) => /gave up after 2: try Reset HUD drawing/.test(t)), 3000, 'the Check tab says it gave up');
+            assert.ok(r.ui.frame.texts.indexOf('HUD: Sent, not confirmed drawn') >= 0, r.ui.frame.texts.join(' | '));
+            assert.ok(r.ui.frame.texts.some((t) => /^2 of 2 automatic rebuilds used; last: stuck at .*; gave up$/.test(t)), r.ui.frame.texts.join(' | '));
+            // Reset HUD drawing still works once (3 s after the last rebuild here), then is dimmed (no target) for the cooldown
+            await until(() => r.ui.frame.targets.some((g) => g.key === 'check:reset'), 4000, 'Reset HUD drawing pressable');
+            r.press('check:reset');
+            await until(() => r.lines.some((l) => /rebuild \(manual\)/.test(l)), 2000, 'manual rebuild');
+            await wait(50);
+            assert.ok(!r.ui.frame.targets.some((g) => g.key === 'check:reset'), 'greyed in the cooldown');
+        } finally {
+            clk.restore();
+        }
         await r.done();
     }],
     ['0.4.4 (c) M Track Cluster on the panel: the card names it, zero rebuilds', async () => {
@@ -523,6 +541,73 @@ module.exports = [
         } finally {
             Date.now = realNow;
         }
+        await r.done();
+    }],
+    // ---- 0.4.5: the renderer's mapping guard end to end (job 11092256, the car on 2026-11-09) ----
+    ['0.4.5 (A) the car state: link ready, the guard disabled the HUD: verdict disabled, zero rebuilds over 120 s, Reset dimmed, guard line and one full dump logged', async () => {
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bracket' }, true, undefined, true, { mode: 'guard-disabled', hudCheck: { verifyMs: 2000, gapMs: 1500, backoffMs: 10000 } });
+        const clk = fakeClock();
+        try {
+            r.sample(3000);
+            await until(() => r.ui.frame && r.ui.frame.texts.indexOf('Blocked: the renderer turned the HUD off') >= 0, 5000, 'the disabled verdict on Home');
+            assert.ok(r.lines.some((l) => l === 'hud check: hud disabled: Blocked: the renderer turned the HUD off (cluster-render disabled hud after 2 strikes. Fix: Store > Cluster renderer > Update, or guard-reset)'), r.lines.join('\n'));
+            // 120 s on the app's clock, 20 s a tick (under wakeGapMs: no wake), with the 1 s tick running in between
+            for (let i = 0; i < 6; i++) { await wait(1100); clk.add(20000); }
+            await wait(1100);
+            assert.ok(!r.lines.some((l) => /hud check: (rebuild|wake|gave up)/.test(l)), r.lines.join('\n'));
+            assert.strictEqual(r.msgs.filter((m) => m.op === 'layer').length, 2, 'the bracket\'s two layers, made once');
+            assert.ok(r.lines.some((l) => /^cluster-render status: .*target hud: slot 0x323 scene 0x1000400 800x480: idle \| guard: hud 0x323 0x1000400 0: disabled, 2 strikes \| dcsm: Dcsm2 available$/.test(l)), r.lines.join('\n'));
+            assert.strictEqual(r.lines.filter((l) => /^cluster-render status \(full\): .*guard: hud 0x323 0x1000400 0: disabled, 2 strikes/.test(l)).length, 1, r.lines.join('\n'));
+            r.ui.tab(5);
+            await until(() => r.ui.frame.texts.indexOf('HUD: Blocked: the renderer turned the HUD off') >= 0, 3000, 'the Check tab');
+            assert.ok(r.ui.frame.texts.indexOf('HUD off after 2 strikes: Store > Cluster renderer > Update, or guard-reset') >= 0, r.ui.frame.texts.join(' | '));
+            assert.ok(r.ui.frame.texts.some((t) => /^Dcsm2 up since \d\d:\d\d:\d\d; slot table at \d\d:\d\d:\d\d$/.test(t)), r.ui.frame.texts.join(' | '));
+            assert.ok(r.ui.frame.targets.some((g) => g.key === 'check:refresh') && !r.ui.frame.targets.some((g) => g.key === 'check:reset'), 'Reset HUD drawing dimmed (it cannot ask for a disabled mapping)');
+            assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
+        } finally {
+            clk.restore();
+        }
+        await r.done();
+    }],
+    ['0.4.5 (B) idle with no guard line: at most 2 automatic rebuilds backoffMs apart, then it gives up; a service restart re-arms it', async () => {
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { mode: 'idle', hudCheck: { verifyMs: 2000, gapMs: 1500, backoffMs: 10000 } });
+        const clk = fakeClock();
+        try {
+            r.sample(3000);
+            await until(() => r.msgs.filter((m) => m.op === 'layer').length === 2, 8000, 'the first rebuild made again');
+            await wait(2500);
+            assert.strictEqual(r.lines.filter((l) => /rebuild \(stuck\)/.test(l)).length, 1, 'held by the back-off');
+            clk.add(10000);
+            await until(() => r.lines.some((l) => /hud check: gave up after 2 automatic rebuilds/.test(l)), 8000, 'gave up');
+            const closes = r.msgs.filter((m) => m.ev === 'close').map((m) => m.t);
+            assert.strictEqual(r.lines.filter((l) => /rebuild \(stuck\)/.test(l)).length, 2);
+            assert.ok(closes[1] - closes[0] >= 10000, 'backoffMs apart: ' + (closes[1] - closes[0]));
+            assert.ok(r.lines.some((l) => /^WARN hud check: rebuild \(stuck\): .*, guard none$/.test(l)), r.lines.join('\n'));
+            r.ui.tab(5);
+            await until(() => r.ui.frame.texts.indexOf('Target hud idle, layer slats waiting; the renderer has not asked for the slot (Dcsm2 up). Self-heal gave up after 2: try Reset HUD drawing') >= 0,
+                3000, 'the Check tab detail names Dcsm2');
+            assert.ok(r.ui.frame.texts.indexOf('no strikes') >= 0, r.ui.frame.texts.join(' | '));
+            const n0 = r.msgs.length;
+            await new Promise((res) => r.fake.restart(res));
+            await until(() => r.lines.some((l) => l === 'hud check: renderer restarted: self-heal re-armed'), 6000, 're-armed');
+            assert.ok(r.msgs.slice(n0).some((m) => m.op === 'layer'), 'the client made the layers again on the new connection');
+            assert.ok(!r.lines.some((l) => /^ERR/.test(l)), r.lines.join('\n'));
+        } finally {
+            clk.restore();
+        }
+        await r.done();
+    }],
+    ['0.4.5 (C) recovery: guard-disabled, then a guard-reset (the service restarts with no guard): the verdict reaches ok with no app restart', async () => {
+        const r = await start({ _settingsV: 4, hudOn: true, hudStyle: 'bar' }, true, undefined, true, { mode: 'guard-disabled', hudCheck: { verifyMs: 2000, gapMs: 1500, backoffMs: 10000 } });
+        r.sample(3000);
+        await until(() => r.ui.frame && r.ui.frame.texts.indexOf('Blocked: the renderer turned the HUD off') >= 0, 5000, 'disabled first');
+        r.fake.mode('ok');
+        await new Promise((res) => r.fake.restart(res));
+        await until(() => r.ui.frame.texts.indexOf('Showing: the renderer drew it') >= 0, 8000, 'ok after the reset');
+        assert.ok(r.lines.some((l) => l === 'hud check: renderer restarted: self-heal re-armed'), r.lines.join('\n'));
+        assert.ok(r.lines.some((l) => /^hud check: hud ok: Showing: the renderer drew it/.test(l)), r.lines.join('\n'));
+        assert.ok(!r.lines.some((l) => /hud check: rebuild/.test(l)), 'no rebuild needed: the client replays the layers');
+        assert.ok(r.lines.filter((l) => /^started: /.test(l)).length === 1, 'one app start');
         await r.done();
     }],
 ];

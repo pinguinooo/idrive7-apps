@@ -111,8 +111,9 @@ module.exports = Object.freeze({
     },
     // 0.4.4 the HUD check (hudcheck.js): the renderer's status asked every statusMs while layers show and verifyMs after a
     // connect; a self-heal rebuild (drop, close, wait gapMs, make again) at most maxAuto times a window (a start or a
-    // wake: the 1 s tick sees a wall-clock gap over wakeGapMs); Reset HUD drawing again only manualCooldownMs after the last
-    hudCheck: { statusMs: 30000, verifyMs: 5000, gapMs: 3500, maxAuto: 2, wakeGapMs: 30000, manualCooldownMs: 10000 },
+    // wake: the 1 s tick sees a wall-clock gap over wakeGapMs); Reset HUD drawing again only manualCooldownMs after the last;
+    // an automatic rebuild after the first in a window only backoffMs after the last (0.4.5)
+    hudCheck: { statusMs: 30000, verifyMs: 5000, gapMs: 3500, maxAuto: 2, wakeGapMs: 30000, manualCooldownMs: 10000, backoffMs: 60000 },
     rpm: {
         leadMs: 60,             // "Shift lights lead" default: light up this far ahead of the rpm (ms, app.json steps 0 to 150)
         slopeWindowMs: 150,     // the rpm slope for the lead is taken over about this much history (ms)

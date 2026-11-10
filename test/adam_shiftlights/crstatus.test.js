@@ -55,11 +55,40 @@ module.exports = [
     ['garbage, empty and null: empty results, no throw', () => {
         [null, undefined, '', 'nonsense\n\n\x00', 42, 'target hud: broken'].forEach((x) => {
             const st = CS.parseStatus(x);
-            assert.deepStrictEqual(st, { targets: {}, layers: [] }, String(x));
+            assert.deepStrictEqual(st, { targets: {}, layers: [], guard: {}, dcsm: null, renderer: '' }, String(x));
             assert.deepStrictEqual(CS.othersOn(st, ['hud']), []);
             assert.strictEqual(CS.hudLine(x), '');
         });
         assert.deepStrictEqual(CS.othersOn(null, ['hud']), []);
         [null, undefined, '', 'Rendered', 'renderer not subscribed for x ms'].forEach((x) => assert.strictEqual(CS.renderingOf(x).kind, '', String(x)));
+    }],
+    // ---- 0.4.5: the guard, renderer and dcsm lines (cluster-render 0.4.x server.cpp status_text, guard.cpp, dcsm2_port.cpp) ----
+    ['a 0.4.2-shaped status with the HUD disabled: guard, renderer and both dcsm lines; targets and layers unchanged', () => {
+        const st = ST(['target map: slot 0x205 scene 0x1000300 1088x480: idle', 'target panel: slot 0x203 scene 0x1000400 1920x720: idle', hud('idle'),
+            'guard: hud 0x323 0x1000400 0: disabled, 2 strikes', 'renderer: 12 subscription lines read since start',
+            'dcsm: Dcsm2 available for 734 s; subscription: slot table accepted, content accepted', 'dcsm: since start: 4 requests, 4 replies; last slot table 3 s ago',
+            'slot 0x323 status 0 content 0x0 class 0 map 0', 'layer 1 effect of adam_shiftlights on hud, overlay z 1: waiting - target idle',
+            'layer 2 image of adam_shiftlights on hud, overlay z 2: waiting - target idle', 'layer 3 effect of adam_shiftlights on hud, overlay z 3: waiting - target idle']);
+        assert.deepStrictEqual([st.targets.hud.state, st.targets.hud.holder, st.targets.hud.reason], ['idle', '', '']);
+        assert.deepStrictEqual(st.guard, { hud: { mapping: 'hud 0x323 0x1000400 0', disabled: true, strikes: 2, line: 'guard: hud 0x323 0x1000400 0: disabled, 2 strikes' } });
+        assert.deepStrictEqual(st.dcsm, { up: true, secs: 734, tableSecs: 3, line: 'dcsm: Dcsm2 available for 734 s; subscription: slot table accepted, content accepted' });
+        assert.strictEqual(st.renderer, 'renderer: 12 subscription lines read since start');
+        assert.deepStrictEqual(st.layers.map((l) => [l.id, l.state, l.reason]), [[1, 'waiting', 'target idle'], [2, 'waiting', 'target idle'], [3, 'waiting', 'target idle']]);
+        assert.strictEqual(Object.keys(st.targets).length, 3);
+    }],
+    ['one strike: not disabled; an "auto" slot key; no guard line: an empty guard', () => {
+        const one = ST([hud('shown (us)'), 'guard: hud 0x323 0x1000400 0: 1 strike']).guard.hud;
+        assert.deepStrictEqual([one.disabled, one.strikes], [false, 1]);
+        const auto = ST(['guard: map auto 0x1000300 2: 3 strikes']).guard.map;
+        assert.deepStrictEqual([auto.mapping, auto.disabled, auto.strikes], ['map auto 0x1000300 2', false, 3]);
+        assert.deepStrictEqual(ST([hud('idle'), 'dcsm: Dcsm2 available for 5 s; subscription: no answer yet']).guard, {});
+        assert.strictEqual(ST(['guard: hud 0x323 0x1000400 0: disabled, many strikes']).guard.hud, undefined, 'a line out of shape is ignored');
+    }],
+    ['dcsm "not available yet", "not available for N s" and no slot table since it came up', () => {
+        const yet = ST(['dcsm: Dcsm2 not available yet; subscription: no answer yet', 'dcsm: since start: none; no slot table since Dcsm2 came up']).dcsm;
+        assert.deepStrictEqual([yet.up, yet.secs, yet.tableSecs], [false, null, null]);
+        const down = ST(['dcsm: Dcsm2 not available for 12 s; subscription: x', 'dcsm: since start: 1 request; last slot table 40 s ago']).dcsm;
+        assert.deepStrictEqual([down.up, down.secs, down.tableSecs], [false, 12, 40]);
+        assert.strictEqual(ST(['dcsm: since start: 1 request; last slot table 40 s ago']).dcsm, null, 'a since-start line alone is no link state');
     }],
 ];

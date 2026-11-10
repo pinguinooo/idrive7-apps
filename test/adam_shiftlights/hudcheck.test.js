@@ -14,7 +14,7 @@ const hudLine = (rest) => 'target hud: slot 0x323 scene 0x1000400 800x480: ' + r
 function statusOf(text, at) {
     const st = CS.parseStatus(text), rendering = {};
     Object.keys(st.targets).forEach((k) => { rendering[k] = CS.renderingOf(st.targets[k].rendering); });
-    return { at, targets: st.targets, others: CS.othersOn(st, HC.SHARED), rendering };
+    return { at, targets: st.targets, others: CS.othersOn(st, HC.SHARED), rendering, guard: st.guard, dcsm: st.dcsm };
 }
 function proof(o) {
     const x = o || {};
@@ -96,7 +96,7 @@ module.exports = [
             st = r.st;
             if (r.action === 'rebuild') n++;
             else assert.strictEqual(r.why, 'gave up after 2');
-            t += HCF.gapMs;
+            t += HCF.backoffMs;         // 0.4.5: the second automatic rebuild only backoffMs after the first
         }
         assert.strictEqual(n, 2);
         assert.strictEqual(st.gaveUp, true);
@@ -140,5 +140,90 @@ module.exports = [
         assert.strictEqual(HC.healStep(null, IN({ code: 'demo' }), T0 + 9999, HCF).action, 'none');
         assert.strictEqual(HC.healStep(null, IN({ statusAt: T0 - 1 }), T0 + 9999, HCF).action, 'none', 'no status since the layers were made');
         assert.strictEqual(HC.healStep(null, IN({ code: 'unconfirmed' }), T0 + 9999, Object.assign({}, HCF, { maxAuto: 0 })).action, 'none', 'maxAuto 0 turns it off');
+    }],
+    // ---- 0.4.5: the renderer's mapping guard (job 11092256: the car's HUD idle, holder none, Reset changed nothing) ----
+    ['disabled: the guard line gives "Blocked: the renderer turned the HUD off", never ok, dim or Showing; ahead of otherapp', () => {
+        const DIS = 'guard: hud 0x323 0x1000400 0: disabled, 2 strikes', DC = 'dcsm: Dcsm2 available for 120 s; subscription: x';
+        const idle = { hud: { state: 'idle', holder: '', reason: '', at: T0 } };
+        const lay = [{ which: 'hud', target: 'hud', role: 'slats', ref: 1, state: 'waiting', reason: 'target idle', lastSent: '', lastSentAt: T0 }];
+        const v = HC.verdict(S({ proof: proof({ targets: idle, layers: lay, status: statusOf([hudLine('idle'), DIS, DC].join('\n'), T0 + 5000) }) }));
+        assert.deepStrictEqual([v.code, v.text, v.tone], ['disabled', 'Blocked: the renderer turned the HUD off', 'warn']);
+        assert.strictEqual(v.detail, 'cluster-render disabled hud after 2 strikes. Fix: Store > Cluster renderer > Update, or guard-reset');
+        // even a status that says shown + rendered (a guard line from before a reset): disabled wins, never Showing
+        [1, 0.35].forEach((level) => {
+            const w = HC.verdict(S({ level, night: true, proof: proof({ status: statusOf([hudLine('shown (us); rendered'), DIS].join('\n'), T0 + 5000) }) }));
+            assert.strictEqual(w.code, 'disabled');
+            assert.ok(!/Showing/.test(w.text + w.detail));
+        });
+        const both = statusOf([hudLine('idle'), DIS, 'layer 9 effect of adam_mtrack on panel, overlay z 900: shown'].join('\n'), T0 + 5000);
+        assert.strictEqual(code({ proof: proof({ targets: idle, status: both }) }), 'disabled', 'before otherapp');
+        assert.strictEqual(code({ proof: proof({ layers: [], status: both }) }), 'notshown', 'no layer made comes first');
+        const one = statusOf([hudLine('idle'), 'guard: hud 0x323 0x1000400 0: 1 strike', DC].join('\n'), T0 + 5000);
+        assert.strictEqual(code({ proof: proof({ targets: idle, status: one }) }), 'notshown', 'one strike is not disabled');
+        const old = statusOf([hudLine('idle'), DIS].join('\n'), T0 - 200);
+        assert.notStrictEqual(code({ proof: proof({ targets: idle, status: old }) }), 'disabled', 'a status from before this link proves nothing');
+    }],
+    ['notshown, target idle and no guard line: the detail names Dcsm2 (up / down)', () => {
+        const idle = { hud: { state: 'idle', holder: '', reason: '', at: T0 } };
+        const up = HC.verdict(S({ proof: proof({ targets: idle, status: statusOf([hudLine('idle'), 'dcsm: Dcsm2 available for 0 s; subscription: x'].join('\n'), T0 + 5000) }) }));
+        assert.deepStrictEqual([up.code, up.text], ['notshown', 'Sent, not shown yet']);
+        assert.strictEqual(up.detail, 'Target hud idle; the renderer has not asked for the slot (Dcsm2 up)');
+        const down = HC.verdict(S({ proof: proof({ targets: idle, status: statusOf([hudLine('idle'), 'dcsm: Dcsm2 not available for 9 s; subscription: x'].join('\n'), T0 + 5000) }) }));
+        assert.ok(/\(Dcsm2 down\)$/.test(down.detail), down.detail);
+        const none = HC.verdict(S({ proof: proof({ targets: idle, status: statusOf(hudLine('idle'), T0 + 5000) }) }));
+        assert.strictEqual(none.detail, 'Target hud idle', 'no dcsm line: nothing claimed');
+    }],
+    ['healStep disabled: no automatic rebuild (stuck, wake) and no manual one', () => {
+        const st0 = { used: 0, gaveUp: false, lastAt: null, last: null, since: T0, madeAt: T0, seenOthersAt: null };
+        [IN({ disabled: true, code: 'disabled', kind: '' }), IN({ disabled: true, wake: true, code: 'disabled' }), IN({ disabled: true, manual: true, code: 'disabled' })].forEach((inp) => {
+            const r = HC.healStep(st0, inp, T0 + 600000, HCF);
+            assert.deepStrictEqual([r.action, r.why], ['none', 'disabled by the renderer guard'], JSON.stringify(inp));
+        });
+        assert.strictEqual(HC.healStep(st0, IN({ code: 'notshown', kind: '' }), T0 + 600000, HCF).action, 'rebuild', 'control: the same state not disabled rebuilds');
+    }],
+    ['back-off: the second automatic rebuild refused before backoffMs, allowed at backoffMs', () => {
+        let r = HC.healStep(null, IN(), T0 + HCF.verifyMs, HCF);
+        assert.deepStrictEqual([r.action, r.why, r.st.used], ['rebuild', 'stuck', 1]);
+        const at = T0 + HCF.verifyMs, made = at + HCF.gapMs;
+        r = HC.healStep(r.st, IN({ madeAt: made, statusAt: made + HCF.verifyMs }), made + HCF.verifyMs, HCF);
+        assert.deepStrictEqual([r.action, r.why], ['none', 'backing off']);
+        r = HC.healStep(r.st, IN({ madeAt: made, statusAt: at + HCF.backoffMs - 1 }), at + HCF.backoffMs - 1, HCF);
+        assert.deepStrictEqual([r.action, r.why], ['none', 'backing off']);
+        r = HC.healStep(r.st, IN({ madeAt: made, statusAt: at + HCF.backoffMs }), at + HCF.backoffMs, HCF);
+        assert.deepStrictEqual([r.action, r.why, r.st.used], ['rebuild', 'stuck', 2]);
+    }],
+    ['back-off with the clock set back 1 h: the wait restarts from now and does not stall', () => {
+        let r = HC.healStep(null, IN(), T0 + HCF.verifyMs, HCF);
+        const made = T0 + HCF.verifyMs + HCF.gapMs, back = T0 - 3600000;
+        r = HC.healStep(r.st, IN({ madeAt: made, statusAt: back }), back, HCF);
+        assert.strictEqual(r.st.lastAt, back, 'lastAt moved to now');
+        r = HC.healStep(r.st, IN({ madeAt: made, statusAt: back + HCF.backoffMs - 1 }), back + HCF.backoffMs - 1, HCF);
+        assert.deepStrictEqual([r.action, r.why], ['none', 'backing off']);
+        r = HC.healStep(r.st, IN({ madeAt: made, statusAt: back + HCF.backoffMs }), back + HCF.backoffMs, HCF);
+        assert.deepStrictEqual([r.action, r.why], ['rebuild', 'stuck'], 'not stalled an hour');
+    }],
+    ['dcsmUp false: no automatic rebuild (display service down); null (unknown) does not block', () => {
+        const r = HC.healStep(null, IN({ dcsmUp: false, code: 'notshown', kind: '' }), T0 + 600000, HCF);
+        assert.deepStrictEqual([r.action, r.why], ['none', 'display service down']);
+        assert.strictEqual(HC.healStep(null, IN({ dcsmUp: false, wake: true }), T0 + 600000, HCF).action, 'none', 'not on a wake either');
+        assert.strictEqual(HC.healStep(null, IN({ dcsmUp: null }), T0 + 600000, HCF).action, 'rebuild');
+        assert.strictEqual(HC.healStep(null, IN({ dcsmUp: false, manual: true }), T0 + 600000, HCF).action, 'rebuild', 'Reset HUD drawing still runs');
+    }],
+    ['relinked after gave up: a new window (used 0), no rebuild of its own; then stuck rebuilds again', () => {
+        const st0 = { used: 2, gaveUp: true, lastAt: T0 - 600000, last: { why: 'stuck', at: T0 - 600000 }, since: T0, madeAt: T0, seenOthersAt: null };
+        let r = HC.healStep(st0, IN({ relinked: true, statusAt: T0 + 1000 }), T0 + 1000, HCF);
+        assert.deepStrictEqual([r.action, r.st.used, r.st.gaveUp], ['none', 0, false]);
+        r = HC.healStep(r.st, IN({ statusAt: T0 + HCF.verifyMs }), T0 + HCF.verifyMs, HCF);
+        assert.deepStrictEqual([r.action, r.why], ['rebuild', 'stuck']);
+        const wakeOff = HC.healStep(st0, IN({ statusAt: T0 + HCF.verifyMs }), T0 + HCF.verifyMs, HCF);
+        assert.deepStrictEqual([wakeOff.action, wakeOff.why], ['none', 'gave up after 2'], 'control: without relinked it stays given up');
+    }],
+    ['no change: an unchanged disabled, backing-off or service-down input returns the very same st object', () => {
+        const st0 = { used: 1, gaveUp: false, lastAt: T0, last: { why: 'stuck', at: T0 }, since: T0 + 4000, madeAt: T0 + 4000, seenOthersAt: null };
+        [IN({ madeAt: T0 + 4000, disabled: true }), IN({ madeAt: T0 + 4000, statusAt: T0 + 9000 }), IN({ madeAt: T0 + 4000, dcsmUp: false })].forEach((inp) => {
+            const r = HC.healStep(st0, inp, T0 + 9000, HCF);
+            assert.strictEqual(r.action, 'none');
+            assert.strictEqual(r.st, st0, r.why);
+        });
     }],
 ];

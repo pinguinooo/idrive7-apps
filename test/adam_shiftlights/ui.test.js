@@ -146,4 +146,32 @@ module.exports = [
         assert.ok(cv.textWidth(v.detail, 20) <= 1520, v.detail);
         assert.ok(cv.textWidth(v.note, 26, { font: 'bold' }) <= 900, v.note);
     }],
+    ['0.4.5 Check tab: all 11 proof rows and the foot inside the 520 px canvas; the disabled verdict and guard row fit their widths', () => {
+        const CS = require('../../apps/adam_shiftlights/crstatus'), P = require('../../apps/adam_shiftlights/pages');
+        const text = ['target hud: slot 0x323 scene 0x1000400 800x480: idle', 'guard: hud 0x323 0x1000400 0: disabled, 2 strikes',
+            'dcsm: Dcsm2 available for 734 s; subscription: x', 'dcsm: since start: 1 request; last slot table 3 s ago'].join('\n');
+        const cs = CS.parseStatus(text);
+        const proof = { link: 'ready', backend: 'id7', holding: false, madeAt: 1, linkAt: 1, targets: { hud: { state: 'idle', holder: '', reason: '', at: 2 } },
+            layers: ['slats', 'bracketImg', 'bracketFill'].map((role, i) => ({ which: 'hud', target: 'hud', role, ref: 1 + i, state: 'waiting', reason: 'target idle', lastSent: role === 'bracketImg' ? 'opacity 1, gear P' : 'u_st 43.15 0 1 0', lastSentAt: 3 })),
+            status: { at: 4, targets: cs.targets, others: [], rendering: { hud: CS.renderingOf('') }, guard: cs.guard, dcsm: cs.dcsm } };
+        const m = model({ hudOn: true, hudStyle: 'bracket' }, { proof, heal: { used: 2, gaveUp: true, last: { why: 'stuck', at: 5 }, lastAt: 5 }, now: 100000 });
+        const u = createUi();
+        u.tab(5);
+        const r = new Recorder(1600, 520, { textScale: 1 }).reset(), drawn = [], text0 = r.text;
+        r.own = true; r.chrome = { tabs: null };
+        r.text = function (str, x, y, size) { drawn.push({ s: String(str), y, size }); return text0.apply(this, arguments); };
+        u.draw(r, t, m, () => () => {});
+        const v = P.view(5, m);
+        assert.strictEqual(v.lines.length, 11);
+        assert.strictEqual(v.code, 'disabled');
+        v.lines.forEach((l) => assert.ok(drawn.some((d) => d.s === l[0]), 'row drawn: ' + l[0]));
+        drawn.forEach((d) => assert.ok(d.y <= 520 - 4 && d.y - d.size >= 0, d.s + ' at y ' + d.y));
+        const ys = v.lines.map((l) => drawn.filter((d) => d.s === l[0])[0].y), foot = drawn.filter((d) => d.s === v.foot)[0];
+        ys.forEach((y, i) => { if (i) assert.ok(y - ys[i - 1] >= 24, 'rows do not overlap: ' + (y - ys[i - 1])); });
+        assert.ok(foot && foot.y - ys[10] >= 30, 'the foot under the box: ' + JSON.stringify(foot));
+        v.lines.forEach((l) => assert.ok(r.textWidth(l[1], 20) <= 1220, l[0] + ': ' + r.textWidth(l[1], 20)));
+        assert.ok(r.textWidth(v.detail, 20) <= 1520, v.detail);
+        assert.ok(r.textWidth(v.note, 26, { font: 'bold' }) <= 900, v.note);
+        assert.ok(r.textWidth('Blocked: the renderer turned the HUD off', 22, { font: 'bold' }) <= 664, 'the Home card state line');
+    }],
 ];

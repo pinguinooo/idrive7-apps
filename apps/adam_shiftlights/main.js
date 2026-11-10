@@ -82,7 +82,7 @@ mgu.run({
             });
 
             // the HUD check (0.4.4): heal = hudcheck.healStep's state (a fresh start opens a window), lastTick = the 1 s tick's clock
-            let heal = null, lastTick = null, healQueued = false, lastVerdict = '', verdictLogged = 0;
+            let heal = null, lastTick = null, healQueued = false, lastVerdict = '', verdictLogged = 0, lastRestartedAt = null;
             /** The display the check judges: the HUD unless only the cluster shows. */
             const primary = () => (L.readDisplays(get).display === 'cluster' ? 'cluster' : 'hud');
             function healCheck(trigger) {
@@ -94,8 +94,14 @@ mgu.run({
                 if (vk !== lastVerdict && verdictLogged < VERDICT_LOG_MAX) { verdictLogged++; log.info('hud check: ' + which + ' ' + v.code + ': ' + v.text + (v.detail ? ' (' + v.detail + ')' : '')); }
                 lastVerdict = vk;
                 const before = heal;
+                // the service restarted (a guard-reset, a Store update): a new window for the self-heal, once per restart
+                const relinked = !!p.restartedAt && p.restartedAt !== lastRestartedAt;
+                lastRestartedAt = p.restartedAt;
+                if (relinked) log.info('hud check: renderer restarted: self-heal re-armed');
+                const g = p.status && mine ? p.status.guard[mine.target] : null;
                 const r = HC.healStep(heal, { wake: trigger === 'wake', manual: trigger === 'manual', code: v.code, madeAt: p.madeAt,
-                    statusAt: p.status ? p.status.at : null, kind: r0 ? r0.kind : '', others: !!(p.status && p.status.others.length) }, Date.now(), cfg.hudCheck);
+                    statusAt: p.status ? p.status.at : null, kind: r0 ? r0.kind : '', others: !!(p.status && p.status.others.length),
+                    disabled: !!(g && g.disabled), dcsmUp: p.status && p.status.dcsm ? p.status.dcsm.up : null, relinked }, Date.now(), cfg.hudCheck);
                 heal = r.st;
                 if (r.action === 'rebuild') {
                     output.rebuild(r.why);
@@ -283,7 +289,7 @@ mgu.run({
             log.info('started: show ' + L.readDisplays(get).display + ', mode ' + JSON.stringify(eff()) + ', cluster ' + s0.cluster.style + ', hud ' + s0.hud.style +
                 ', flash ' + L.readFlashMode(get) + ', night dim hud ' + s0.hud.nightMode + ' cluster ' + s0.cluster.nightMode +
                 ', lead ' + lr.leadMs + ' ms, rpm poll ' + (lr.poll ? 'on' : 'off') +
-                ', hudcheck verify ' + cfg.hudCheck.verifyMs + ' gap ' + cfg.hudCheck.gapMs + ' max ' + cfg.hudCheck.maxAuto);
+                ', hudcheck verify ' + cfg.hudCheck.verifyMs + ' gap ' + cfg.hudCheck.gapMs + ' max ' + cfg.hudCheck.maxAuto + ' backoff ' + cfg.hudCheck.backoffMs);
         } catch (e) {
             log.error('start: ' + (e && e.stack || e));
         }

@@ -52,7 +52,7 @@ const DEFAULTS = {
         },
     },
     safety: { errorLimit: 5, errorWindowMs: 10000, killFile: 'DISABLE', killPollMs: 1000 },
-    hudCheck: { statusMs: 30000, verifyMs: 5000, gapMs: 3500, maxAuto: 2, wakeGapMs: 30000, manualCooldownMs: 10000 },
+    hudCheck: { statusMs: 30000, verifyMs: 5000, gapMs: 3500, maxAuto: 2, wakeGapMs: 30000, manualCooldownMs: 10000, backoffMs: 60000 },
     rpm: { leadMs: 60, slopeWindowMs: 150, slopeMinSpanMs: 60, minSlope: 1, maxSlope: 20, pollMs: 40, pollTimeoutMs: 200, pollMaxBackoffMs: 2000, pollIdleMs: 1000 },
 };
 const TARGETS = G.TARGETS;
@@ -215,7 +215,7 @@ function validateConfig(input) {
         return null;
     });
     take('hudCheck', (h) => {
-        const R = { statusMs: [5000, 300000], verifyMs: [2000, 30000], gapMs: [1500, 20000], maxAuto: [0, 5], wakeGapMs: [10000, 600000], manualCooldownMs: [3000, 60000] };
+        const R = { statusMs: [5000, 300000], verifyMs: [2000, 30000], gapMs: [1500, 20000], maxAuto: [0, 5], wakeGapMs: [10000, 600000], manualCooldownMs: [3000, 60000], backoffMs: [10000, 600000] };
         if (!isObj(h)) return 'must be an object';
         const bad = Object.keys(R).filter((k) => !isInt(h[k], R[k][0], R[k][1]));
         return bad.length ? bad.map((k) => k + ' must be a whole number ' + R[k][0] + ' to ' + R[k][1]).join(', ') : null;

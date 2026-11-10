@@ -177,7 +177,7 @@ function checkPage(cv, t, v, act) {
         G.button(cv, t, x, NOTE_Y - 34, ws[i], 40, b.text, act(b.writes, b.cmd), { key: b.key, primary: b.cmd === 'hudReset', busy: !!b.busy });
         x += ws[i] + gap;
     });
-    const top = 128, pitch = 31;
+    const top = 128, pitch = 27;     // 11 proof rows (0.4.5) and the foot inside the 520 px canvas
     cv.roundRect(X0, top, W, v.lines.length * pitch + 22, 14, withAlpha('#ffffff', 0.05));
     v.lines.forEach((l, i) => {
         const y = top + 32 + i * pitch;

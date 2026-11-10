@@ -384,4 +384,69 @@ module.exports = [
             await r.done();
         }
     }],
+    ['0.4.5 guard-disabled: the guard line lands in proof.status.guard, logged once across identical statuses with one full dump', async () => {
+        const r = rig(null, { mode: 'guard-disabled' });
+        r.out.apply(A('hud', 'large', 'bar', S(0)));
+        await until(() => r.out.status().proof.link === 'ready' && r.ops('layer').length === 1, 3000, 'ready');
+        await until(() => r.out.status().proof.targets.hud && r.out.status().proof.layers[0].state === 'waiting', 3000, 'idle events');
+        const p0 = r.out.status().proof;
+        assert.deepStrictEqual([p0.targets.hud.state, p0.targets.hud.holder, p0.layers[0].reason], ['idle', '', 'target idle']);
+        for (let i = 0; i < 3; i++) {
+            const n = r.ops('status').length;
+            r.out.requestStatus();
+            await until(() => r.ops('status').length >= n + 1 && r.out.status().proof.status, 3000, 'status ' + i);
+            await wait(30);
+        }
+        const st = r.out.status().proof.status;
+        assert.deepStrictEqual(st.guard.hud, { mapping: 'hud 0x323 0x1000400 0', disabled: true, strikes: 2, line: 'guard: hud 0x323 0x1000400 0: disabled, 2 strikes' });
+        assert.strictEqual(st.dcsm.up, true);
+        const logged = r.lines.filter((l) => /^cluster-render status: /.test(l));
+        assert.strictEqual(logged.length, 1, logged.join('\n'));
+        assert.ok(/target hud: .*: idle \| guard: hud 0x323 0x1000400 0: disabled, 2 strikes \| dcsm: Dcsm2 available$/.test(logged[0]), logged[0]);
+        const full = r.lines.filter((l) => /^cluster-render status \(full\): /.test(l));
+        assert.strictEqual(full.length, 1, 'one full dump: the first status after the ready');
+        assert.ok(/^cluster-render status \(full\): upload: .* \| guard: hud .*disabled, 2 strikes \| renderer: .* \| dcsm: Dcsm2 available for \d+ s; .* \| dcsm: since start: /.test(full[0]), full[0]);
+        assert.ok(full[0].length <= 'cluster-render status (full): '.length + 1500);
+        r.out.rebuild('test');
+        assert.ok(r.lines.some((l) => /^hud check: rebuild \(test\): .*, guard hud disabled, 2 strikes$/.test(l)), r.lines.join('\n'));
+        await r.done();
+    }],
+    ['0.4.5 the full dump: on each guard or Dcsm2 change, capped at 30 a start; asset and indented lines left out', async () => {
+        const r = rig(null, { mode: 'idle' });
+        r.out.apply(A('hud', 'large', 'bar', S(0)));
+        await until(() => r.out.status().proof.link === 'ready' && r.ops('layer').length === 1, 3000, 'ready');
+        for (let i = 0; i < 40; i++) {
+            r.fake.mode(i % 2 ? 'idle' : 'guard-disabled');
+            const n = r.ops('status').length;
+            r.out.requestStatus();
+            await until(() => r.ops('status').length >= n + 1, 3000, 'status ' + i);      // >=: the verifyMs ask may land too
+            await wait(15);
+        }
+        await wait(50);
+        assert.strictEqual(r.lines.filter((l) => /^cluster-render status \(full\): /.test(l)).length, 30, 'RAW_LOG_MAX');
+        assert.ok(r.lines.filter((l) => /^cluster-render status: /.test(l)).length > 30, 'the short line keeps its own cap (200)');
+        await r.done();
+        const fs = require('fs'), src = fs.readFileSync(require.resolve('../../apps/adam_shiftlights/output.js'), 'utf8');
+        assert.ok(/const RAW_LOG_MAX = 30;/.test(src) && /const RAW_MAX = 1500;/.test(src));
+    }],
+    ['0.4.5 restartedAt: set by a ready after the service dropped the link, never by our own rebuild', async () => {
+        const c2 = Object.assign({}, cfg, { hudCheck: Object.assign({}, cfg.hudCheck, { gapMs: 1500, verifyMs: 2000 }) });
+        let due = 0;
+        const r = rig(null, { cfg: c2, opts: { onRebuildDue: () => { due++; } } });
+        r.out.apply(A('hud', 'large', 'bar', S(0)));
+        await until(() => r.out.status().proof.link === 'ready', 3000, 'ready');
+        assert.strictEqual(r.out.status().proof.restartedAt, null);
+        r.out.rebuild('test');
+        await until(() => due === 1, 3000, 'gap over');
+        r.out.apply(A('hud', 'large', 'bar', S(0)));
+        await until(() => r.out.status().proof.link === 'ready', 3000, 'ready again');
+        assert.strictEqual(r.out.status().proof.restartedAt, null, 'our own rebuild is not a service restart');
+        const n0 = r.msgs.length;
+        await new Promise((res) => r.fake.restart(res));
+        await until(() => r.ops('hello', n0).length === 1 && r.out.status().proof.link === 'ready', 6000, 'reconnect');
+        const p = r.out.status().proof;
+        assert.ok(typeof p.restartedAt === 'number' && p.restartedAt === p.linkAt, JSON.stringify(p.restartedAt));
+        assert.ok(r.lines.some((l) => /^cluster-render: connected \(id7, .*\): the service restarted$/.test(l)), r.lines.join('\n'));
+        await r.done();
+    }],
 ];
